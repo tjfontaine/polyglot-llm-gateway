@@ -81,5 +81,61 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 }
 
 func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
-	return nil, fmt.Errorf("not implemented")
+	messages := make([]openai.ChatCompletionMessageParamUnion, len(req.Messages))
+	for i, m := range req.Messages {
+		switch m.Role {
+		case "user":
+			messages[i] = openai.UserMessage(m.Content)
+		case "assistant":
+			messages[i] = openai.AssistantMessage(m.Content)
+		case "system":
+			messages[i] = openai.SystemMessage(m.Content)
+		default:
+			return nil, fmt.Errorf("unsupported role: %s", m.Role)
+		}
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Messages: messages,
+		Model:    openai.ChatModel(req.Model),
+	}
+
+	if req.MaxTokens > 0 {
+		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+	}
+
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	out := make(chan domain.CanonicalEvent)
+
+	go func() {
+		defer close(out)
+		defer stream.Close()
+
+		for stream.Next() {
+			chunk := stream.Current()
+
+			// If usage is present (last chunk with stream_options), we can send it.
+			// For now, we focus on content deltas.
+
+			if len(chunk.Choices) > 0 {
+				choice := chunk.Choices[0]
+				delta := choice.Delta
+
+				event := domain.CanonicalEvent{
+					Role:         delta.Role,
+					ContentDelta: delta.Content,
+				}
+
+				// TODO: Handle ToolCalls
+
+				out <- event
+			}
+		}
+
+		if err := stream.Err(); err != nil {
+			out <- domain.CanonicalEvent{Error: err}
+		}
+	}()
+
+	return out, nil
 }
