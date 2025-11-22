@@ -12,9 +12,10 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig     `koanf:"server"`
-	Providers []ProviderConfig `koanf:"providers"`
-	Routing   RoutingConfig    `koanf:"routing"`
+	Server     ServerConfig      `koanf:"server"`
+	Frontdoors []FrontdoorConfig `koanf:"frontdoors"`
+	Providers  []ProviderConfig  `koanf:"providers"`
+	Routing    RoutingConfig     `koanf:"routing"`
 	// Legacy fields for backwards compatibility
 	OpenAI    OpenAIConfig    `koanf:"openai"`
 	Anthropic AnthropicConfig `koanf:"anthropic"`
@@ -22,6 +23,11 @@ type Config struct {
 
 type ServerConfig struct {
 	Port int `koanf:"port"`
+}
+
+type FrontdoorConfig struct {
+	Type string `koanf:"type"`
+	Path string `koanf:"path"`
 }
 
 type ProviderConfig struct {

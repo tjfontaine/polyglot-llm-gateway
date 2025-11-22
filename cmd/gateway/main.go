@@ -5,7 +5,7 @@ import (
 
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	openai_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/openai"
+	"github.com/tjfontaine/poly-llm-gateway/internal/frontdoor"
 	"github.com/tjfontaine/poly-llm-gateway/internal/policy"
 	"github.com/tjfontaine/poly-llm-gateway/internal/provider"
 	anthropic_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
@@ -51,14 +51,37 @@ func main() {
 	// Initialize Router with config-based routing
 	router := policy.NewRouter(providers, cfg.Routing)
 
-	// Initialize Frontdoor with Router
-	handler := openai_frontdoor.NewHandler(router)
+	// Initialize Frontdoor Registry
+	frontdoorRegistry := frontdoor.NewRegistry()
+
+	// Create frontdoor handlers from config
+	var handlerRegs []frontdoor.HandlerRegistration
+	if len(cfg.Frontdoors) > 0 {
+		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router)
+		if err != nil {
+			log.Fatalf("Failed to create frontdoor handlers: %v", err)
+		}
+	} else {
+		// Default frontdoors if no config
+		log.Println("No frontdoors in config, using defaults")
+		cfg.Frontdoors = []config.FrontdoorConfig{
+			{Type: "openai", Path: "/openai"},
+			{Type: "anthropic", Path: "/anthropic"},
+		}
+		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router)
+		if err != nil {
+			log.Fatalf("Failed to create default frontdoor handlers: %v", err)
+		}
+	}
 
 	// Initialize Server
 	srv := server.New(cfg.Server.Port)
 
-	// Register Routes
-	srv.Router.Post("/v1/chat/completions", handler.HandleChatCompletion)
+	// Register all frontdoor handlers
+	for _, reg := range handlerRegs {
+		srv.Router.Post(reg.Path, reg.Handler)
+		log.Printf("Registered %s", reg.Path)
+	}
 
 	log.Printf("Starting server on port %d", cfg.Server.Port)
 	if err := srv.Start(); err != nil {

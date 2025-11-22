@@ -1,6 +1,13 @@
 server:
   port: 8080
 
+frontdoors:
+  - type: openai
+    path: /openai
+  
+  - type: anthropic
+    path: /anthropic
+
 providers:
   - name: openai
     type: openai
