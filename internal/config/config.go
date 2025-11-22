@@ -30,7 +30,7 @@ func Load() (*Config, error) {
 
 	// Load environment variables
 	if err := k.Load(env.Provider("POLY_", ".", func(s string) string {
-		return strings.Replace(strings.ToLower(strings.TrimPrefix(s, "POLY_")), "_", ".", -1)
+		return strings.Replace(strings.ToLower(strings.TrimPrefix(s, "POLY_")), "__", ".", -1)
 	}), nil); err != nil {
 		return nil, err
 	}
