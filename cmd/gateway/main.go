@@ -5,6 +5,8 @@ import (
 
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	openai_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/openai"
+	"github.com/tjfontaine/poly-llm-gateway/internal/policy"
+	anthropic_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
 	openai_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/poly-llm-gateway/internal/server"
 )
@@ -15,12 +17,15 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Initialize Provider
-	// In Phase 1, we just use OpenAI provider directly
-	provider := openai_provider.New(cfg.OpenAI.APIKey)
+	// Initialize Providers
+	openaiP := openai_provider.New(cfg.OpenAI.APIKey)
+	anthropicP := anthropic_provider.New(cfg.Anthropic.APIKey)
 
-	// Initialize Frontdoor
-	handler := openai_frontdoor.NewHandler(provider)
+	// Initialize Router
+	router := policy.NewRouter(openaiP, anthropicP)
+
+	// Initialize Frontdoor with Router
+	handler := openai_frontdoor.NewHandler(router)
 
 	// Initialize Server
 	srv := server.New(cfg.Server.Port)

@@ -8,8 +8,9 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig `koanf:"server"`
-	OpenAI OpenAIConfig `koanf:"openai"`
+	Server    ServerConfig    `koanf:"server"`
+	OpenAI    OpenAIConfig    `koanf:"openai"`
+	Anthropic AnthropicConfig `koanf:"anthropic"`
 }
 
 type ServerConfig struct {
@@ -17,6 +18,10 @@ type ServerConfig struct {
 }
 
 type OpenAIConfig struct {
+	APIKey string `koanf:"api_key"`
+}
+
+type AnthropicConfig struct {
 	APIKey string `koanf:"api_key"`
 }
 
