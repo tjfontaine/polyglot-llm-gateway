@@ -1,20 +1,44 @@
 package config
 
 import (
+	"os"
+	"regexp"
 	"strings"
 
+	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
 
 type Config struct {
-	Server    ServerConfig    `koanf:"server"`
+	Server    ServerConfig     `koanf:"server"`
+	Providers []ProviderConfig `koanf:"providers"`
+	Routing   RoutingConfig    `koanf:"routing"`
+	// Legacy fields for backwards compatibility
 	OpenAI    OpenAIConfig    `koanf:"openai"`
 	Anthropic AnthropicConfig `koanf:"anthropic"`
 }
 
 type ServerConfig struct {
 	Port int `koanf:"port"`
+}
+
+type ProviderConfig struct {
+	Name   string `koanf:"name"`
+	Type   string `koanf:"type"`
+	APIKey string `koanf:"api_key"`
+}
+
+type RoutingConfig struct {
+	Rules           []RoutingRule `koanf:"rules"`
+	DefaultProvider string        `koanf:"default_provider"`
+}
+
+type RoutingRule struct {
+	ModelPrefix string `koanf:"model_prefix"`
+	ModelExact  string `koanf:"model_exact"`
+	Provider    string `koanf:"provider"`
 }
 
 type OpenAIConfig struct {
@@ -25,10 +49,20 @@ type AnthropicConfig struct {
 	APIKey string `koanf:"api_key"`
 }
 
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
 func Load() (*Config, error) {
 	k := koanf.New(".")
 
-	// Load environment variables
+	// Try to load from config.yaml file first
+	if err := k.Load(file.Provider("config.yaml"), yaml.Parser()); err != nil {
+		// File not found is OK, we'll use env vars
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+
+	// Load environment variables (can override file config)
 	if err := k.Load(env.Provider("POLY_", ".", func(s string) string {
 		return strings.Replace(strings.ToLower(strings.TrimPrefix(s, "POLY_")), "__", ".", -1)
 	}), nil); err != nil {
@@ -45,5 +79,18 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	// Substitute environment variables in provider API keys
+	for i := range cfg.Providers {
+		cfg.Providers[i].APIKey = substituteEnvVars(cfg.Providers[i].APIKey)
+	}
+
 	return &cfg, nil
+}
+
+func substituteEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		// Extract variable name from ${VAR_NAME}
+		varName := envVarPattern.FindStringSubmatch(match)[1]
+		return os.Getenv(varName)
+	})
 }

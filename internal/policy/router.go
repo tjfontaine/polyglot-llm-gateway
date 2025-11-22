@@ -5,20 +5,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
 )
 
 type Router struct {
-	providers map[string]domain.Provider
+	providers       map[string]domain.Provider
+	rules           []config.RoutingRule
+	defaultProvider string
 }
 
-func NewRouter(providers ...domain.Provider) *Router {
-	pMap := make(map[string]domain.Provider)
-	for _, p := range providers {
-		pMap[p.Name()] = p
-	}
+func NewRouter(providers map[string]domain.Provider, routingConfig config.RoutingConfig) *Router {
 	return &Router{
-		providers: pMap,
+		providers:       providers,
+		rules:           routingConfig.Rules,
+		defaultProvider: routingConfig.DefaultProvider,
 	}
 }
 
@@ -49,21 +50,26 @@ func (r *Router) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-ch
 }
 
 func (r *Router) Route(req *domain.CanonicalRequest) (domain.Provider, error) {
-	// Simple routing logic:
-	// If model starts with "claude", route to anthropic.
-	// Otherwise, route to openai.
-	// In a real system, this would be more sophisticated (config-driven, etc.)
+	// Apply routing rules in order
+	for _, rule := range r.rules {
+		if rule.ModelExact != "" && req.Model == rule.ModelExact {
+			if p, ok := r.providers[rule.Provider]; ok {
+				return p, nil
+			}
+		}
+		if rule.ModelPrefix != "" && strings.HasPrefix(req.Model, rule.ModelPrefix) {
+			if p, ok := r.providers[rule.Provider]; ok {
+				return p, nil
+			}
+		}
+	}
 
-	if strings.HasPrefix(req.Model, "claude") {
-		if p, ok := r.providers["anthropic"]; ok {
+	// Fall back to default provider
+	if r.defaultProvider != "" {
+		if p, ok := r.providers[r.defaultProvider]; ok {
 			return p, nil
 		}
 	}
 
-	// Default to openai
-	if p, ok := r.providers["openai"]; ok {
-		return p, nil
-	}
-
-	return nil, fmt.Errorf("no default provider configured")
+	return nil, fmt.Errorf("no provider configured for model: %s", req.Model)
 }

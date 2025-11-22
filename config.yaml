@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+providers:
+  - name: openai
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+  
+  - name: anthropic
+    type: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
+
+routing:
+  rules:
+    - model_prefix: "claude"
+      provider: anthropic
+    
+    - model_prefix: "gpt"
+      provider: openai
+  
+  default_provider: openai
