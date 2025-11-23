@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 
+	"github.com/joho/godotenv"
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
 	"github.com/tjfontaine/poly-llm-gateway/internal/frontdoor"
@@ -14,6 +15,9 @@ import (
 )
 
 func main() {
+	// Load .env file if it exists
+	_ = godotenv.Load()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
