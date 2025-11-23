@@ -142,22 +142,31 @@ func main() {
 
 	// Create frontdoor handlers from config
 	var handlerRegs []frontdoor.HandlerRegistration
-	if len(cfg.Frontdoors) > 0 {
-		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router, providers)
-		if err != nil {
-			log.Fatalf("Failed to create frontdoor handlers: %v", err)
+	var apps []config.AppConfig
+	if len(cfg.Apps) > 0 {
+		apps = cfg.Apps
+	} else if len(cfg.Frontdoors) > 0 {
+		for _, fd := range cfg.Frontdoors {
+			apps = append(apps, config.AppConfig{
+				Name:         fd.Type,
+				Frontdoor:    fd.Type,
+				Path:         fd.Path,
+				Provider:     fd.Provider,
+				DefaultModel: fd.DefaultModel,
+			})
 		}
 	} else {
 		// Default frontdoors if no config
 		logger.Info("using default frontdoor configuration")
-		cfg.Frontdoors = []config.FrontdoorConfig{
-			{Type: "openai", Path: "/openai"},
-			{Type: "anthropic", Path: "/anthropic"},
+		apps = []config.AppConfig{
+			{Name: "openai", Frontdoor: "openai", Path: "/openai"},
+			{Name: "anthropic", Frontdoor: "anthropic", Path: "/anthropic"},
 		}
-		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router, providers)
-		if err != nil {
-			log.Fatalf("Failed to create default frontdoor handlers: %v", err)
-		}
+	}
+
+	handlerRegs, err = frontdoorRegistry.CreateHandlers(apps, router, providers)
+	if err != nil {
+		log.Fatalf("Failed to create frontdoor handlers: %v", err)
 	}
 
 	// Initialize Server

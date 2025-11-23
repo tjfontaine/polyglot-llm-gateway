@@ -15,6 +15,7 @@ type Config struct {
 	Server     ServerConfig      `koanf:"server"`
 	Storage    StorageConfig     `koanf:"storage"`
 	Tenants    []TenantConfig    `koanf:"tenants"`
+	Apps       []AppConfig       `koanf:"apps"`
 	Frontdoors []FrontdoorConfig `koanf:"frontdoors"`
 	Providers  []ProviderConfig  `koanf:"providers"`
 	Routing    RoutingConfig     `koanf:"routing"`
@@ -49,6 +50,15 @@ type APIKeyConfig struct {
 	Description string `koanf:"description"`
 }
 
+type AppConfig struct {
+	Name         string             `koanf:"name"`
+	Frontdoor    string             `koanf:"frontdoor"`
+	Path         string             `koanf:"path"`
+	Provider     string             `koanf:"provider"`      // Optional: force specific provider
+	DefaultModel string             `koanf:"default_model"` // Optional: force/default model
+	ModelRouting ModelRoutingConfig `koanf:"model_routing"`
+}
+
 type FrontdoorConfig struct {
 	Type         string `koanf:"type"`
 	Path         string `koanf:"path"`
@@ -73,6 +83,17 @@ type RoutingRule struct {
 	ModelPrefix string `koanf:"model_prefix"`
 	ModelExact  string `koanf:"model_exact"`
 	Provider    string `koanf:"provider"`
+}
+
+type ModelRoutingConfig struct {
+	PrefixProviders map[string]string  `koanf:"prefix_providers"`
+	Rewrites        []ModelRewriteRule `koanf:"rewrites"`
+}
+
+type ModelRewriteRule struct {
+	Match    string `koanf:"match"`
+	Provider string `koanf:"provider"`
+	Model    string `koanf:"model"`
 }
 
 type OpenAIConfig struct {

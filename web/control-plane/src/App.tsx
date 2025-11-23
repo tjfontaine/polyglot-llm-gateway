@@ -31,10 +31,29 @@ interface Stats {
   };
 }
 
+interface ModelRewrite {
+  match: string;
+  provider: string;
+  model: string;
+}
+
+interface ModelRouting {
+  prefix_providers?: Record<string, string>;
+  rewrites?: ModelRewrite[];
+}
+
 interface Overview {
   mode: string;
   storage: { enabled: boolean; type: string; path?: string };
-  frontdoors: { type: string; path: string; provider?: string; default_model?: string }[];
+  apps?: {
+    name?: string;
+    frontdoor?: string;
+    path: string;
+    provider?: string;
+    default_model?: string;
+    model_routing?: ModelRouting;
+  }[];
+  frontdoors?: { type: string; path: string; provider?: string; default_model?: string }[];
   providers: { name: string; type: string; base_url?: string; supports_responses: boolean }[];
   routing: { default_provider: string; rules: { model_prefix?: string; model_exact?: string; provider: string }[] };
   tenants: { id: string; name: string; provider_count: number; routing_rules: number; supports_tenant: boolean }[];
@@ -203,6 +222,21 @@ function App() {
     return 'single-tenant';
   }, [overview]);
 
+  const appEntries = useMemo(() => {
+    if (overview?.apps?.length) return overview.apps;
+    if (overview?.frontdoors?.length) {
+      return overview.frontdoors.map((fd, idx) => ({
+        name: fd.type || `frontdoor-${idx + 1}`,
+        frontdoor: fd.type,
+        path: fd.path,
+        provider: fd.provider,
+        default_model: fd.default_model,
+        model_routing: { prefix_providers: {}, rewrites: [] },
+      }));
+    }
+    return [] as Overview['apps'];
+  }, [overview]);
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
       <div className="pointer-events-none absolute inset-0 opacity-70" aria-hidden>
@@ -248,29 +282,58 @@ function App() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-400">Topology</p>
-                <h2 className="text-lg font-semibold text-white">Frontdoors & providers</h2>
+                <h2 className="text-lg font-semibold text-white">Apps & providers</h2>
               </div>
               <Pill icon={Route} label={`Routing default: ${overview?.routing?.default_provider || '—'}`} />
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-                  <Signal size={16} className="text-emerald-300" /> Frontdoors
+                  <Signal size={16} className="text-emerald-300" /> Apps
                 </div>
                 <div className="space-y-2">
-                  {(overview?.frontdoors ?? []).map((fd) => (
-                    <div key={`${fd.type}-${fd.path}`} className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                  {(appEntries ?? []).map((app) => (
+                    <div
+                      key={`${app?.frontdoor || app?.name || 'app'}-${app?.path}`}
+                      className="rounded-xl border border-white/5 bg-white/5 px-3 py-2"
+                    >
                       <div className="flex items-center justify-between text-sm text-white">
-                        <span className="font-semibold">{fd.type}</span>
-                        <span className="text-xs text-amber-200">{fd.path}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{app?.name || app?.frontdoor || 'App'}</span>
+                          {app?.frontdoor && (
+                            <span className="rounded-md bg-slate-800/80 px-2 py-1 text-[11px] text-slate-200">
+                              frontdoor: {app.frontdoor}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-amber-200">{app?.path}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
-                        {fd.provider && <span className="rounded-md bg-slate-800/80 px-2 py-1">provider: {fd.provider}</span>}
-                        {fd.default_model && <span className="rounded-md bg-slate-800/80 px-2 py-1">default model: {fd.default_model}</span>}
+                        {app?.provider && <span className="rounded-md bg-slate-800/80 px-2 py-1">provider: {app.provider}</span>}
+                        {app?.default_model && (
+                          <span className="rounded-md bg-slate-800/80 px-2 py-1">default model: {app.default_model}</span>
+                        )}
                       </div>
+                      {(Object.keys(app?.model_routing?.prefix_providers ?? {}).length > 0 ||
+                        (app?.model_routing?.rewrites?.length ?? 0) > 0) && (
+                        <div className="mt-2 space-y-1 text-[11px] text-slate-300">
+                          {Object.entries(app?.model_routing?.prefix_providers ?? {}).map(([prefix, provider]) => (
+                            <div key={`${app?.path}-prefix-${prefix}`} className="flex items-center gap-2">
+                              <Route size={12} className="text-emerald-200" />
+                              <span className="truncate">{prefix}* → {provider}</span>
+                            </div>
+                          ))}
+                          {(app?.model_routing?.rewrites ?? []).map((rewrite, idx) => (
+                            <div key={`${app?.path}-rewrite-${idx}`} className="flex items-center gap-2">
+                              <RefreshCcw size={12} className="text-amber-200" />
+                              <span className="truncate">{rewrite.match} → {rewrite.provider}:{rewrite.model}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
-                  {(overview?.frontdoors?.length ?? 0) === 0 && <p className="text-sm text-slate-500">No frontdoors registered.</p>}
+                  {(appEntries?.length ?? 0) === 0 && <p className="text-sm text-slate-500">No apps configured.</p>}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">

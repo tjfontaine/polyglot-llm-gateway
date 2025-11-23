@@ -98,6 +98,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 type OverviewResponse struct {
 	Mode       string             `json:"mode"`
 	Storage    StorageSummary     `json:"storage"`
+	Apps       []AppSummary       `json:"apps"`
 	Frontdoors []FrontdoorSummary `json:"frontdoors"`
 	Providers  []ProviderSummary  `json:"providers"`
 	Routing    RoutingSummary     `json:"routing"`
@@ -115,6 +116,26 @@ type FrontdoorSummary struct {
 	Path         string `json:"path"`
 	Provider     string `json:"provider,omitempty"`
 	DefaultModel string `json:"default_model,omitempty"`
+}
+
+type AppSummary struct {
+	Name         string              `json:"name"`
+	Frontdoor    string              `json:"frontdoor"`
+	Path         string              `json:"path"`
+	Provider     string              `json:"provider,omitempty"`
+	DefaultModel string              `json:"default_model,omitempty"`
+	ModelRouting ModelRoutingSummary `json:"model_routing,omitempty"`
+}
+
+type ModelRoutingSummary struct {
+	PrefixProviders map[string]string     `json:"prefix_providers,omitempty"`
+	Rewrites        []ModelRewriteSummary `json:"rewrites,omitempty"`
+}
+
+type ModelRewriteSummary struct {
+	Match    string `json:"match"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 type ProviderSummary struct {
@@ -153,6 +174,43 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			Enabled: s.store != nil && s.cfg.Storage.Type != "" && s.cfg.Storage.Type != "none",
 			Type:    s.cfg.Storage.Type,
 			Path:    s.cfg.Storage.SQLite.Path,
+		}
+
+		for _, app := range s.cfg.Apps {
+			summary := AppSummary{
+				Name:         app.Name,
+				Frontdoor:    app.Frontdoor,
+				Path:         app.Path,
+				Provider:     app.Provider,
+				DefaultModel: app.DefaultModel,
+			}
+
+			if len(app.ModelRouting.PrefixProviders) > 0 || len(app.ModelRouting.Rewrites) > 0 {
+				summary.ModelRouting = ModelRoutingSummary{
+					PrefixProviders: app.ModelRouting.PrefixProviders,
+				}
+				for _, rewrite := range app.ModelRouting.Rewrites {
+					summary.ModelRouting.Rewrites = append(summary.ModelRouting.Rewrites, ModelRewriteSummary{
+						Match:    rewrite.Match,
+						Provider: rewrite.Provider,
+						Model:    rewrite.Model,
+					})
+				}
+			}
+
+			resp.Apps = append(resp.Apps, summary)
+		}
+
+		if len(resp.Apps) == 0 && len(s.cfg.Frontdoors) > 0 {
+			for _, fd := range s.cfg.Frontdoors {
+				resp.Apps = append(resp.Apps, AppSummary{
+					Name:         fd.Type,
+					Frontdoor:    fd.Type,
+					Path:         fd.Path,
+					Provider:     fd.Provider,
+					DefaultModel: fd.DefaultModel,
+				})
+			}
 		}
 		summary := RoutingSummary{
 			DefaultProvider: s.cfg.Routing.DefaultProvider,
