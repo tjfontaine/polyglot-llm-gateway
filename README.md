@@ -43,6 +43,16 @@ go run cmd/gateway/main.go
 
 The server will start on port 8080 by default.
 
+### Run with Docker Compose
+
+Build and start the gateway with Docker Compose (ensure `.env` contains your API keys):
+
+```bash
+docker compose up --build
+```
+
+The service will be available on http://localhost:8080 and will reload automatically when configuration files or environment variables change on container restarts.
+
 ## Configuration
 
 The gateway is configured via `config.yaml`:

@@ -26,4 +26,5 @@ go.work
 # Frontend
 web/control-plane/node_modules
 web/control-plane/dist
-internal/controlplane/dist
+internal/controlplane/dist/*
+!internal/controlplane/dist/index.html
