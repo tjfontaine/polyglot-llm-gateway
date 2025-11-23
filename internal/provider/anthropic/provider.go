@@ -13,9 +13,15 @@ type Provider struct {
 	client anthropic.Client
 }
 
-func New(apiKey string) *Provider {
+// New creates a new Anthropic provider
+func New(apiKey string, opts ...option.RequestOption) *Provider {
+	clientOpts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+	clientOpts = append(clientOpts, opts...)
+
 	return &Provider{
-		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
+		client: anthropic.NewClient(clientOpts...),
 	}
 }
 
