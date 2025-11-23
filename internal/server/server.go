@@ -2,7 +2,9 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,19 +13,26 @@ import (
 type Server struct {
 	Router *chi.Mux
 	Port   int
+	logger *slog.Logger
 }
 
-func New(port int) *Server {
+func New(port int, logger *slog.Logger) *Server {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+
+	// Apply middleware in order
+	r.Use(RequestIDMiddleware)
+	r.Use(LoggingMiddleware(logger))
+	r.Use(TimeoutMiddleware(30 * time.Second))
 	r.Use(middleware.Recoverer)
 
 	return &Server{
 		Router: r,
 		Port:   port,
+		logger: logger,
 	}
 }
 
 func (s *Server) Start() error {
+	s.logger.Info("starting server", slog.Int("port", s.Port))
 	return http.ListenAndServe(fmt.Sprintf(":%d", s.Port), s.Router)
 }

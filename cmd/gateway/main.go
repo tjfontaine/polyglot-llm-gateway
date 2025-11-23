@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"log/slog"
+	"os"
 
 	"github.com/joho/godotenv"
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
@@ -17,6 +19,12 @@ import (
 func main() {
 	// Load .env file if it exists
 	_ = godotenv.Load()
+
+	// Initialize structured logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -79,7 +87,7 @@ func main() {
 	}
 
 	// Initialize Server
-	srv := server.New(cfg.Server.Port)
+	srv := server.New(cfg.Server.Port, logger)
 
 	// Register all frontdoor handlers
 	for _, reg := range handlerRegs {
