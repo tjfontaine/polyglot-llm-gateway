@@ -9,7 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // Store is a SQLite implementation of ConversationStore

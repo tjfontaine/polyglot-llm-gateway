@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 type Handler struct {

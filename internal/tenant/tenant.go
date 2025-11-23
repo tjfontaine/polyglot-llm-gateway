@@ -1,8 +1,8 @@
 package tenant
 
 import (
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // Tenant represents a client organization using the gateway

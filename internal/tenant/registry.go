@@ -3,8 +3,8 @@ package tenant
 import (
 	"fmt"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/provider"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 )
 
 // Registry manages tenant instances

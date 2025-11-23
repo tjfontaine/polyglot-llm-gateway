@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // Store is an in-memory implementation of ConversationStore

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // mockProvider implements domain.Provider for testing

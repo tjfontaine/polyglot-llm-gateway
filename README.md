@@ -1,4 +1,4 @@
-# Poly LLM Gateway
+# Polyglot LLM Gateway
 
 A high-performance, self-hosted Go service that acts as a universal translation layer for LLMs. It decouples clients from providers, allowing dynamic routing, failover, and policy enforcement without changing client code.
 

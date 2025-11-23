@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	"github.com/tjfontaine/poly-llm-gateway/internal/provider"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 )
 
 // mockProviderRegistry for testing

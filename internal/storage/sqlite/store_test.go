@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 func TestSQLiteStore_CreateConversation(t *testing.T) {

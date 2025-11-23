@@ -3,10 +3,10 @@ package provider
 import (
 	"fmt"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	"github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
-	"github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
 )
 
 // Registry creates providers from configuration

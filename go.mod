@@ -1,4 +1,4 @@
-module github.com/tjfontaine/poly-llm-gateway
+module github.com/tjfontaine/polyglot-llm-gateway
 
 go 1.25.3
 

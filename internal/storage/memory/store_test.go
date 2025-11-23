@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 func TestMemoryStore_CreateConversation(t *testing.T) {

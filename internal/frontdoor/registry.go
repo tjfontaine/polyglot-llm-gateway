@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"net/http" // Keep net/http for HandlerRegistration type
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	anthropic_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/anthropic"
-	openai_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/openai"
-	responses_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/responses"
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	anthropic_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
+	openai_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
+	responses_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/responses"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // HandlerRegistration represents a registered handler

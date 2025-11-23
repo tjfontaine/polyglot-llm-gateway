@@ -9,20 +9,20 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
-	"github.com/tjfontaine/poly-llm-gateway/internal/auth"
-	"github.com/tjfontaine/poly-llm-gateway/internal/config"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	"github.com/tjfontaine/poly-llm-gateway/internal/frontdoor"
-	"github.com/tjfontaine/poly-llm-gateway/internal/policy"
-	"github.com/tjfontaine/poly-llm-gateway/internal/provider"
-	anthropic_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
-	openai_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
-	"github.com/tjfontaine/poly-llm-gateway/internal/server"
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage/memory"
-	"github.com/tjfontaine/poly-llm-gateway/internal/storage/sqlite"
-	"github.com/tjfontaine/poly-llm-gateway/internal/telemetry"
-	"github.com/tjfontaine/poly-llm-gateway/internal/tenant"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/policy"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
+	anthropic_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
+	openai_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/telemetry"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 func main() {
@@ -36,7 +36,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Initialize OpenTelemetry
-	shutdown, err := telemetry.InitTracer("poly-llm-gateway", logger)
+	shutdown, err := telemetry.InitTracer("polyglot-llm-gateway", logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize tracer: %v", err)
 	}

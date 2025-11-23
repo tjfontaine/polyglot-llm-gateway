@@ -6,7 +6,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 type Provider struct {

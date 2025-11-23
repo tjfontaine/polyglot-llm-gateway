@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/auth"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
 )
 
 // RequestIDKey is the context key for request IDs

@@ -6,7 +6,7 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 type Provider struct {

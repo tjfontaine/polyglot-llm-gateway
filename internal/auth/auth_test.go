@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/tenant"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 func TestHashAPIKey(t *testing.T) {

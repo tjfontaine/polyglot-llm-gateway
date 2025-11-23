@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/openai/openai-go/option"
-	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
-	"github.com/tjfontaine/poly-llm-gateway/internal/testutil"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/testutil"
 )
 
 func TestProvider_Complete(t *testing.T) {

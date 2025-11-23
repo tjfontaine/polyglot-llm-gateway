@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/tenant"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 // Authenticator validates API keys and extracts tenant information

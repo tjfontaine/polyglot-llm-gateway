@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/tjfontaine/poly-llm-gateway/internal/auth"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
 )
 
 type Server struct {
