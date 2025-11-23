@@ -82,6 +82,7 @@ func (r *Registry) CreateResponsesHandlers(basePath string, store storage.Conver
 	handler := responses_frontdoor.NewHandler(store, provider)
 
 	return []HandlerRegistration{
+		{Path: basePath + "/v1/responses", Method: http.MethodPost, Handler: handler.HandleCreateResponse},
 		{Path: basePath + "/v1/threads", Method: http.MethodPost, Handler: handler.HandleCreateThread},
 		{Path: basePath + "/v1/threads/{thread_id}", Method: http.MethodGet, Handler: handler.HandleGetThread},
 		{Path: basePath + "/v1/threads/{thread_id}/messages", Method: http.MethodPost, Handler: handler.HandleCreateMessage},

@@ -26,6 +26,14 @@ apps:
       - id: claude-sonnet-alpha
         object: model
         owned_by: gateway
+  - name: codex
+    frontdoor: openai
+    path: /codex
+    enable_responses: true
+    model_routing:
+      fallback:
+        provider: openai
+        model: gpt-5-mini
   - name: claude
     frontdoor: anthropic
     path: /claude
@@ -34,7 +42,7 @@ apps:
         provider: openai
         model: gpt-5-mini
       rewrites:
-        - model_exact: claude-haiku-4.5
+        - model_prefix: claude-haiku-4-5
           provider: openai
           model: gpt-5-mini
           rewrite_response_model: true

@@ -19,6 +19,7 @@ frontdoors:
   # Routes requests based on the 'routing' rules defined below.
   - type: openai
     path: /openai
+    enable_responses: true # Optional: mount Responses API for this frontdoor
 
   # Standard Anthropic-compatible endpoint
   - type: anthropic

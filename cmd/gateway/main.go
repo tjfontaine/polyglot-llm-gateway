@@ -149,11 +149,12 @@ func main() {
 	} else if len(cfg.Frontdoors) > 0 {
 		for _, fd := range cfg.Frontdoors {
 			apps = append(apps, config.AppConfig{
-				Name:         fd.Type,
-				Frontdoor:    fd.Type,
-				Path:         fd.Path,
-				Provider:     fd.Provider,
-				DefaultModel: fd.DefaultModel,
+				Name:            fd.Type,
+				Frontdoor:       fd.Type,
+				Path:            fd.Path,
+				Provider:        fd.Provider,
+				DefaultModel:    fd.DefaultModel,
+				EnableResponses: fd.EnableResponses,
 			})
 		}
 	} else {
@@ -194,23 +195,27 @@ func main() {
 
 	// Register Responses API handlers if storage is configured
 	if store != nil {
-		responsesHandlers := frontdoorRegistry.CreateResponsesHandlers("/responses", store, router)
-		for _, reg := range responsesHandlers {
-			method := reg.Method
-			if method == "" {
-				method = http.MethodPost
-			}
+		basePaths := resolveResponsesBasePaths(apps, cfg.Routing)
 
-			switch method {
-			case http.MethodGet:
-				srv.Router.Get(reg.Path, reg.Handler)
-			case http.MethodPost:
-				srv.Router.Post(reg.Path, reg.Handler)
-			default:
-				srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
-			}
+		for _, base := range basePaths {
+			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(base, store, router)
+			for _, reg := range responsesHandlers {
+				method := reg.Method
+				if method == "" {
+					method = http.MethodPost
+				}
 
-			log.Printf("Registered Responses API: %s %s", method, reg.Path)
+				switch method {
+				case http.MethodGet:
+					srv.Router.Get(reg.Path, reg.Handler)
+				case http.MethodPost:
+					srv.Router.Post(reg.Path, reg.Handler)
+				default:
+					srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
+				}
+
+				log.Printf("Registered Responses API: %s %s", method, reg.Path)
+			}
 		}
 	}
 
@@ -235,4 +240,31 @@ func main() {
 	// Wait for shutdown signal
 	<-sigChan
 	logger.Info("shutting down gracefully...")
+}
+
+func buildProviderResponsesSupport(cfg *config.Config) map[string]bool {
+	// Deprecated: keep for compatibility with callers; now all providers can back Responses when enabled at the frontdoor.
+	return map[string]bool{}
+}
+
+func resolveResponsesBasePaths(apps []config.AppConfig, routing config.RoutingConfig) []string {
+	seen := make(map[string]bool)
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+	}
+
+	for _, app := range apps {
+		if app.Frontdoor == "openai" && app.EnableResponses {
+			add(app.Path)
+		}
+	}
+
+	var paths []string
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	return paths
 }

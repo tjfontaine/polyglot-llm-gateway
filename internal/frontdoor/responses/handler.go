@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"errors"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -75,6 +77,36 @@ type RunResponse struct {
 	ThreadID  string `json:"thread_id"`
 	Status    string `json:"status"`
 	Model     string `json:"model"`
+}
+
+// Responses API request/response types (one-shot)
+type CreateResponseRequest struct {
+	Model           string                 `json:"model"`
+	Input           json.RawMessage        `json:"input"`
+	Messages        []CreateMessageRequest `json:"messages"` // Optional compatibility field
+	Stream          bool                   `json:"stream,omitempty"`
+	MaxOutputTokens int                    `json:"max_output_tokens,omitempty"`
+	Temperature     float32                `json:"temperature,omitempty"`
+}
+
+type ResponseOutput struct {
+	Role    string                `json:"role"`
+	Content []ResponseTextContent `json:"content"`
+}
+
+type ResponseTextContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type CreateResponseResponse struct {
+	ID      string           `json:"id"`
+	Object  string           `json:"object"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Status  string           `json:"status"`
+	Output  []ResponseOutput `json:"output"`
+	Usage   *domain.Usage    `json:"usage,omitempty"`
 }
 
 // HandleCreateThread creates a new conversation thread
@@ -184,6 +216,76 @@ func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 				Text: TextContent{Value: msg.Content},
 			},
 		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// HandleCreateResponse provides a lightweight Responses API entrypoint similar to OpenAI's /v1/responses.
+func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
+	var req CreateResponseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Model == "" {
+		http.Error(w, "model is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Stream {
+		http.Error(w, "streaming responses are not yet supported", http.StatusBadRequest)
+		return
+	}
+
+	messages, err := parseInputMessages(req.Input, req.Messages)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid input: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	tenantID := getTenantID(r.Context())
+	canonReq := &domain.CanonicalRequest{
+		TenantID:    tenantID,
+		Model:       req.Model,
+		Messages:    messages,
+		MaxTokens:   req.MaxOutputTokens,
+		Temperature: req.Temperature,
+	}
+
+	canonResp, err := h.provider.Complete(r.Context(), canonReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("provider error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if len(canonResp.Choices) == 0 {
+		http.Error(w, "provider returned no choices", http.StatusInternalServerError)
+		return
+	}
+
+	choice := canonResp.Choices[0]
+	resp := CreateResponseResponse{
+		ID:      canonResp.ID,
+		Object:  "response",
+		Created: canonResp.Created,
+		Model:   canonResp.Model,
+		Status:  "completed",
+		Output: []ResponseOutput{
+			{
+				Role: choice.Message.Role,
+				Content: []ResponseTextContent{
+					{Type: "output_text", Text: choice.Message.Content},
+				},
+			},
+		},
+	}
+
+	// Only attach usage if provider supplied it.
+	if canonResp.Usage != (domain.Usage{}) {
+		resp.Usage = &canonResp.Usage
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -313,4 +415,64 @@ func getTenantID(ctx context.Context) string {
 		return "default"
 	}
 	return "default"
+}
+
+func parseInputMessages(rawInput json.RawMessage, fallbackMessages []CreateMessageRequest) ([]domain.Message, error) {
+	// Accept either the new Responses API "input" field or a legacy "messages" field.
+	if len(rawInput) == 0 && len(fallbackMessages) == 0 {
+		return nil, errors.New("input is required")
+	}
+
+	// Try to parse "input" as a simple string
+	var inputText string
+	if len(rawInput) > 0 && json.Unmarshal(rawInput, &inputText) == nil {
+		return []domain.Message{{Role: "user", Content: inputText}}, nil
+	}
+
+	// Try to parse "input" as an array of role/content pairs
+	var inputMessages []CreateMessageRequest
+	if len(rawInput) > 0 && json.Unmarshal(rawInput, &inputMessages) == nil && len(inputMessages) > 0 {
+		msgs := make([]domain.Message, 0, len(inputMessages))
+		for _, m := range inputMessages {
+			if m.Content == "" {
+				continue
+			}
+			role := m.Role
+			if role == "" {
+				role = "user"
+			}
+			msgs = append(msgs, domain.Message{
+				Role:    role,
+				Content: m.Content,
+			})
+		}
+		if len(msgs) == 0 {
+			return nil, errors.New("input messages missing content")
+		}
+		return msgs, nil
+	}
+
+	// Fallback to explicit messages field
+	if len(fallbackMessages) > 0 {
+		msgs := make([]domain.Message, 0, len(fallbackMessages))
+		for _, m := range fallbackMessages {
+			if m.Content == "" {
+				continue
+			}
+			role := m.Role
+			if role == "" {
+				role = "user"
+			}
+			msgs = append(msgs, domain.Message{
+				Role:    role,
+				Content: m.Content,
+			})
+		}
+		if len(msgs) == 0 {
+			return nil, errors.New("messages missing content")
+		}
+		return msgs, nil
+	}
+
+	return nil, errors.New("unsupported input format")
 }

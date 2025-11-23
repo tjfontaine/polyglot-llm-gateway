@@ -51,20 +51,22 @@ type APIKeyConfig struct {
 }
 
 type AppConfig struct {
-	Name         string             `koanf:"name"`
-	Frontdoor    string             `koanf:"frontdoor"`
-	Path         string             `koanf:"path"`
-	Provider     string             `koanf:"provider"`      // Optional: force specific provider
-	DefaultModel string             `koanf:"default_model"` // Optional: force/default model
-	ModelRouting ModelRoutingConfig `koanf:"model_routing"`
-	Models       []ModelListItem    `koanf:"models"`
+	Name            string             `koanf:"name"`
+	Frontdoor       string             `koanf:"frontdoor"`
+	Path            string             `koanf:"path"`
+	Provider        string             `koanf:"provider"`      // Optional: force specific provider
+	DefaultModel    string             `koanf:"default_model"` // Optional: force/default model
+	ModelRouting    ModelRoutingConfig `koanf:"model_routing"`
+	Models          []ModelListItem    `koanf:"models"`
+	EnableResponses bool               `koanf:"enable_responses"` // Optional: mount Responses API for this frontdoor
 }
 
 type FrontdoorConfig struct {
-	Type         string `koanf:"type"`
-	Path         string `koanf:"path"`
-	Provider     string `koanf:"provider"`      // Optional: force specific provider
-	DefaultModel string `koanf:"default_model"` // Optional: force/default model
+	Type            string `koanf:"type"`
+	Path            string `koanf:"path"`
+	Provider        string `koanf:"provider"`         // Optional: force specific provider
+	DefaultModel    string `koanf:"default_model"`    // Optional: force/default model
+	EnableResponses bool   `koanf:"enable_responses"` // Optional: mount Responses API for this frontdoor
 }
 
 type ProviderConfig struct {
