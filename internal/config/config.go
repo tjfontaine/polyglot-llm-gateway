@@ -57,9 +57,11 @@ type FrontdoorConfig struct {
 }
 
 type ProviderConfig struct {
-	Name   string `koanf:"name"`
-	Type   string `koanf:"type"`
-	APIKey string `koanf:"api_key"`
+	Name              string `koanf:"name"`
+	Type              string `koanf:"type"`
+	APIKey            string `koanf:"api_key"`
+	BaseURL           string `koanf:"base_url"`           // New: Custom API endpoint
+	SupportsResponses bool   `koanf:"supports_responses"` // New: Flag for native Responses API support
 }
 
 type RoutingConfig struct {

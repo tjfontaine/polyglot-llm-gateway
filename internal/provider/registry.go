@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 
+	openai_option "github.com/openai/openai-go/option"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
@@ -18,8 +19,12 @@ func NewRegistry() *Registry {
 
 func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, error) {
 	switch cfg.Type {
-	case "openai":
-		return openai.New(cfg.APIKey), nil
+	case "openai", "openai-compatible":
+		var opts []openai_option.RequestOption
+		if cfg.BaseURL != "" {
+			opts = append(opts, openai_option.WithBaseURL(cfg.BaseURL))
+		}
+		return openai.New(cfg.APIKey, opts...), nil
 	case "anthropic":
 		return anthropic.New(cfg.APIKey), nil
 	default:
