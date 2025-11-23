@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/controlplane"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/policy"
@@ -180,6 +181,11 @@ func main() {
 			log.Printf("Registered Responses API: %s", reg.Path)
 		}
 	}
+
+	// Initialize Control Plane
+	cpServer := controlplane.NewServer()
+	srv.Router.Mount("/admin", cpServer)
+	log.Printf("Registered Control Plane at /admin")
 
 	log.Printf("Starting server on port %d", cfg.Server.Port)
 

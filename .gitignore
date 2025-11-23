@@ -22,3 +22,8 @@ go.work
 
 # Environment variables
 .env
+
+# Frontend
+web/control-plane/node_modules
+web/control-plane/dist
+internal/controlplane/dist
