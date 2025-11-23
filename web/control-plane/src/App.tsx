@@ -399,9 +399,11 @@ function App() {
         <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-wide text-slate-400">Responses API</p>
-              <h2 className="text-lg font-semibold text-white">Threads explorer</h2>
-              <p className="text-sm text-slate-400">Read-only view of stored threads and message history.</p>
+              <p className="text-xs uppercase tracking-wide text-slate-400">Conversations</p>
+              <h2 className="text-lg font-semibold text-white">Conversation explorer</h2>
+              <p className="text-sm text-slate-400">
+                Read-only view of stored conversations across all frontdoors (Responses API, OpenAI, Anthropic).
+              </p>
             </div>
             <button
               type="button"
@@ -424,7 +426,7 @@ function App() {
               <div className="rounded-2xl border border-white/10 bg-slate-950/60">
                 <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <MessageSquare size={16} className="text-emerald-300" /> Threads
+                    <MessageSquare size={16} className="text-emerald-300" /> Conversations
                   </div>
                   <button
                     type="button"
@@ -444,7 +446,7 @@ function App() {
                   </button>
                 </div>
                 <div className="max-h-[540px] space-y-2 overflow-y-auto p-3">
-                  {loadingThreads && <div className="flex items-center justify-center py-10 text-slate-400">Loading threads…</div>}
+                  {loadingThreads && <div className="flex items-center justify-center py-10 text-slate-400">Loading conversations…</div>}
                   {!loadingThreads &&
                     threads.map((thread) => (
                       <button
@@ -458,13 +460,29 @@ function App() {
                           <div className="truncate text-sm font-semibold text-white">{thread.metadata?.title || thread.id}</div>
                           <span className="text-xs text-emerald-200">{thread.message_count} msg</span>
                         </div>
-                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
                           <span>{formatShortDate(thread.updated_at)}</span>
-                          {thread.metadata?.topic && <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-200">{thread.metadata.topic}</span>}
+                          <div className="flex flex-wrap gap-1">
+                            {thread.metadata?.frontdoor && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-200">fd: {thread.metadata.frontdoor}</span>
+                            )}
+                            {thread.metadata?.provider && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-emerald-100">prov: {thread.metadata.provider}</span>
+                            )}
+                            {thread.metadata?.app && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-100">app: {thread.metadata.app}</span>
+                            )}
+                            {thread.metadata?.stream === 'true' && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-amber-100">stream</span>
+                            )}
+                            {thread.metadata?.topic && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-200">{thread.metadata.topic}</span>
+                            )}
+                          </div>
                         </div>
                       </button>
                     ))}
-                  {!loadingThreads && threads.length === 0 && <div className="py-10 text-center text-slate-500">No threads recorded yet.</div>}
+                  {!loadingThreads && threads.length === 0 && <div className="py-10 text-center text-slate-500">No conversations recorded yet.</div>}
                 </div>
               </div>
 
@@ -493,6 +511,26 @@ function App() {
                           <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
                             <ServerCog size={12} /> {selectedThread.messages.length} messages
                           </span>
+                          {selectedThread.metadata?.frontdoor && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                              <Route size={12} /> fd: {selectedThread.metadata.frontdoor}
+                            </span>
+                          )}
+                          {selectedThread.metadata?.provider && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                              <ServerCog size={12} /> provider: {selectedThread.metadata.provider}
+                            </span>
+                          )}
+                          {selectedThread.metadata?.app && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                              <Compass size={12} /> app: {selectedThread.metadata.app}
+                            </span>
+                          )}
+                          {selectedThread.metadata?.stream === 'true' && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-1 text-amber-100">
+                              <Signal size={12} /> streamed
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
