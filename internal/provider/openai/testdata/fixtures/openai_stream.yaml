@@ -1,0 +1,69 @@
+---
+version: 2
+interactions:
+- request:
+    body: |
+      {"messages":[{"role":"user","content":"Count to 3"}],"model":"gpt-3.5-turbo","stream":true}
+    form: {}
+    headers:
+      Authorization:
+      - Bearer test-key
+      Content-Type:
+      - application/json
+      X-Stainless-Arch:
+      - arm64
+      X-Stainless-Async:
+      - "false"
+      X-Stainless-Lang:
+      - go
+      X-Stainless-Os:
+      - macos
+      X-Stainless-Package-Version:
+      - v0.1.0-alpha.39
+      X-Stainless-Runtime:
+      - go
+      X-Stainless-Runtime-Version:
+      - go1.23.3
+    url: https://api.openai.com/v1/chat/completions
+    method: POST
+  response:
+    body: |
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"1"},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":", "},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"2"},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":", "},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"3"},"logprobs":null,"finish_reason":null}]}
+
+      data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1732336666,"model":"gpt-3.5-turbo-0125","system_fingerprint":null,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+
+      data: [DONE]
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=86400
+      Cf-Cache-Status:
+      - DYNAMIC
+      Cf-Ray:
+      - 8e6f7a1b2c3d4e5f-SJC
+      Connection:
+      - keep-alive
+      Content-Type:
+      - text/event-stream
+      Date:
+      - Sat, 23 Nov 2024 04:37:46 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Request-Id:
+      - req_1234567890abcdef1234567890abcdef
+    status: 200 OK
+    code: 200
+    duration: 500ms
