@@ -82,13 +82,14 @@ func main() {
 	var router domain.Provider
 	var authenticator *auth.Authenticator
 	var providers map[string]domain.Provider
+	var tenants []*tenant.Tenant
 
 	if len(cfg.Tenants) > 0 {
 		// Multi-tenant mode
 		logger.Info("multi-tenant mode enabled", slog.Int("tenant_count", len(cfg.Tenants)))
 
 		tenantRegistry := tenant.NewRegistry()
-		tenants, err := tenantRegistry.LoadTenants(cfg.Tenants, providerRegistry)
+		tenants, err = tenantRegistry.LoadTenants(cfg.Tenants, providerRegistry)
 		if err != nil {
 			log.Fatalf("Failed to load tenants: %v", err)
 		}
@@ -117,6 +118,11 @@ func main() {
 			providers = map[string]domain.Provider{
 				"openai":    openaiP,
 				"anthropic": anthropicP,
+			}
+			// Populate provider config for control plane display while keeping secrets empty
+			cfg.Providers = []config.ProviderConfig{
+				{Name: "openai", Type: "openai"},
+				{Name: "anthropic", Type: "anthropic"},
 			}
 			// Use default routing if no config
 			cfg.Routing = config.RoutingConfig{
@@ -183,7 +189,7 @@ func main() {
 	}
 
 	// Initialize Control Plane
-	cpServer := controlplane.NewServer()
+	cpServer := controlplane.NewServer(cfg, store, tenants)
 	srv.Router.Mount("/admin", cpServer)
 	log.Printf("Registered Control Plane at /admin")
 

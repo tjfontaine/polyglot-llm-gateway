@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   gateway:
     build: .
@@ -9,5 +7,8 @@ services:
       - "8080:8080"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
+      - gateway-data:/app/data
     restart: unless-stopped
+
+volumes:
+  gateway-data:

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -13,12 +14,6 @@ import (
 
 // InitTracer initializes OpenTelemetry tracing
 func InitTracer(serviceName string, logger *slog.Logger) (func(context.Context) error, error) {
-	// Create stdout exporter for development
-	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-	if err != nil {
-		return nil, err
-	}
-
 	// Create resource with service name
 	res, err := resource.Merge(
 		resource.Default(),
@@ -31,15 +26,28 @@ func InitTracer(serviceName string, logger *slog.Logger) (func(context.Context) 
 		return nil, err
 	}
 
-	// Create trace provider
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-	)
+	var tp *sdktrace.TracerProvider
+
+	if os.Getenv("OTEL_TRACES_STDOUT") == "1" || os.Getenv("OTEL_TRACES_STDOUT") == "true" {
+		// Create stdout exporter for development
+		exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+		if err != nil {
+			return nil, err
+		}
+		tp = sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(exporter),
+			sdktrace.WithResource(res),
+		)
+		logger.Info("OpenTelemetry initialized", slog.String("service", serviceName), slog.String("exporter", "stdout"))
+	} else {
+		// No-op exporter; keep resource for future exporters
+		tp = sdktrace.NewTracerProvider(
+			sdktrace.WithResource(res),
+		)
+		logger.Info("OpenTelemetry initialized", slog.String("service", serviceName), slog.String("exporter", "none"))
+	}
 
 	otel.SetTracerProvider(tp)
-
-	logger.Info("OpenTelemetry initialized", slog.String("service", serviceName))
 
 	// Return shutdown function
 	return tp.Shutdown, nil
