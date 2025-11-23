@@ -57,6 +57,7 @@ type AppConfig struct {
 	Provider     string             `koanf:"provider"`      // Optional: force specific provider
 	DefaultModel string             `koanf:"default_model"` // Optional: force/default model
 	ModelRouting ModelRoutingConfig `koanf:"model_routing"`
+	Models       []ModelListItem    `koanf:"models"`
 }
 
 type FrontdoorConfig struct {
@@ -92,9 +93,19 @@ type ModelRoutingConfig struct {
 }
 
 type ModelRewriteRule struct {
-	Match    string `koanf:"match"`
-	Provider string `koanf:"provider"`
-	Model    string `koanf:"model"`
+	Match                string `koanf:"match"` // Deprecated: use ModelExact or ModelPrefix
+	ModelExact           string `koanf:"model_exact"`
+	ModelPrefix          string `koanf:"model_prefix"`
+	Provider             string `koanf:"provider"`
+	Model                string `koanf:"model"`
+	RewriteResponseModel bool   `koanf:"rewrite_response_model"`
+}
+
+type ModelListItem struct {
+	ID      string `koanf:"id"`
+	Object  string `koanf:"object"`
+	OwnedBy string `koanf:"owned_by"`
+	Created int64  `koanf:"created"`
 }
 
 type OpenAIConfig struct {

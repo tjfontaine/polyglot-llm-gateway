@@ -37,3 +37,7 @@ func (p *ModelOverrideProvider) Stream(ctx context.Context, req *domain.Canonica
 	newReq.Model = p.model
 	return p.inner.Stream(ctx, &newReq)
 }
+
+func (p *ModelOverrideProvider) ListModels(ctx context.Context) (*domain.ModelList, error) {
+	return p.inner.ListModels(ctx)
+}

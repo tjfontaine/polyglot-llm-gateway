@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
@@ -17,13 +18,25 @@ type Handler struct {
 	provider domain.Provider
 	store    storage.ConversationStore
 	appName  string
+	models   []domain.Model
 }
 
-func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string) *Handler {
+func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
+	exposedModels := make([]domain.Model, 0, len(models))
+	for _, model := range models {
+		exposedModels = append(exposedModels, domain.Model{
+			ID:      model.ID,
+			Object:  model.Object,
+			OwnedBy: model.OwnedBy,
+			Created: model.Created,
+		})
+	}
+
 	return &Handler{
 		provider: provider,
 		store:    store,
 		appName:  appName,
+		models:   exposedModels,
 	}
 }
 
@@ -217,6 +230,31 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(anthropicResp)
+}
+
+func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
+	server.AddLogField(r.Context(), "frontdoor", "anthropic")
+	server.AddLogField(r.Context(), "app", h.appName)
+	server.AddLogField(r.Context(), "provider", h.provider.Name())
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if len(h.models) > 0 {
+		json.NewEncoder(w).Encode(domain.ModelList{Object: "list", Data: h.models})
+		return
+	}
+
+	list, err := h.provider.ListModels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if list.Object == "" {
+		list.Object = "list"
+	}
+
+	json.NewEncoder(w).Encode(list)
 }
 
 func toCanonicalRequest(req MessagesRequest) (*domain.CanonicalRequest, error) {

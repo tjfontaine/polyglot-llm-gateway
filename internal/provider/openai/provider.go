@@ -146,3 +146,27 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 
 	return out, nil
 }
+
+func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {
+	pager := p.client.Models.ListAutoPaging(ctx)
+
+	var models []domain.Model
+	for pager.Next() {
+		m := pager.Current()
+		models = append(models, domain.Model{
+			ID:      m.ID,
+			Object:  string(m.Object),
+			OwnedBy: m.OwnedBy,
+			Created: int64(m.Created),
+		})
+	}
+
+	if err := pager.Err(); err != nil {
+		return nil, err
+	}
+
+	return &domain.ModelList{
+		Object: "list",
+		Data:   models,
+	}, nil
+}
