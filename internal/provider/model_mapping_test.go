@@ -77,6 +77,32 @@ func TestModelMappingProviderPrefixRouting(t *testing.T) {
 	}
 }
 
+func TestModelMappingProviderFallbackRewrite(t *testing.T) {
+	openai := &recordingProvider{name: "openai"}
+	router := &recordingProvider{name: "router"}
+
+	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+		"openai": openai,
+	}, config.ModelRoutingConfig{
+		Fallback: &config.ModelRewriteRule{
+			Provider: "openai",
+			Model:    "gpt-5-mini",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating mapper: %v", err)
+	}
+
+	_, err = mapper.Complete(context.Background(), &domain.CanonicalRequest{Model: "claude-3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if openai.lastReq == nil || openai.lastReq.Model != "gpt-5-mini" {
+		t.Fatalf("expected fallback rewrite to gpt-5-mini on openai, got %#v", openai.lastReq)
+	}
+}
+
 func TestModelMappingProviderFallback(t *testing.T) {
 	router := &recordingProvider{name: "router"}
 

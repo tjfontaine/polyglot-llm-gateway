@@ -50,7 +50,8 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 	}
 
 	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+		// Newer models (e.g., gpt-5, o-series) require max_completion_tokens; prefer it to avoid 400s.
+		params.MaxCompletionTokens = openai.Int(int64(req.MaxTokens))
 	}
 
 	// TODO: Handle other parameters like Temperature, Tools, etc.
@@ -107,7 +108,7 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 	}
 
 	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+		params.MaxCompletionTokens = openai.Int(int64(req.MaxTokens))
 	}
 
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)

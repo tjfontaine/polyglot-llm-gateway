@@ -88,6 +88,7 @@ type RoutingRule struct {
 type ModelRoutingConfig struct {
 	PrefixProviders map[string]string  `koanf:"prefix_providers"`
 	Rewrites        []ModelRewriteRule `koanf:"rewrites"`
+	Fallback        *ModelRewriteRule  `koanf:"fallback"`
 }
 
 type ModelRewriteRule struct {

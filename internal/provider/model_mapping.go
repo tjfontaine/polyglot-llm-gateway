@@ -15,6 +15,7 @@ type ModelMappingProvider struct {
 	providers       map[string]domain.Provider
 	prefixMap       map[string]string
 	rewrites        []config.ModelRewriteRule
+	fallback        *config.ModelRewriteRule
 }
 
 // NewModelMappingProvider creates a provider that can rewrite and remap models before routing.
@@ -32,12 +33,18 @@ func NewModelMappingProvider(defaultProvider domain.Provider, providers map[stri
 			}
 		}
 	}
+	if cfg.Fallback != nil && cfg.Fallback.Provider != "" {
+		if _, ok := providers[cfg.Fallback.Provider]; !ok {
+			return nil, fmt.Errorf("unknown provider in fallback rewrite: %s", cfg.Fallback.Provider)
+		}
+	}
 
 	return &ModelMappingProvider{
 		defaultProvider: defaultProvider,
 		providers:       providers,
 		prefixMap:       cfg.PrefixProviders,
 		rewrites:        cfg.Rewrites,
+		fallback:        cfg.Fallback,
 	}, nil
 }
 
@@ -93,6 +100,22 @@ func (p *ModelMappingProvider) selectProvider(req *domain.CanonicalRequest) (dom
 			mapped.Model = parts[1]
 			return provider, &mapped, nil
 		}
+	}
+
+	if p.fallback != nil {
+		mapped := *req
+		if p.fallback.Model != "" {
+			mapped.Model = p.fallback.Model
+		}
+
+		if p.fallback.Provider != "" {
+			if provider, ok := p.providers[p.fallback.Provider]; ok {
+				return provider, &mapped, nil
+			}
+			return nil, nil, fmt.Errorf("no provider configured for fallback: %s", p.fallback.Provider)
+		}
+
+		return p.defaultProvider, &mapped, nil
 	}
 
 	return p.defaultProvider, req, nil
