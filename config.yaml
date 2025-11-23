@@ -1,6 +1,12 @@
 server:
   port: 8080
 
+# Storage Configuration
+# storage:
+#   type: sqlite
+#   sqlite:
+#     path: ./data/conversations.db
+
 frontdoors:
   - type: openai
     path: /openai

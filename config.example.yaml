@@ -1,0 +1,92 @@
+# Polyglot LLM Gateway - Comprehensive Configuration Example
+
+# Server Configuration
+server:
+  port: 8080
+
+# Storage Configuration (Optional)
+# Used for the Responses API (Threads, Messages, Runs)
+# Options: sqlite, memory, none
+storage:
+  type: sqlite
+  sqlite:
+    path: ./data/conversations.db
+
+# Frontdoor Configuration
+# Define endpoints for clients to connect to.
+frontdoors:
+  # Standard OpenAI-compatible endpoint
+  # Routes requests based on the 'routing' rules defined below.
+  - type: openai
+    path: /openai
+
+  # Standard Anthropic-compatible endpoint
+  - type: anthropic
+    path: /anthropic
+
+  # App-Specific Endpoint: Forced Provider
+  # Forces all requests to this endpoint to use the 'anthropic' provider,
+  # bypassing the routing rules. Useful for apps that need a specific provider.
+  - type: openai
+    path: /force-anthropic
+    provider: anthropic
+
+  # App-Specific Endpoint: Forced Model
+  # Forces all requests to use 'gpt-4o', ignoring the model requested by the client.
+  - type: openai
+    path: /force-gpt4
+    provider: openai
+    default_model: gpt-4o
+
+# Provider Configuration
+# Define upstream LLM providers.
+providers:
+  - name: openai
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+
+  - name: anthropic
+    type: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
+
+  # OpenAI-Compatible Provider (e.g., LocalAI, vLLM, Ollama)
+  # Connects to any service implementing the OpenAI API.
+  - name: local-model
+    type: openai-compatible
+    api_key: not-needed
+    base_url: http://localhost:8080/v1
+    supports_responses: false # Set to true if upstream supports Responses API natively
+
+# Routing Configuration
+# Rules to route requests to specific providers based on model names.
+routing:
+  rules:
+    - model_prefix: "claude"
+      provider: anthropic
+    
+    - model_prefix: "gpt"
+      provider: openai
+    
+    - model_prefix: "local"
+      provider: local-model
+  
+  default_provider: openai
+
+# Multi-Tenant Configuration (Optional)
+# If 'tenants' is defined, the gateway runs in multi-tenant mode.
+# API keys are required for all requests.
+# tenants:
+#   - id: tenant-acme
+#     name: "Acme Corp"
+#     api_keys:
+#       - key_hash: "SHA256_HASH_OF_API_KEY"
+#         description: "Acme Dev Key"
+#     providers:
+#       - name: openai-acme
+#         type: openai
+#         api_key: ${ACME_OPENAI_KEY}
+#     routing:
+#       rules:
+#         - model_prefix: "gpt"
+#           provider: openai-acme
+#       default_provider: openai-acme
