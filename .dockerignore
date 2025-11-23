@@ -1,0 +1,9 @@
+.git
+bin
+*.log
+*.test
+node_modules
+web/control-plane/node_modules
+web/control-plane/dist
+.env
+.DS_Store
