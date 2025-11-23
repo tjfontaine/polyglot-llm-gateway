@@ -36,30 +36,33 @@ func New(dbPath string) (*Store, error) {
 }
 
 func (s *Store) initSchema() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS conversations (
-		id TEXT PRIMARY KEY,
-		tenant_id TEXT NOT NULL,
-		metadata TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS conversations (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id TEXT PRIMARY KEY,
+			conversation_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
+	}
 
-	CREATE TABLE IF NOT EXISTS messages (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT NOT NULL,
-		role TEXT NOT NULL,
-		content TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-	);
+	for _, stmt := range statements {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to execute schema statement: %w", err)
+		}
+	}
 
-	CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id);
-	CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-	`
-
-	_, err := s.db.Exec(schema)
-	return err
+	return nil
 }
 
 func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversation) error {

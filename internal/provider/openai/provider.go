@@ -13,9 +13,15 @@ type Provider struct {
 	client openai.Client
 }
 
-func New(apiKey string) *Provider {
+// New creates a new OpenAI provider
+func New(apiKey string, opts ...option.RequestOption) *Provider {
+	clientOpts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+	clientOpts = append(clientOpts, opts...)
+
 	return &Provider{
-		client: openai.NewClient(option.WithAPIKey(apiKey)),
+		client: openai.NewClient(clientOpts...),
 	}
 }
 
