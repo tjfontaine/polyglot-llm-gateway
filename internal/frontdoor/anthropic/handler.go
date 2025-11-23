@@ -133,6 +133,7 @@ type Usage struct {
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+	providerName := h.provider.Name()
 
 	var req MessagesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -164,6 +165,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		logger.Error("messages completion failed",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
+			slog.String("requested_model", canonReq.Model),
+			slog.String("provider", providerName),
 		)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -188,10 +191,20 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	logger.Info("messages completion",
+		slog.String("request_id", requestID),
+		slog.String("frontdoor", "anthropic"),
+		slog.String("app", h.appName),
+		slog.String("provider", providerName),
+		slog.String("requested_model", canonReq.Model),
+		slog.String("served_model", resp.Model),
+		slog.String("finish_reason", resp.Choices[0].FinishReason),
+	)
+
 	metadata := map[string]string{
 		"frontdoor": "anthropic",
 		"app":       h.appName,
-		"provider":  h.provider.Name(),
+		"provider":  providerName,
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, canonReq, resp, metadata)
 
@@ -270,12 +283,15 @@ func collapseContent(blocks MessageContentList) (string, error) {
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+	providerName := h.provider.Name()
 
 	events, err := h.provider.Stream(r.Context(), req)
 	if err != nil {
 		logger.Error("failed to start stream",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
+			slog.String("requested_model", req.Model),
+			slog.String("provider", providerName),
 		)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -331,11 +347,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	metadata := map[string]string{
 		"frontdoor": "anthropic",
 		"app":       h.appName,
-		"provider":  h.provider.Name(),
+		"provider":  providerName,
 		"stream":    "true",
 	}
 
-	conversation.Record(r.Context(), h.store, "", req, &domain.CanonicalResponse{
+	recordResp := &domain.CanonicalResponse{
 		Model: req.Model,
 		Choices: []domain.Choice{
 			{
@@ -346,5 +362,16 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 				},
 			},
 		},
-	}, metadata)
+	}
+
+	conversation.Record(r.Context(), h.store, "", req, recordResp, metadata)
+
+	logger.Info("messages stream completed",
+		slog.String("request_id", requestID),
+		slog.String("frontdoor", "anthropic"),
+		slog.String("app", h.appName),
+		slog.String("provider", providerName),
+		slog.String("requested_model", req.Model),
+		slog.String("served_model", recordResp.Model),
+	)
 }

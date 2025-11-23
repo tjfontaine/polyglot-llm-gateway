@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -46,6 +47,17 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	logger := slog.Default()
+	requestedModel := req.Model
+	servedModel := resp.Model
+	logger.Info("chat completion",
+		slog.String("frontdoor", "openai"),
+		slog.String("app", h.appName),
+		slog.String("provider", h.provider.Name()),
+		slog.String("requested_model", requestedModel),
+		slog.String("served_model", servedModel),
+	)
 
 	metadata := map[string]string{
 		"frontdoor": "openai",
@@ -136,6 +148,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 
+	logger := slog.Default()
+
 	metadata := map[string]string{
 		"frontdoor": "openai",
 		"app":       h.appName,
@@ -155,4 +169,12 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			},
 		},
 	}, metadata)
+
+	logger.Info("chat stream completed",
+		slog.String("frontdoor", "openai"),
+		slog.String("app", h.appName),
+		slog.String("provider", h.provider.Name()),
+		slog.String("requested_model", req.Model),
+		slog.String("served_model", req.Model),
+	)
 }
