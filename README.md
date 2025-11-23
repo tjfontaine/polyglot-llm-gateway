@@ -61,12 +61,18 @@ The gateway is configured via `config.yaml`:
 server:
   port: 8080
 
-frontdoors:
-  - type: openai
+apps:
+  - name: playground
+    frontdoor: openai
     path: /openai
-  
-  - type: anthropic
-    path: /anthropic
+    model_routing:
+      prefix_providers:
+        openai: openai
+        anthropic: anthropic
+      rewrites:
+        - match: claude-haiku-4.5
+          provider: openai
+          model: gpt-5-mini
 
 providers:
   - name: openai
@@ -84,9 +90,14 @@ routing:
     
     - model_prefix: "gpt"
       provider: openai
-  
+
   default_provider: openai
 ```
+
+Each entry under `apps` defines a mounted frontdoor with its own model routing rules. Incoming model names can include a provider
+prefix like `openai/gpt-4o` to route directly to the OpenAI provider while passing only `gpt-4o` upstream. The `rewrites` list
+lets you alias a model to a different provider and upstream model (e.g., mapping `claude-haiku-4.5` to `gpt-5-mini` on
+OpenAI).
 
 ## API Usage
 

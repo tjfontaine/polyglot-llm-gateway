@@ -28,7 +28,7 @@ func NewRegistry() *Registry {
 }
 
 // CreateHandlers creates frontdoor handlers based on configuration
-func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, router domain.Provider, providers map[string]domain.Provider) ([]HandlerRegistration, error) {
+func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Provider, providers map[string]domain.Provider) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
 	for _, cfg := range configs {
@@ -47,7 +47,15 @@ func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, router domai
 			p = provider.NewModelOverrideProvider(p, cfg.DefaultModel)
 		}
 
-		switch cfg.Type {
+		if len(cfg.ModelRouting.PrefixProviders) > 0 || len(cfg.ModelRouting.Rewrites) > 0 {
+			mapper, err := provider.NewModelMappingProvider(p, providers, cfg.ModelRouting)
+			if err != nil {
+				return nil, err
+			}
+			p = mapper
+		}
+
+		switch cfg.Frontdoor {
 		case "openai":
 			handler := openai_frontdoor.NewHandler(p)
 			registrations = append(registrations, HandlerRegistration{
@@ -61,7 +69,7 @@ func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, router domai
 				Handler: handler.HandleMessages,
 			})
 		default:
-			return nil, fmt.Errorf("unknown frontdoor type: %s", cfg.Type)
+			return nil, fmt.Errorf("unknown frontdoor type: %s", cfg.Frontdoor)
 		}
 	}
 

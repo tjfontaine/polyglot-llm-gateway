@@ -6,12 +6,18 @@ storage:
   sqlite:
     path: /app/data/conversations.db
 
-frontdoors:
-  - type: openai
+apps:
+  - name: playground
+    frontdoor: openai
     path: /openai
-  
-  - type: anthropic
-    path: /anthropic
+    model_routing:
+      prefix_providers:
+        openai: openai
+        anthropic: anthropic
+      rewrites:
+        - match: claude-haiku-4.5
+          provider: openai
+          model: gpt-5-mini
 
 providers:
   - name: openai
