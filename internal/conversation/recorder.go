@@ -36,6 +36,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 
 	if req != nil {
 		meta["model"] = req.Model
+		meta["requested_model"] = req.Model
 		for k, v := range req.Metadata {
 			meta["req."+k] = v
 		}
@@ -43,6 +44,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 
 	if resp != nil && resp.Model != "" {
 		meta["resp.model"] = resp.Model
+		meta["served_model"] = resp.Model
 	}
 
 	if reqID, ok := ctx.Value(server.RequestIDKey).(string); ok && reqID != "" {

@@ -469,6 +469,12 @@ function App() {
                             {thread.metadata?.provider && (
                               <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-emerald-100">prov: {thread.metadata.provider}</span>
                             )}
+                            {thread.metadata?.requested_model && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-200">req: {thread.metadata.requested_model}</span>
+                            )}
+                            {thread.metadata?.served_model && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-emerald-100">served: {thread.metadata.served_model}</span>
+                            )}
                             {thread.metadata?.app && (
                               <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-100">app: {thread.metadata.app}</span>
                             )}
@@ -519,6 +525,16 @@ function App() {
                           {selectedThread.metadata?.provider && (
                             <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
                               <ServerCog size={12} /> provider: {selectedThread.metadata.provider}
+                            </span>
+                          )}
+                          {selectedThread.metadata?.requested_model && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                              <Signal size={12} /> req: {selectedThread.metadata.requested_model}
+                            </span>
+                          )}
+                          {selectedThread.metadata?.served_model && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                              <Signal size={12} /> served: {selectedThread.metadata.served_model}
                             </span>
                           )}
                           {selectedThread.metadata?.app && (
