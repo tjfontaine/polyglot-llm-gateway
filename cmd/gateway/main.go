@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
@@ -14,6 +17,7 @@ import (
 	anthropic_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
 	openai_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/poly-llm-gateway/internal/server"
+	"github.com/tjfontaine/poly-llm-gateway/internal/telemetry"
 )
 
 func main() {
@@ -25,6 +29,17 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
+
+	// Initialize OpenTelemetry
+	shutdown, err := telemetry.InitTracer("poly-llm-gateway", logger)
+	if err != nil {
+		log.Fatalf("Failed to initialize tracer: %v", err)
+	}
+	defer func() {
+		if err := shutdown(context.Background()); err != nil {
+			logger.Error("failed to shutdown tracer", slog.String("error", err.Error()))
+		}
+	}()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -96,7 +111,19 @@ func main() {
 	}
 
 	log.Printf("Starting server on port %d", cfg.Server.Port)
-	if err := srv.Start(); err != nil {
-		log.Fatalf("Server failed: %v", err)
-	}
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Start server in goroutine
+	go func() {
+		if err := srv.Start(); err != nil {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-sigChan
+	logger.Info("shutting down gracefully...")
 }

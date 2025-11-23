@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Server struct {
@@ -24,6 +25,11 @@ func New(port int, logger *slog.Logger) *Server {
 	r.Use(LoggingMiddleware(logger))
 	r.Use(TimeoutMiddleware(30 * time.Second))
 	r.Use(middleware.Recoverer)
+
+	// Wrap with OpenTelemetry HTTP instrumentation
+	r.Use(func(next http.Handler) http.Handler {
+		return otelhttp.NewHandler(next, "poly-gateway")
+	})
 
 	return &Server{
 		Router: r,
