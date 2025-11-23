@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,10 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 	}
 
 	logger := slog.Default()
+	// Decouple persistence from the request lifecycle to avoid dropping
+	// transcripts when clients disconnect; still enforce a short timeout.
+	persistCtx, cancel := buildPersistenceContext(ctx, 5*time.Second)
+	defer cancel()
 
 	if convID == "" {
 		if resp != nil && resp.ID != "" {
@@ -47,11 +52,11 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 		meta["served_model"] = resp.Model
 	}
 
-	if reqID, ok := ctx.Value(server.RequestIDKey).(string); ok && reqID != "" {
+	if reqID, ok := persistCtx.Value(server.RequestIDKey).(string); ok && reqID != "" {
 		meta["request_id"] = reqID
 	}
 
-	tenantID := tenantIDFromContext(ctx)
+	tenantID := tenantIDFromContext(persistCtx)
 
 	conv := &storage.Conversation{
 		ID:       convID,
@@ -59,7 +64,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 		Metadata: meta,
 	}
 
-	if err := store.CreateConversation(ctx, conv); err != nil {
+	if err := store.CreateConversation(persistCtx, conv); err != nil {
 		logger.Error("failed to create conversation",
 			slog.String("conversation_id", convID),
 			slog.String("tenant_id", tenantID),
@@ -71,7 +76,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 		if content == "" {
 			return
 		}
-		if err := store.AddMessage(ctx, convID, &storage.Message{
+		if err := store.AddMessage(persistCtx, convID, &storage.Message{
 			ID:      "msg_" + uuid.New().String(),
 			Role:    role,
 			Content: content,
@@ -106,4 +111,20 @@ func tenantIDFromContext(ctx context.Context) string {
 		}
 	}
 	return "default"
+}
+
+func buildPersistenceContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if reqID, ok := ctx.Value(server.RequestIDKey).(string); ok && reqID != "" {
+		base = context.WithValue(base, server.RequestIDKey, reqID)
+	}
+	if tenantVal := ctx.Value("tenant"); tenantVal != nil {
+		base = context.WithValue(base, "tenant", tenantVal)
+	}
+
+	if timeout <= 0 {
+		return context.WithCancel(base)
+	}
+
+	return context.WithTimeout(base, timeout)
 }

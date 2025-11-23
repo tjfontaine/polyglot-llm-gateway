@@ -154,6 +154,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -164,6 +165,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -186,6 +188,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("requested_model", canonReq.Model),
 			slog.String("provider", providerName),
 		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -246,6 +249,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.provider.ListModels(r.Context())
 	if err != nil {
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -338,6 +342,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("requested_model", req.Model),
 			slog.String("provider", providerName),
 		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -348,6 +353,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		server.AddError(r.Context(), fmt.Errorf("streaming not supported"))
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}

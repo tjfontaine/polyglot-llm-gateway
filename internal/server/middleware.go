@@ -87,6 +87,14 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards Flush to the underlying ResponseWriter if it supports http.Flusher,
+// preserving streaming support (e.g., for SSE).
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // TimeoutMiddleware enforces request timeouts
 func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -107,6 +115,16 @@ func AddLogField(ctx context.Context, key, value string) {
 	if fields, ok := ctx.Value(logFieldsKey{}).(map[string]string); ok {
 		fields[key] = value
 	}
+}
+
+// AddError attaches an error message to the request-scoped log fields map so it
+// appears in the structured request log emitted by LoggingMiddleware. No-op if
+// middleware isn't present or err is nil.
+func AddError(ctx context.Context, err error) {
+	if err == nil {
+		return
+	}
+	AddLogField(ctx, "error", err.Error())
 }
 
 // AuthMiddleware validates API keys and injects tenant context

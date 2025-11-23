@@ -41,8 +41,16 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 }
 
 func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
 	var req domain.CanonicalRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Error("failed to decode openai chat completion request",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -63,11 +71,17 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.provider.Complete(r.Context(), &req)
 	if err != nil {
+		logger.Error("chat completion failed",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+			slog.String("requested_model", req.Model),
+			slog.String("provider", h.provider.Name()),
+		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	logger := slog.Default()
 	requestedModel := req.Model
 	servedModel := resp.Model
 	logger.Info("chat completion",
@@ -104,6 +118,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.provider.ListModels(r.Context())
 	if err != nil {
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -116,8 +131,18 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
 	events, err := h.provider.Stream(r.Context(), req)
 	if err != nil {
+		logger.Error("failed to start chat stream",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+			slog.String("requested_model", req.Model),
+			slog.String("provider", h.provider.Name()),
+		)
+		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -136,9 +161,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	for event := range events {
 		if event.Error != nil {
-			// In a real stream, we might send a specific error event or just log it
-			// and close the stream. For now, we'll just log (or ignore) and break.
-			// Sending an error in the middle of a stream is tricky.
+			logger.Error("stream event error",
+				slog.String("request_id", requestID),
+				slog.String("error", event.Error.Error()),
+			)
+			server.AddError(r.Context(), event.Error)
 			break
 		}
 
@@ -192,8 +219,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
-
-	logger := slog.Default()
 
 	metadata := map[string]string{
 		"frontdoor": "openai",
