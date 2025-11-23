@@ -9,6 +9,7 @@ import (
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -32,6 +33,11 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	server.AddLogField(r.Context(), "frontdoor", "openai")
+	server.AddLogField(r.Context(), "app", h.appName)
+	server.AddLogField(r.Context(), "provider", h.provider.Name())
+	server.AddLogField(r.Context(), "requested_model", req.Model)
 
 	// For Phase 1, we assume the request is already in a format we can map directly
 	// or we just use the CanonicalRequest struct as the target for decoding
@@ -58,6 +64,7 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		slog.String("requested_model", requestedModel),
 		slog.String("served_model", servedModel),
 	)
+	server.AddLogField(r.Context(), "served_model", servedModel)
 
 	metadata := map[string]string{
 		"frontdoor": "openai",

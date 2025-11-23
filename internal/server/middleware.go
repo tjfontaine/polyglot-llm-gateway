@@ -16,6 +16,9 @@ type contextKey string
 
 const RequestIDKey contextKey = "request_id"
 
+// logFieldsKey identifies request-scoped logging fields.
+type logFieldsKey struct{}
+
 // RequestIDMiddleware adds a unique request ID to each request
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +35,10 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
+			// Attach mutable log fields map to context for handlers to enrich
+			fields := make(map[string]string)
+			ctxWithFields := context.WithValue(r.Context(), logFieldsKey{}, fields)
+
 			// Wrap response writer to capture status code
 			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
@@ -46,17 +53,25 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("remote_addr", r.RemoteAddr),
 			)
 
-			next.ServeHTTP(wrapped, r)
+			next.ServeHTTP(wrapped, r.WithContext(ctxWithFields))
 
 			// Log request completion
 			duration := time.Since(start)
-			logger.Info("request completed",
+			attrs := []slog.Attr{
 				slog.String("request_id", requestID),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", wrapped.statusCode),
 				slog.Duration("duration", duration),
-			)
+			}
+
+			if len(fields) > 0 {
+				for k, v := range fields {
+					attrs = append(attrs, slog.String(k, v))
+				}
+			}
+
+			logger.LogAttrs(ctxWithFields, slog.LevelInfo, "request completed", attrs...)
 		})
 	}
 }
@@ -80,6 +95,17 @@ func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+// AddLogField attaches a key/value to the request-scoped log fields map so LoggingMiddleware can emit it.
+// It is safe to call multiple times. No-op if middleware isn't present.
+func AddLogField(ctx context.Context, key, value string) {
+	if value == "" {
+		return
+	}
+	if fields, ok := ctx.Value(logFieldsKey{}).(map[string]string); ok {
+		fields[key] = value
 	}
 }
 

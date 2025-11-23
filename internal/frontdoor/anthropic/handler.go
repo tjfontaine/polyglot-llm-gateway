@@ -155,6 +155,11 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	server.AddLogField(r.Context(), "requested_model", canonReq.Model)
+	server.AddLogField(r.Context(), "frontdoor", "anthropic")
+	server.AddLogField(r.Context(), "app", h.appName)
+	server.AddLogField(r.Context(), "provider", providerName)
+
 	if req.Stream {
 		h.handleStream(w, r, canonReq)
 		return
@@ -200,6 +205,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		slog.String("served_model", resp.Model),
 		slog.String("finish_reason", resp.Choices[0].FinishReason),
 	)
+
+	server.AddLogField(r.Context(), "served_model", resp.Model)
 
 	metadata := map[string]string{
 		"frontdoor": "anthropic",
@@ -363,6 +370,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			},
 		},
 	}
+
+	server.AddLogField(r.Context(), "served_model", recordResp.Model)
 
 	conversation.Record(r.Context(), h.store, "", req, recordResp, metadata)
 
