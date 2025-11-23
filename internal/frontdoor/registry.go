@@ -2,25 +2,31 @@ package frontdoor
 
 import (
 	"fmt"
-	"net/http"
+	"net/http" // Keep net/http for HandlerRegistration type
 
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
 	anthropic_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/anthropic"
 	openai_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/openai"
+	responses_frontdoor "github.com/tjfontaine/poly-llm-gateway/internal/frontdoor/responses"
+	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
 )
 
+// HandlerRegistration represents a registered handler
 type HandlerRegistration struct {
 	Path    string
-	Handler http.HandlerFunc
+	Handler func(http.ResponseWriter, *http.Request)
 }
 
+// Registry creates and registers frontdoor handlers
 type Registry struct{}
 
+// NewRegistry creates a new frontdoor registry
 func NewRegistry() *Registry {
 	return &Registry{}
 }
 
+// CreateHandlers creates frontdoor handlers based on configuration
 func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, provider domain.Provider) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
@@ -44,4 +50,17 @@ func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, provider dom
 	}
 
 	return registrations, nil
+}
+
+// CreateResponsesHandlers creates Responses API handlers
+func (r *Registry) CreateResponsesHandlers(basePath string, store storage.ConversationStore, provider domain.Provider) []HandlerRegistration {
+	handler := responses_frontdoor.NewHandler(store, provider)
+
+	return []HandlerRegistration{
+		{Path: basePath + "/v1/threads", Handler: handler.HandleCreateThread},
+		{Path: basePath + "/v1/threads/{thread_id}", Handler: handler.HandleGetThread},
+		{Path: basePath + "/v1/threads/{thread_id}/messages", Handler: handler.HandleCreateMessage},
+		{Path: basePath + "/v1/threads/{thread_id}/messages", Handler: handler.HandleListMessages},
+		{Path: basePath + "/v1/threads/{thread_id}/runs", Handler: handler.HandleCreateRun},
+	}
 }

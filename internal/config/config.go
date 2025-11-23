@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Server     ServerConfig      `koanf:"server"`
+	Storage    StorageConfig     `koanf:"storage"`
 	Tenants    []TenantConfig    `koanf:"tenants"`
 	Frontdoors []FrontdoorConfig `koanf:"frontdoors"`
 	Providers  []ProviderConfig  `koanf:"providers"`
@@ -24,6 +25,15 @@ type Config struct {
 
 type ServerConfig struct {
 	Port int `koanf:"port"`
+}
+
+type StorageConfig struct {
+	Type   string       `koanf:"type"` // sqlite, memory, none
+	SQLite SQLiteConfig `koanf:"sqlite"`
+}
+
+type SQLiteConfig struct {
+	Path string `koanf:"path"`
 }
 
 type TenantConfig struct {

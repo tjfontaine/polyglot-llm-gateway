@@ -18,6 +18,9 @@ import (
 	anthropic_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/anthropic"
 	openai_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/poly-llm-gateway/internal/server"
+	"github.com/tjfontaine/poly-llm-gateway/internal/storage"
+	"github.com/tjfontaine/poly-llm-gateway/internal/storage/memory"
+	"github.com/tjfontaine/poly-llm-gateway/internal/storage/sqlite"
 	"github.com/tjfontaine/poly-llm-gateway/internal/telemetry"
 	"github.com/tjfontaine/poly-llm-gateway/internal/tenant"
 )
@@ -46,6 +49,29 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Initialize storage if configured
+	var store storage.ConversationStore
+	if cfg.Storage.Type != "" && cfg.Storage.Type != "none" {
+		switch cfg.Storage.Type {
+		case "sqlite":
+			dbPath := cfg.Storage.SQLite.Path
+			if dbPath == "" {
+				dbPath = "./data/conversations.db"
+			}
+			store, err = sqlite.New(dbPath)
+			if err != nil {
+				log.Fatalf("Failed to initialize SQLite storage: %v", err)
+			}
+			defer store.Close()
+			logger.Info("storage initialized", slog.String("type", "sqlite"), slog.String("path", dbPath))
+		case "memory":
+			store = memory.New()
+			logger.Info("storage initialized", slog.String("type", "memory"))
+		default:
+			log.Fatalf("Unknown storage type: %s", cfg.Storage.Type)
+		}
 	}
 
 	// Initialize Provider Registry
@@ -134,6 +160,25 @@ func main() {
 	for _, reg := range handlerRegs {
 		srv.Router.Post(reg.Path, reg.Handler)
 		log.Printf("Registered %s", reg.Path)
+	}
+
+	// Register Responses API handlers if storage is configured
+	if store != nil {
+		responsesHandlers := frontdoorRegistry.CreateResponsesHandlers("/responses", store, router)
+		for _, reg := range responsesHandlers {
+			// Use appropriate HTTP method for each endpoint
+			if reg.Path == "/responses/v1/threads" {
+				srv.Router.Post(reg.Path, reg.Handler)
+			} else if reg.Path == "/responses/v1/threads/{thread_id}" {
+				srv.Router.Get(reg.Path, reg.Handler)
+			} else if reg.Path == "/responses/v1/threads/{thread_id}/messages" {
+				srv.Router.Post(reg.Path, reg.Handler)
+				srv.Router.Get(reg.Path, reg.Handler)
+			} else if reg.Path == "/responses/v1/threads/{thread_id}/runs" {
+				srv.Router.Post(reg.Path, reg.Handler)
+			}
+			log.Printf("Registered Responses API: %s", reg.Path)
+		}
 	}
 
 	log.Printf("Starting server on port %d", cfg.Server.Port)
