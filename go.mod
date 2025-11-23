@@ -16,6 +16,7 @@ require (
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.38.0
 	go.opentelemetry.io/otel/sdk v1.38.0
+	gopkg.in/dnaeon/go-vcr.v2 v2.3.0
 )
 
 require (
@@ -36,4 +37,5 @@ require (
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.3 // indirect
 	golang.org/x/sys v0.35.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
