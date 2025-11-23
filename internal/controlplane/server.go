@@ -133,9 +133,10 @@ type ModelRoutingSummary struct {
 }
 
 type ModelRewriteSummary struct {
-	Match    string `json:"match"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	ModelExact  string `json:"model_exact,omitempty"`
+	ModelPrefix string `json:"model_prefix,omitempty"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
 }
 
 type ProviderSummary struct {
@@ -190,10 +191,16 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 					PrefixProviders: app.ModelRouting.PrefixProviders,
 				}
 				for _, rewrite := range app.ModelRouting.Rewrites {
+					matchValue := rewrite.ModelExact
+					if matchValue == "" {
+						matchValue = rewrite.Match
+					}
+
 					summary.ModelRouting.Rewrites = append(summary.ModelRouting.Rewrites, ModelRewriteSummary{
-						Match:    rewrite.Match,
-						Provider: rewrite.Provider,
-						Model:    rewrite.Model,
+						ModelExact:  matchValue,
+						ModelPrefix: rewrite.ModelPrefix,
+						Provider:    rewrite.Provider,
+						Model:       rewrite.Model,
 					})
 				}
 			}

@@ -16,6 +16,7 @@ import (
 // HandlerRegistration represents a registered handler
 type HandlerRegistration struct {
 	Path    string
+	Method  string
 	Handler func(http.ResponseWriter, *http.Request)
 }
 
@@ -57,17 +58,17 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 
 		switch cfg.Frontdoor {
 		case "openai":
-			handler := openai_frontdoor.NewHandler(p, store, cfg.Name)
-			registrations = append(registrations, HandlerRegistration{
-				Path:    cfg.Path + "/v1/chat/completions",
-				Handler: handler.HandleChatCompletion,
-			})
+			handler := openai_frontdoor.NewHandler(p, store, cfg.Name, cfg.Models)
+			registrations = append(registrations,
+				HandlerRegistration{Path: cfg.Path + "/v1/chat/completions", Method: http.MethodPost, Handler: handler.HandleChatCompletion},
+				HandlerRegistration{Path: cfg.Path + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
+			)
 		case "anthropic":
-			handler := anthropic_frontdoor.NewHandler(p, store, cfg.Name)
-			registrations = append(registrations, HandlerRegistration{
-				Path:    cfg.Path + "/v1/messages",
-				Handler: handler.HandleMessages,
-			})
+			handler := anthropic_frontdoor.NewHandler(p, store, cfg.Name, cfg.Models)
+			registrations = append(registrations,
+				HandlerRegistration{Path: cfg.Path + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
+				HandlerRegistration{Path: cfg.Path + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
+			)
 		default:
 			return nil, fmt.Errorf("unknown frontdoor type: %s", cfg.Frontdoor)
 		}
@@ -81,10 +82,10 @@ func (r *Registry) CreateResponsesHandlers(basePath string, store storage.Conver
 	handler := responses_frontdoor.NewHandler(store, provider)
 
 	return []HandlerRegistration{
-		{Path: basePath + "/v1/threads", Handler: handler.HandleCreateThread},
-		{Path: basePath + "/v1/threads/{thread_id}", Handler: handler.HandleGetThread},
-		{Path: basePath + "/v1/threads/{thread_id}/messages", Handler: handler.HandleCreateMessage},
-		{Path: basePath + "/v1/threads/{thread_id}/messages", Handler: handler.HandleListMessages},
-		{Path: basePath + "/v1/threads/{thread_id}/runs", Handler: handler.HandleCreateRun},
+		{Path: basePath + "/v1/threads", Method: http.MethodPost, Handler: handler.HandleCreateThread},
+		{Path: basePath + "/v1/threads/{thread_id}", Method: http.MethodGet, Handler: handler.HandleGetThread},
+		{Path: basePath + "/v1/threads/{thread_id}/messages", Method: http.MethodPost, Handler: handler.HandleCreateMessage},
+		{Path: basePath + "/v1/threads/{thread_id}/messages", Method: http.MethodGet, Handler: handler.HandleListMessages},
+		{Path: basePath + "/v1/threads/{thread_id}/runs", Method: http.MethodPost, Handler: handler.HandleCreateRun},
 	}
 }

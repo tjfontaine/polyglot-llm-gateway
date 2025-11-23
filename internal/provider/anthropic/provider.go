@@ -98,3 +98,23 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
+func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {
+	pager := p.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
+
+	var models []domain.Model
+	for pager.Next() {
+		model := pager.Current()
+		models = append(models, domain.Model{
+			ID:      model.ID,
+			Object:  string(model.Type),
+			Created: model.CreatedAt.Unix(),
+		})
+	}
+
+	if err := pager.Err(); err != nil {
+		return nil, err
+	}
+
+	return &domain.ModelList{Object: "list", Data: models}, nil
+}

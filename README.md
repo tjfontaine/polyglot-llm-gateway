@@ -70,9 +70,18 @@ apps:
         openai: openai
         anthropic: anthropic
       rewrites:
-        - match: claude-haiku-4.5
+        - model_exact: claude-haiku-4.5
           provider: openai
           model: gpt-5-mini
+          rewrite_response_model: true
+        - model_prefix: claude-sonnet-
+          provider: openai
+          model: gpt-5-mini
+          rewrite_response_model: true
+    models:
+      - id: claude-haiku-4.5
+        object: model
+        owned_by: gateway
 
 providers:
   - name: openai
@@ -97,7 +106,8 @@ routing:
 Each entry under `apps` defines a mounted frontdoor with its own model routing rules. Incoming model names can include a provider
 prefix like `openai/gpt-4o` to route directly to the OpenAI provider while passing only `gpt-4o` upstream. The `rewrites` list
 lets you alias a model to a different provider and upstream model (e.g., mapping `claude-haiku-4.5` to `gpt-5-mini` on
-OpenAI).
+OpenAI). Set `rewrite_response_model: true` to make responses (and model listings) report the alias instead of the upstream
+model. You can also seed the `/v1/models` listing for a frontdoor by providing `models` entries with OpenAI-/Anthropic-compatible fields.
 
 ## API Usage
 

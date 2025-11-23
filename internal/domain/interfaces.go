@@ -14,4 +14,7 @@ type Provider interface {
 	// Stream returns a channel of events.
 	// The channel MUST be closed by the provider when done.
 	Stream(ctx context.Context, req *CanonicalRequest) (<-chan CanonicalEvent, error)
+
+	// ListModels returns the models supported by the provider/frontdoor pairing.
+	ListModels(ctx context.Context) (*ModelList, error)
 }

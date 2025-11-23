@@ -32,7 +32,8 @@ interface Stats {
 }
 
 interface ModelRewrite {
-  match: string;
+  model_exact?: string;
+  model_prefix?: string;
   provider: string;
   model: string;
 }
@@ -326,7 +327,10 @@ function App() {
                           {(app?.model_routing?.rewrites ?? []).map((rewrite, idx) => (
                             <div key={`${app?.path}-rewrite-${idx}`} className="flex items-center gap-2">
                               <RefreshCcw size={12} className="text-amber-200" />
-                              <span className="truncate">{rewrite.match} → {rewrite.provider}:{rewrite.model}</span>
+                              <span className="truncate">
+                                {(rewrite.model_exact || (rewrite.model_prefix ? `${rewrite.model_prefix}*` : '')) ?? ''} →{' '}
+                                {rewrite.provider}:{rewrite.model}
+                              </span>
                             </div>
                           ))}
                         </div>

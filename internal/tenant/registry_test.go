@@ -37,6 +37,10 @@ func (m *mockProvider) Stream(ctx context.Context, req *domain.CanonicalRequest)
 	return nil, nil
 }
 
+func (m *mockProvider) ListModels(context.Context) (*domain.ModelList, error) {
+	return &domain.ModelList{Object: "list"}, nil
+}
+
 func TestRegistry_LoadTenants(t *testing.T) {
 	registry := NewRegistry()
 	providerReg := provider.NewRegistry()

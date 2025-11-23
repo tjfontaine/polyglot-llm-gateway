@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -174,26 +175,42 @@ func main() {
 
 	// Register all frontdoor handlers
 	for _, reg := range handlerRegs {
-		srv.Router.Post(reg.Path, reg.Handler)
-		log.Printf("Registered %s", reg.Path)
+		method := reg.Method
+		if method == "" {
+			method = http.MethodPost
+		}
+
+		switch method {
+		case http.MethodGet:
+			srv.Router.Get(reg.Path, reg.Handler)
+		case http.MethodPost:
+			srv.Router.Post(reg.Path, reg.Handler)
+		default:
+			srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
+		}
+
+		log.Printf("Registered %s %s", method, reg.Path)
 	}
 
 	// Register Responses API handlers if storage is configured
 	if store != nil {
 		responsesHandlers := frontdoorRegistry.CreateResponsesHandlers("/responses", store, router)
 		for _, reg := range responsesHandlers {
-			// Use appropriate HTTP method for each endpoint
-			if reg.Path == "/responses/v1/threads" {
-				srv.Router.Post(reg.Path, reg.Handler)
-			} else if reg.Path == "/responses/v1/threads/{thread_id}" {
-				srv.Router.Get(reg.Path, reg.Handler)
-			} else if reg.Path == "/responses/v1/threads/{thread_id}/messages" {
-				srv.Router.Post(reg.Path, reg.Handler)
-				srv.Router.Get(reg.Path, reg.Handler)
-			} else if reg.Path == "/responses/v1/threads/{thread_id}/runs" {
-				srv.Router.Post(reg.Path, reg.Handler)
+			method := reg.Method
+			if method == "" {
+				method = http.MethodPost
 			}
-			log.Printf("Registered Responses API: %s", reg.Path)
+
+			switch method {
+			case http.MethodGet:
+				srv.Router.Get(reg.Path, reg.Handler)
+			case http.MethodPost:
+				srv.Router.Post(reg.Path, reg.Handler)
+			default:
+				srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
+			}
+
+			log.Printf("Registered Responses API: %s %s", method, reg.Path)
 		}
 	}
 

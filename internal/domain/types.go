@@ -75,3 +75,17 @@ type CanonicalEvent struct {
 	Usage        *Usage         // Final event often contains token counts
 	Error        error          // In-stream errors
 }
+
+// Model describes a model entry exposed via the frontdoor.
+type Model struct {
+	ID      string `json:"id"`
+	Object  string `json:"object,omitempty"`
+	OwnedBy string `json:"owned_by,omitempty"`
+	Created int64  `json:"created,omitempty"`
+}
+
+// ModelList is the canonical model listing response.
+type ModelList struct {
+	Object string  `json:"object"`
+	Data   []Model `json:"data"`
+}

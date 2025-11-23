@@ -15,9 +15,17 @@ apps:
         openai: openai
         anthropic: anthropic
       rewrites:
-        - match: claude-haiku-4.5
+        - model_exact: claude-haiku-4.5
           provider: openai
           model: gpt-5-mini
+          rewrite_response_model: true
+    models:
+      - id: claude-haiku-4.5
+        object: model
+        owned_by: gateway
+      - id: claude-sonnet-alpha
+        object: model
+        owned_by: gateway
   - name: claude
     frontdoor: anthropic
     path: /claude
@@ -26,12 +34,14 @@ apps:
         provider: openai
         model: gpt-5-mini
       rewrites:
-        - match: claude-haiku-4.5
+        - model_exact: claude-haiku-4.5
           provider: openai
           model: gpt-5-mini
-        - match: claude-sonnet-4.5
+          rewrite_response_model: true
+        - model_prefix: claude-sonnet-
           provider: openai
           model: gpt-5-mini
+          rewrite_response_model: true
 
 providers:
   - name: openai

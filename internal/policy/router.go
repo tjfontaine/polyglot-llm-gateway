@@ -49,6 +49,20 @@ func (r *Router) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-ch
 	return p.Stream(ctx, req)
 }
 
+func (r *Router) ListModels(ctx context.Context) (*domain.ModelList, error) {
+	if r.defaultProvider != "" {
+		if p, ok := r.providers[r.defaultProvider]; ok {
+			return p.ListModels(ctx)
+		}
+	}
+
+	for _, p := range r.providers {
+		return p.ListModels(ctx)
+	}
+
+	return nil, fmt.Errorf("no provider configured for model listing")
+}
+
 func (r *Router) Route(req *domain.CanonicalRequest) (domain.Provider, error) {
 	// Apply routing rules in order
 	for _, rule := range r.rules {

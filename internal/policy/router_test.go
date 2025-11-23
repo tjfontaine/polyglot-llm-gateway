@@ -43,6 +43,10 @@ func (m *mockProvider) Stream(ctx context.Context, req *domain.CanonicalRequest)
 	return ch, nil
 }
 
+func (m *mockProvider) ListModels(context.Context) (*domain.ModelList, error) {
+	return &domain.ModelList{Object: "list"}, nil
+}
+
 func TestRouter_Route(t *testing.T) {
 	// Create mock providers
 	openaiProvider := &mockProvider{name: "openai"}
