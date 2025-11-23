@@ -9,6 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"github.com/tjfontaine/poly-llm-gateway/internal/auth"
 )
 
 type Server struct {
@@ -17,12 +19,18 @@ type Server struct {
 	logger *slog.Logger
 }
 
-func New(port int, logger *slog.Logger) *Server {
+func New(port int, logger *slog.Logger, authenticator *auth.Authenticator) *Server {
 	r := chi.NewRouter()
 
 	// Apply middleware in order
 	r.Use(RequestIDMiddleware)
 	r.Use(LoggingMiddleware(logger))
+
+	// Add auth middleware if authenticator is provided
+	if authenticator != nil {
+		r.Use(AuthMiddleware(authenticator))
+	}
+
 	r.Use(TimeoutMiddleware(30 * time.Second))
 	r.Use(middleware.Recoverer)
 

@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
+	"github.com/tjfontaine/poly-llm-gateway/internal/auth"
 	"github.com/tjfontaine/poly-llm-gateway/internal/config"
 	"github.com/tjfontaine/poly-llm-gateway/internal/domain"
 	"github.com/tjfontaine/poly-llm-gateway/internal/frontdoor"
@@ -18,6 +19,7 @@ import (
 	openai_provider "github.com/tjfontaine/poly-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/poly-llm-gateway/internal/server"
 	"github.com/tjfontaine/poly-llm-gateway/internal/telemetry"
+	"github.com/tjfontaine/poly-llm-gateway/internal/tenant"
 )
 
 func main() {
@@ -47,36 +49,60 @@ func main() {
 	}
 
 	// Initialize Provider Registry
-	registry := provider.NewRegistry()
+	providerRegistry := provider.NewRegistry()
 
-	// Create providers from config
-	var providers map[string]domain.Provider
-	if len(cfg.Providers) > 0 {
-		providers, err = registry.CreateProviders(cfg.Providers)
+	// Multi-tenant mode or single-tenant mode
+	var router domain.Provider
+	var authenticator *auth.Authenticator
+
+	if len(cfg.Tenants) > 0 {
+		// Multi-tenant mode
+		logger.Info("multi-tenant mode enabled", slog.Int("tenant_count", len(cfg.Tenants)))
+
+		tenantRegistry := tenant.NewRegistry()
+		tenants, err := tenantRegistry.LoadTenants(cfg.Tenants, providerRegistry)
 		if err != nil {
-			log.Fatalf("Failed to create providers: %v", err)
+			log.Fatalf("Failed to load tenants: %v", err)
+		}
+
+		// Create authenticator
+		authenticator = auth.NewAuthenticator(tenants)
+
+		// Use first tenant's router as default (will be overridden per-request)
+		if len(tenants) > 0 {
+			router = policy.NewRouter(tenants[0].Providers, tenants[0].Routing)
 		}
 	} else {
-		// Fallback to legacy env-based config for backwards compatibility
-		log.Println("No providers in config, using legacy env-based setup")
-		openaiP := openai_provider.New(cfg.OpenAI.APIKey)
-		anthropicP := anthropic_provider.New(cfg.Anthropic.APIKey)
-		providers = map[string]domain.Provider{
-			"openai":    openaiP,
-			"anthropic": anthropicP,
-		}
-		// Use default routing if no config
-		cfg.Routing = config.RoutingConfig{
-			Rules: []config.RoutingRule{
-				{ModelPrefix: "claude", Provider: "anthropic"},
-				{ModelPrefix: "gpt", Provider: "openai"},
-			},
-			DefaultProvider: "openai",
-		}
-	}
+		// Single-tenant mode (backwards compatible)
+		logger.Info("single-tenant mode (no authentication)")
 
-	// Initialize Router with config-based routing
-	router := policy.NewRouter(providers, cfg.Routing)
+		var providers map[string]domain.Provider
+		if len(cfg.Providers) > 0 {
+			providers, err = providerRegistry.CreateProviders(cfg.Providers)
+			if err != nil {
+				log.Fatalf("Failed to create providers: %v", err)
+			}
+		} else {
+			// Fallback to legacy env-based config
+			logger.Info("using legacy env-based provider setup")
+			openaiP := openai_provider.New(cfg.OpenAI.APIKey)
+			anthropicP := anthropic_provider.New(cfg.Anthropic.APIKey)
+			providers = map[string]domain.Provider{
+				"openai":    openaiP,
+				"anthropic": anthropicP,
+			}
+			// Use default routing if no config
+			cfg.Routing = config.RoutingConfig{
+				Rules: []config.RoutingRule{
+					{ModelPrefix: "claude", Provider: "anthropic"},
+					{ModelPrefix: "gpt", Provider: "openai"},
+				},
+				DefaultProvider: "openai",
+			}
+		}
+
+		router = policy.NewRouter(providers, cfg.Routing)
+	}
 
 	// Initialize Frontdoor Registry
 	frontdoorRegistry := frontdoor.NewRegistry()
@@ -90,7 +116,7 @@ func main() {
 		}
 	} else {
 		// Default frontdoors if no config
-		log.Println("No frontdoors in config, using defaults")
+		logger.Info("using default frontdoor configuration")
 		cfg.Frontdoors = []config.FrontdoorConfig{
 			{Type: "openai", Path: "/openai"},
 			{Type: "anthropic", Path: "/anthropic"},
@@ -102,7 +128,7 @@ func main() {
 	}
 
 	// Initialize Server
-	srv := server.New(cfg.Server.Port, logger)
+	srv := server.New(cfg.Server.Port, logger, authenticator)
 
 	// Register all frontdoor handlers
 	for _, reg := range handlerRegs {

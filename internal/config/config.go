@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Server     ServerConfig      `koanf:"server"`
+	Tenants    []TenantConfig    `koanf:"tenants"`
 	Frontdoors []FrontdoorConfig `koanf:"frontdoors"`
 	Providers  []ProviderConfig  `koanf:"providers"`
 	Routing    RoutingConfig     `koanf:"routing"`
@@ -23,6 +24,19 @@ type Config struct {
 
 type ServerConfig struct {
 	Port int `koanf:"port"`
+}
+
+type TenantConfig struct {
+	ID        string           `koanf:"id"`
+	Name      string           `koanf:"name"`
+	APIKeys   []APIKeyConfig   `koanf:"api_keys"`
+	Providers []ProviderConfig `koanf:"providers"`
+	Routing   RoutingConfig    `koanf:"routing"`
+}
+
+type APIKeyConfig struct {
+	KeyHash     string `koanf:"key_hash"`
+	Description string `koanf:"description"`
 }
 
 type FrontdoorConfig struct {

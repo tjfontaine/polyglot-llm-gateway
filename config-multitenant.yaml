@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+# Multi-tenant configuration
+tenants:
+  - id: tenant-acme
+    name: "Acme Corp"
+    api_keys:
+      - key_hash: "625faa3fbbc3d2bd9d6ee7678d04cc5339cb33dc68d9b58451853d60046e226a"
+        description: "Test key for Acme"
+    providers:
+      - name: openai-acme
+        type: openai
+        api_key: ${OPENAI_API_KEY}
+    routing:
+      rules:
+        - model_prefix: "gpt"
+          provider: openai-acme
+      default_provider: openai-acme
+
+frontdoors:
+  - type: openai
+    path: /openai
+  
+  - type: anthropic
+    path: /anthropic
