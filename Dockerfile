@@ -1,3 +1,13 @@
+FROM node:22 AS frontend-builder
+
+WORKDIR /app/web/control-plane
+
+COPY web/control-plane/package.json web/control-plane/package-lock.json ./
+RUN npm ci
+
+COPY web/control-plane/ ./
+RUN npm run build
+
 # Build stage
 FROM golang:1.25 AS builder
 
@@ -9,6 +19,8 @@ RUN go mod download
 
 # Copy source and build the gateway binary
 COPY . .
+RUN rm -rf internal/controlplane/dist
+COPY --from=frontend-builder /app/web/control-plane/dist internal/controlplane/dist
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway
 
 # Runtime stage
