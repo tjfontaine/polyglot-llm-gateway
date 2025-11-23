@@ -4,16 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 type Handler struct {
 	provider domain.Provider
+	store    storage.ConversationStore
+	appName  string
 }
 
-func NewHandler(provider domain.Provider) *Handler {
-	return &Handler{provider: provider}
+func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string) *Handler {
+	return &Handler{
+		provider: provider,
+		store:    store,
+		appName:  appName,
+	}
 }
 
 func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +47,13 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metadata := map[string]string{
+		"frontdoor": "openai",
+		"app":       h.appName,
+		"provider":  h.provider.Name(),
+	}
+	conversation.Record(r.Context(), h.store, resp.ID, &req, resp, metadata)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -59,6 +75,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		return
 	}
 
+	var builder strings.Builder
+
 	for event := range events {
 		if event.Error != nil {
 			// In a real stream, we might send a specific error event or just log it
@@ -66,6 +84,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			// Sending an error in the middle of a stream is tricky.
 			break
 		}
+
+		builder.WriteString(event.ContentDelta)
 
 		// Construct an OpenAI-compatible chunk
 		chunk := struct {
@@ -115,4 +135,24 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+
+	metadata := map[string]string{
+		"frontdoor": "openai",
+		"app":       h.appName,
+		"provider":  h.provider.Name(),
+		"stream":    "true",
+	}
+
+	conversation.Record(r.Context(), h.store, "", req, &domain.CanonicalResponse{
+		Model: req.Model,
+		Choices: []domain.Choice{
+			{
+				Index: 0,
+				Message: domain.Message{
+					Role:    "assistant",
+					Content: builder.String(),
+				},
+			},
+		},
+	}, metadata)
 }

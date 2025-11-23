@@ -7,16 +7,24 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 type Handler struct {
 	provider domain.Provider
+	store    storage.ConversationStore
+	appName  string
 }
 
-func NewHandler(provider domain.Provider) *Handler {
-	return &Handler{provider: provider}
+func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string) *Handler {
+	return &Handler{
+		provider: provider,
+		store:    store,
+		appName:  appName,
+	}
 }
 
 // Anthropic Messages API request format
@@ -180,6 +188,13 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	metadata := map[string]string{
+		"frontdoor": "anthropic",
+		"app":       h.appName,
+		"provider":  h.provider.Name(),
+	}
+	conversation.Record(r.Context(), h.store, resp.ID, canonReq, resp, metadata)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(anthropicResp)
 }
@@ -276,6 +291,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		return
 	}
 
+	var builder strings.Builder
+
 	for event := range events {
 		if event.Error != nil {
 			logger.Error("stream event error",
@@ -284,6 +301,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			)
 			break
 		}
+
+		builder.WriteString(event.ContentDelta)
 
 		// Anthropic streaming format
 		chunk := struct {
@@ -308,4 +327,24 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	// Send message_stop event
 	fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
 	flusher.Flush()
+
+	metadata := map[string]string{
+		"frontdoor": "anthropic",
+		"app":       h.appName,
+		"provider":  h.provider.Name(),
+		"stream":    "true",
+	}
+
+	conversation.Record(r.Context(), h.store, "", req, &domain.CanonicalResponse{
+		Model: req.Model,
+		Choices: []domain.Choice{
+			{
+				Index: 0,
+				Message: domain.Message{
+					Role:    "assistant",
+					Content: builder.String(),
+				},
+			},
+		},
+	}, metadata)
 }

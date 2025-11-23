@@ -28,7 +28,7 @@ func NewRegistry() *Registry {
 }
 
 // CreateHandlers creates frontdoor handlers based on configuration
-func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Provider, providers map[string]domain.Provider) ([]HandlerRegistration, error) {
+func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Provider, providers map[string]domain.Provider, store storage.ConversationStore) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
 	for _, cfg := range configs {
@@ -57,13 +57,13 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 
 		switch cfg.Frontdoor {
 		case "openai":
-			handler := openai_frontdoor.NewHandler(p)
+			handler := openai_frontdoor.NewHandler(p, store, cfg.Name)
 			registrations = append(registrations, HandlerRegistration{
 				Path:    cfg.Path + "/v1/chat/completions",
 				Handler: handler.HandleChatCompletion,
 			})
 		case "anthropic":
-			handler := anthropic_frontdoor.NewHandler(p)
+			handler := anthropic_frontdoor.NewHandler(p, store, cfg.Name)
 			registrations = append(registrations, HandlerRegistration{
 				Path:    cfg.Path + "/v1/messages",
 				Handler: handler.HandleMessages,

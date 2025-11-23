@@ -33,7 +33,7 @@ func (s *stubProvider) Stream(context.Context, *domain.CanonicalRequest) (<-chan
 
 func TestHandleMessagesAcceptsContentBlocks(t *testing.T) {
 	provider := &stubProvider{}
-	handler := NewHandler(provider)
+	handler := NewHandler(provider, nil, "test-app")
 
 	body := `{
 		"model": "claude-3-haiku-20240307",
@@ -69,7 +69,7 @@ func TestHandleMessagesAcceptsContentBlocks(t *testing.T) {
 
 func TestHandleMessagesRejectsUnsupportedBlocks(t *testing.T) {
 	provider := &stubProvider{}
-	handler := NewHandler(provider)
+	handler := NewHandler(provider, nil, "test-app")
 
 	body := `{
 		"model": "claude-3",

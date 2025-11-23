@@ -164,7 +164,7 @@ func main() {
 		}
 	}
 
-	handlerRegs, err = frontdoorRegistry.CreateHandlers(apps, router, providers)
+	handlerRegs, err = frontdoorRegistry.CreateHandlers(apps, router, providers, store)
 	if err != nil {
 		log.Fatalf("Failed to create frontdoor handlers: %v", err)
 	}
