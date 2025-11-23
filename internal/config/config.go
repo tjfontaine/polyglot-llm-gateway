@@ -50,8 +50,10 @@ type APIKeyConfig struct {
 }
 
 type FrontdoorConfig struct {
-	Type string `koanf:"type"`
-	Path string `koanf:"path"`
+	Type         string `koanf:"type"`
+	Path         string `koanf:"path"`
+	Provider     string `koanf:"provider"`      // Optional: force specific provider
+	DefaultModel string `koanf:"default_model"` // Optional: force/default model
 }
 
 type ProviderConfig struct {

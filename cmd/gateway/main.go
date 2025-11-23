@@ -80,6 +80,7 @@ func main() {
 	// Multi-tenant mode or single-tenant mode
 	var router domain.Provider
 	var authenticator *auth.Authenticator
+	var providers map[string]domain.Provider
 
 	if len(cfg.Tenants) > 0 {
 		// Multi-tenant mode
@@ -102,7 +103,6 @@ func main() {
 		// Single-tenant mode (backwards compatible)
 		logger.Info("single-tenant mode (no authentication)")
 
-		var providers map[string]domain.Provider
 		if len(cfg.Providers) > 0 {
 			providers, err = providerRegistry.CreateProviders(cfg.Providers)
 			if err != nil {
@@ -136,7 +136,7 @@ func main() {
 	// Create frontdoor handlers from config
 	var handlerRegs []frontdoor.HandlerRegistration
 	if len(cfg.Frontdoors) > 0 {
-		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router)
+		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router, providers)
 		if err != nil {
 			log.Fatalf("Failed to create frontdoor handlers: %v", err)
 		}
@@ -147,7 +147,7 @@ func main() {
 			{Type: "openai", Path: "/openai"},
 			{Type: "anthropic", Path: "/anthropic"},
 		}
-		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router)
+		handlerRegs, err = frontdoorRegistry.CreateHandlers(cfg.Frontdoors, router, providers)
 		if err != nil {
 			log.Fatalf("Failed to create default frontdoor handlers: %v", err)
 		}

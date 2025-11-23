@@ -9,6 +9,7 @@ import (
 	anthropic_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
 	openai_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
 	responses_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/responses"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -27,19 +28,34 @@ func NewRegistry() *Registry {
 }
 
 // CreateHandlers creates frontdoor handlers based on configuration
-func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, provider domain.Provider) ([]HandlerRegistration, error) {
+func (r *Registry) CreateHandlers(configs []config.FrontdoorConfig, router domain.Provider, providers map[string]domain.Provider) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
 	for _, cfg := range configs {
+		// Determine which provider to use
+		var p domain.Provider = router
+		if cfg.Provider != "" {
+			if specificProvider, ok := providers[cfg.Provider]; ok {
+				p = specificProvider
+			} else {
+				return nil, fmt.Errorf("unknown provider: %s", cfg.Provider)
+			}
+		}
+
+		// Apply model override if configured
+		if cfg.DefaultModel != "" {
+			p = provider.NewModelOverrideProvider(p, cfg.DefaultModel)
+		}
+
 		switch cfg.Type {
 		case "openai":
-			handler := openai_frontdoor.NewHandler(provider)
+			handler := openai_frontdoor.NewHandler(p)
 			registrations = append(registrations, HandlerRegistration{
 				Path:    cfg.Path + "/v1/chat/completions",
 				Handler: handler.HandleChatCompletion,
 			})
 		case "anthropic":
-			handler := anthropic_frontdoor.NewHandler(provider)
+			handler := anthropic_frontdoor.NewHandler(p)
 			registrations = append(registrations, HandlerRegistration{
 				Path:    cfg.Path + "/v1/messages",
 				Handler: handler.HandleMessages,
