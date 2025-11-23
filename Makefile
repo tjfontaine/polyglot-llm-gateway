@@ -6,7 +6,7 @@ build: frontend backend
 
 frontend:
 	@echo "Building frontend..."
-	cd web/control-plane && npm install && npm run build
+	cd web/control-plane && npm ci && npm run build
 	@echo "Copying frontend assets..."
 	rm -rf internal/controlplane/dist
 	cp -r web/control-plane/dist internal/controlplane/
