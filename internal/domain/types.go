@@ -30,6 +30,9 @@ type CanonicalRequest struct {
 	Temperature float32           `json:"temperature,omitempty"`
 	Tools       []ToolDefinition  `json:"tools,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// UserAgent is the User-Agent header from the incoming request.
+	// Providers should forward this to upstream APIs for traceability.
+	UserAgent string `json:"-"`
 }
 
 // ToolCallChunk represents a partial tool execution.

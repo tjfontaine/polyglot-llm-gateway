@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/openai/openai-go/option"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/testutil"
 )
@@ -29,13 +28,14 @@ func TestProvider_Complete(t *testing.T) {
 		apiKey = "test-key"
 	}
 
-	p := New(apiKey, option.WithHTTPClient(client))
+	p := New(apiKey, WithHTTPClient(client))
 
 	req := &domain.CanonicalRequest{
 		Model: "gpt-3.5-turbo",
 		Messages: []domain.Message{
 			{Role: "user", Content: "Hello"},
 		},
+		UserAgent: "test-agent/1.0",
 	}
 
 	resp, err := p.Complete(context.Background(), req)
@@ -70,13 +70,14 @@ func TestProvider_Stream(t *testing.T) {
 		apiKey = "test-key"
 	}
 
-	p := New(apiKey, option.WithHTTPClient(client))
+	p := New(apiKey, WithHTTPClient(client))
 
 	req := &domain.CanonicalRequest{
 		Model: "gpt-3.5-turbo",
 		Messages: []domain.Message{
 			{Role: "user", Content: "Count to 3"},
 		},
+		UserAgent: "test-agent/1.0",
 	}
 
 	stream, err := p.Stream(context.Background(), req)
@@ -120,7 +121,7 @@ func TestProvider_Error(t *testing.T) {
 		apiKey = "test-key"
 	}
 
-	p := New(apiKey, option.WithHTTPClient(client))
+	p := New(apiKey, WithHTTPClient(client))
 
 	req := &domain.CanonicalRequest{
 		Model: "invalid-model",
