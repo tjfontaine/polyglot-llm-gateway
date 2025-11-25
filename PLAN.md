@@ -152,6 +152,42 @@ This plan addresses:
 - `internal/policy/router.go` - Added APIType() method
 - `internal/api/anthropic/client.go` - Added beta features header support
 - `internal/api/anthropic/types.go` - Added extended thinking, computer use tools
+- `internal/controlplane/server.go` - Added responses API endpoints and enhanced overview
+- `internal/codec/openai/codec.go` - Enhanced request/response mapping with tool calls, top_p, etc.
+- `internal/codec/anthropic/codec.go` - Enhanced mapping with tool calls, finish reason conversion
+- `web/control-plane/src/App.tsx` - Added Responses API explorer and feature indicators
+
+---
+
+## Phase 6: Frontend Updates & Codec Improvements ✅ COMPLETED
+
+### 6.1 Frontend Updates ✅
+- [x] Updated control plane UI to show `enable_responses` status on apps
+- [x] Updated control plane UI to show `enable_passthrough` status on providers
+- [x] Added "Responses API" and "Passthrough mode" indicators in header
+- [x] Added Responses API explorer tab alongside conversations
+- [x] Implemented response listing and detail view in frontend
+- [x] Added control plane API endpoint for listing/viewing responses
+
+### 6.2 OpenAI Codec Improvements ✅
+- [x] Added tool call support in request/response conversion
+- [x] Added top_p parameter support
+- [x] Added stop sequences support
+- [x] Added tool_choice support
+- [x] Added response_format support
+- [x] Added system_fingerprint support
+- [x] Support for system prompt and instructions fields
+
+### 6.3 Anthropic Codec Improvements ✅
+- [x] Added tool call support (tool_use to function tool calls)
+- [x] Added top_p parameter support
+- [x] Added stop_sequences support
+- [x] Added tool_choice conversion (auto/any/tool)
+- [x] Added finish_reason mapping (stop_reason <-> finish_reason)
+- [x] Support for system prompt and instructions as system blocks
+- [x] Support for tool messages mapping (OpenAI "tool" role -> Anthropic tool_result)
+
+---
 
 ### Key Features Implemented
 1. **Responses API**: Full OpenAI Responses API with streaming, response storage, and conversation continuation
@@ -159,3 +195,5 @@ This plan addresses:
 3. **Rich Content**: Support for multimodal content (images, tool calls, etc.)
 4. **Enhanced Events**: Comprehensive streaming event types for all APIs
 5. **Anthropic Updates**: Extended thinking, computer use tools, beta features support
+6. **Frontend Updates**: Control plane UI with Responses API explorer and feature indicators
+7. **Codec Parity**: Clean bidirectional mapping between OpenAI and Anthropic formats

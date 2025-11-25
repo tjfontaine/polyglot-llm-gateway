@@ -72,11 +72,29 @@ func (c *Codec) EncodeStreamChunk(event *domain.CanonicalEvent, metadata *codec.
 func APIRequestToCanonical(apiReq *openai.ChatCompletionRequest) *domain.CanonicalRequest {
 	messages := make([]domain.Message, len(apiReq.Messages))
 	for i, m := range apiReq.Messages {
-		messages[i] = domain.Message{
-			Role:    m.Role,
-			Content: m.Content,
-			Name:    m.Name,
+		msg := domain.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			Name:       m.Name,
+			ToolCallID: m.ToolCallID,
 		}
+
+		// Convert tool calls from OpenAI format
+		if len(m.ToolCalls) > 0 {
+			msg.ToolCalls = make([]domain.ToolCall, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				msg.ToolCalls[j] = domain.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: domain.ToolCallFunction{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+
+		messages[i] = msg
 	}
 
 	req := &domain.CanonicalRequest{
@@ -94,6 +112,25 @@ func APIRequestToCanonical(apiReq *openai.ChatCompletionRequest) *domain.Canonic
 
 	if apiReq.Temperature != nil {
 		req.Temperature = *apiReq.Temperature
+	}
+
+	if apiReq.TopP != nil {
+		req.TopP = *apiReq.TopP
+	}
+
+	// Convert stop sequences
+	if len(apiReq.Stop) > 0 {
+		req.Stop = apiReq.Stop
+	}
+
+	// Convert tool choice
+	req.ToolChoice = apiReq.ToolChoice
+
+	// Convert response format
+	if apiReq.ResponseFormat != nil {
+		req.ResponseFormat = &domain.ResponseFormat{
+			Type: apiReq.ResponseFormat.Type,
+		}
 	}
 
 	// Convert tools
@@ -116,13 +153,48 @@ func APIRequestToCanonical(apiReq *openai.ChatCompletionRequest) *domain.Canonic
 
 // CanonicalToAPIRequest converts a canonical request to OpenAI API format.
 func CanonicalToAPIRequest(req *domain.CanonicalRequest) *openai.ChatCompletionRequest {
-	messages := make([]openai.ChatCompletionMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		messages[i] = openai.ChatCompletionMessage{
-			Role:    m.Role,
-			Content: m.Content,
-			Name:    m.Name,
+	messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
+
+	// Handle system prompt if set separately
+	if req.SystemPrompt != "" {
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:    "system",
+			Content: req.SystemPrompt,
+		})
+	}
+
+	// Handle instructions (Responses API) as system message
+	if req.Instructions != "" && req.SystemPrompt == "" {
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:    "system",
+			Content: req.Instructions,
+		})
+	}
+
+	for _, m := range req.Messages {
+		msg := openai.ChatCompletionMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			Name:       m.Name,
+			ToolCallID: m.ToolCallID,
 		}
+
+		// Convert tool calls to OpenAI format
+		if len(m.ToolCalls) > 0 {
+			msg.ToolCalls = make([]openai.ToolCall, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				msg.ToolCalls[j] = openai.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: openai.FunctionCall{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+
+		messages = append(messages, msg)
 	}
 
 	apiReq := &openai.ChatCompletionRequest{
@@ -138,6 +210,25 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *openai.ChatCompletionR
 
 	if req.Temperature > 0 {
 		apiReq.Temperature = &req.Temperature
+	}
+
+	if req.TopP > 0 {
+		apiReq.TopP = &req.TopP
+	}
+
+	// Convert stop sequences
+	if len(req.Stop) > 0 {
+		apiReq.Stop = req.Stop
+	}
+
+	// Convert tool choice
+	apiReq.ToolChoice = req.ToolChoice
+
+	// Convert response format
+	if req.ResponseFormat != nil {
+		apiReq.ResponseFormat = &openai.ResponseFormat{
+			Type: req.ResponseFormat.Type,
+		}
 	}
 
 	// Convert tools
@@ -162,28 +253,48 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *openai.ChatCompletionR
 func APIResponseToCanonical(apiResp *openai.ChatCompletionResponse) *domain.CanonicalResponse {
 	choices := make([]domain.Choice, len(apiResp.Choices))
 	for i, c := range apiResp.Choices {
+		msg := domain.Message{
+			Role:    c.Message.Role,
+			Content: c.Message.Content,
+			Name:    c.Message.Name,
+		}
+
+		// Convert tool calls from OpenAI format
+		if len(c.Message.ToolCalls) > 0 {
+			msg.ToolCalls = make([]domain.ToolCall, len(c.Message.ToolCalls))
+			for j, tc := range c.Message.ToolCalls {
+				msg.ToolCalls[j] = domain.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: domain.ToolCallFunction{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+
 		choices[i] = domain.Choice{
-			Index: c.Index,
-			Message: domain.Message{
-				Role:    c.Message.Role,
-				Content: c.Message.Content,
-				Name:    c.Message.Name,
-			},
+			Index:        c.Index,
+			Message:      msg,
 			FinishReason: c.FinishReason,
+			Logprobs:     c.Logprobs,
 		}
 	}
 
 	return &domain.CanonicalResponse{
-		ID:      apiResp.ID,
-		Object:  apiResp.Object,
-		Created: apiResp.Created,
-		Model:   apiResp.Model,
-		Choices: choices,
+		ID:                apiResp.ID,
+		Object:            apiResp.Object,
+		Created:           apiResp.Created,
+		Model:             apiResp.Model,
+		Choices:           choices,
+		SystemFingerprint: apiResp.SystemFingerprint,
 		Usage: domain.Usage{
 			PromptTokens:     apiResp.Usage.PromptTokens,
 			CompletionTokens: apiResp.Usage.CompletionTokens,
 			TotalTokens:      apiResp.Usage.TotalTokens,
 		},
+		SourceAPIType: domain.APITypeOpenAI,
 	}
 }
 
@@ -191,23 +302,41 @@ func APIResponseToCanonical(apiResp *openai.ChatCompletionResponse) *domain.Cano
 func CanonicalToAPIResponse(resp *domain.CanonicalResponse) *openai.ChatCompletionResponse {
 	choices := make([]openai.Choice, len(resp.Choices))
 	for i, c := range resp.Choices {
+		msg := openai.ChatCompletionMessage{
+			Role:    c.Message.Role,
+			Content: c.Message.Content,
+			Name:    c.Message.Name,
+		}
+
+		// Convert tool calls to OpenAI format
+		if len(c.Message.ToolCalls) > 0 {
+			msg.ToolCalls = make([]openai.ToolCall, len(c.Message.ToolCalls))
+			for j, tc := range c.Message.ToolCalls {
+				msg.ToolCalls[j] = openai.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: openai.FunctionCall{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				}
+			}
+		}
+
 		choices[i] = openai.Choice{
-			Index: c.Index,
-			Message: openai.ChatCompletionMessage{
-				Role:    c.Message.Role,
-				Content: c.Message.Content,
-				Name:    c.Message.Name,
-			},
+			Index:        c.Index,
+			Message:      msg,
 			FinishReason: c.FinishReason,
 		}
 	}
 
 	return &openai.ChatCompletionResponse{
-		ID:      resp.ID,
-		Object:  resp.Object,
-		Created: resp.Created,
-		Model:   resp.Model,
-		Choices: choices,
+		ID:                resp.ID,
+		Object:            resp.Object,
+		Created:           resp.Created,
+		Model:             resp.Model,
+		SystemFingerprint: resp.SystemFingerprint,
+		Choices:           choices,
 		Usage: openai.Usage{
 			PromptTokens:     resp.Usage.PromptTokens,
 			CompletionTokens: resp.Usage.CompletionTokens,

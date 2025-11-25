@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  ArrowLeftRight,
   BadgeCheck,
+  Bot,
+  CheckCircle,
   Clock4,
   Compass,
   Database,
@@ -14,6 +17,7 @@ import {
   Shield,
   Signal,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import './App.css';
 
@@ -52,12 +56,35 @@ interface Overview {
     path: string;
     provider?: string;
     default_model?: string;
+    enable_responses?: boolean;
     model_routing?: ModelRouting;
   }[];
   frontdoors?: { type: string; path: string; provider?: string; default_model?: string }[];
-  providers: { name: string; type: string; base_url?: string; supports_responses: boolean }[];
+  providers: { name: string; type: string; base_url?: string; supports_responses: boolean; enable_passthrough: boolean }[];
   routing: { default_provider: string; rules: { model_prefix?: string; model_exact?: string; provider: string }[] };
   tenants: { id: string; name: string; provider_count: number; routing_rules: number; supports_tenant: boolean }[];
+}
+
+interface ResponseSummary {
+  id: string;
+  status: string;
+  model: string;
+  previous_response_id?: string;
+  metadata?: Record<string, string>;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ResponseDetail {
+  id: string;
+  status: string;
+  model: string;
+  request?: unknown;
+  response?: unknown;
+  previous_response_id?: string;
+  metadata?: Record<string, string>;
+  created_at: number;
+  updated_at: number;
 }
 
 interface ThreadSummary {
@@ -144,6 +171,12 @@ function App() {
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [selectedThread, setSelectedThread] = useState<ThreadDetail | null>(null);
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
+  const [responses, setResponses] = useState<ResponseSummary[]>([]);
+  const [responsesError, setResponsesError] = useState<string | null>(null);
+  const [loadingResponses, setLoadingResponses] = useState(false);
+  const [selectedResponse, setSelectedResponse] = useState<ResponseDetail | null>(null);
+  const [loadingResponseDetail, setLoadingResponseDetail] = useState(false);
+  const [explorerTab, setExplorerTab] = useState<'conversations' | 'responses'>('conversations');
 
   useEffect(() => {
     const fetchOverview = async () => {
@@ -214,6 +247,57 @@ function App() {
     }
   };
 
+  // Fetch responses when storage is enabled
+  useEffect(() => {
+    if (!overview) return;
+    if (!overview.storage.enabled) {
+      setResponses([]);
+      setResponsesError('Conversation storage is disabled, so responses are unavailable.');
+      return;
+    }
+    const fetchResponses = async () => {
+      setLoadingResponses(true);
+      setResponsesError(null);
+      try {
+        const res = await fetch(`${API_BASE}/responses?limit=50`);
+        if (!res.ok) throw new Error('Failed to load responses');
+        const data = await res.json();
+        setResponses(data.responses ?? []);
+      } catch (err) {
+        console.error(err);
+        setResponsesError('Unable to load responses right now.');
+      } finally {
+        setLoadingResponses(false);
+      }
+    };
+    fetchResponses();
+  }, [overview]);
+
+  const openResponse = async (responseId: string) => {
+    setLoadingResponseDetail(true);
+    try {
+      const res = await fetch(`${API_BASE}/responses/${responseId}`);
+      if (!res.ok) throw new Error('Failed to load response');
+      const data = await res.json();
+      setSelectedResponse(data);
+    } catch (err) {
+      console.error(err);
+      setSelectedResponse(null);
+    } finally {
+      setLoadingResponseDetail(false);
+    }
+  };
+
+  // Check if any app has responses API enabled
+  const hasResponsesEnabled = useMemo(() => {
+    return (overview?.apps ?? []).some((app) => app?.enable_responses);
+  }, [overview]);
+
+  // Check if any provider has passthrough enabled
+  const hasPassthroughEnabled = useMemo(() => {
+    return (overview?.providers ?? []).some((p) => p?.enable_passthrough);
+  }, [overview]);
+
   const tenantLabel = useMemo(() => {
     if (!overview) return 'Mode: pending';
     if (overview.mode === 'multi-tenant') {
@@ -262,6 +346,12 @@ function App() {
                   tone={overview?.storage.enabled ? 'emerald' : 'slate'}
                 />
                 <Pill icon={ServerCog} label={stats ? `Go ${stats.go_version}` : 'Runtime pending'} />
+                {hasResponsesEnabled && (
+                  <Pill icon={Bot} label="Responses API" tone="emerald" />
+                )}
+                {hasPassthroughEnabled && (
+                  <Pill icon={Zap} label="Passthrough mode" tone="amber" />
+                )}
               </div>
             </div>
             <div className="flex items-start gap-2 text-xs text-slate-300">
@@ -314,6 +404,11 @@ function App() {
                         {app?.default_model && (
                           <span className="rounded-md bg-slate-800/80 px-2 py-1">default model: {app.default_model}</span>
                         )}
+                        {app?.enable_responses && (
+                          <span className="rounded-md bg-emerald-500/20 px-2 py-1 text-emerald-100 border border-emerald-500/30">
+                            <Bot size={12} className="inline mr-1" />responses API
+                          </span>
+                        )}
                       </div>
                       {(Object.keys(app?.model_routing?.prefix_providers ?? {}).length > 0 ||
                         (app?.model_routing?.rewrites?.length ?? 0) > 0) && (
@@ -353,7 +448,16 @@ function App() {
                       </div>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
                         {p.base_url && <span className="rounded-md bg-slate-800/80 px-2 py-1">custom base: {p.base_url}</span>}
-                        {p.supports_responses && <span className="rounded-md bg-slate-800/80 px-2 py-1">responses API ready</span>}
+                        {p.supports_responses && (
+                          <span className="rounded-md bg-emerald-500/20 px-2 py-1 text-emerald-100 border border-emerald-500/30">
+                            <Bot size={12} className="inline mr-1" />responses ready
+                          </span>
+                        )}
+                        {p.enable_passthrough && (
+                          <span className="rounded-md bg-amber-500/20 px-2 py-1 text-amber-100 border border-amber-500/30">
+                            <Zap size={12} className="inline mr-1" />passthrough
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -403,29 +507,45 @@ function App() {
         <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-wide text-slate-400">Conversations</p>
-              <h2 className="text-lg font-semibold text-white">Conversation explorer</h2>
+              <p className="text-xs uppercase tracking-wide text-slate-400">Data Explorer</p>
+              <h2 className="text-lg font-semibold text-white">Conversations & Responses</h2>
               <p className="text-sm text-slate-400">
-                Read-only view of stored conversations across all frontdoors (Responses API, OpenAI, Anthropic).
+                Read-only view of stored conversations and Responses API records across all frontdoors.
               </p>
             </div>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-full border border-amber-400/60 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-100 transition hover:border-amber-300"
-              onClick={() => {
-                if (threads.length > 0) {
-                  openThread(threads[0].id);
-                }
-              }}
-              disabled={!threads.length}
-            >
-              <RefreshCcw size={14} /> Open newest
-            </button>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-full border border-white/10 bg-slate-950/60 p-1">
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    explorerTab === 'conversations'
+                      ? 'bg-amber-500/20 text-amber-100 border border-amber-400/50'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                  onClick={() => setExplorerTab('conversations')}
+                >
+                  <MessageSquare size={12} className="inline mr-1" />
+                  Conversations
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    explorerTab === 'responses'
+                      ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/50'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                  onClick={() => setExplorerTab('responses')}
+                >
+                  <Bot size={12} className="inline mr-1" />
+                  Responses API
+                </button>
+              </div>
+            </div>
           </div>
 
           {!overview?.storage.enabled && <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-amber-100">{threadsError}</div>}
 
-          {overview?.storage.enabled && (
+          {overview?.storage.enabled && explorerTab === 'conversations' && (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]">
               <div className="rounded-2xl border border-white/10 bg-slate-950/60">
                 <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
@@ -568,6 +688,153 @@ function App() {
                         </div>
                       ))}
                       {selectedThread.messages.length === 0 && <div className="text-sm text-slate-500">No messages on this thread.</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {overview?.storage.enabled && explorerTab === 'responses' && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]">
+              <div className="rounded-2xl border border-white/10 bg-slate-950/60">
+                <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Bot size={16} className="text-emerald-300" /> Responses
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-xs text-slate-200 hover:border-white/30"
+                    onClick={() => {
+                      setSelectedResponse(null);
+                      setResponsesError(null);
+                      setLoadingResponses(true);
+                      fetch(`${API_BASE}/responses?limit=50`)
+                        .then((res) => res.json())
+                        .then((data) => setResponses(data.responses ?? []))
+                        .catch(() => setResponsesError('Unable to load responses right now.'))
+                        .finally(() => setLoadingResponses(false));
+                    }}
+                  >
+                    <RefreshCcw size={14} /> Refresh
+                  </button>
+                </div>
+                <div className="max-h-[540px] space-y-2 overflow-y-auto p-3">
+                  {loadingResponses && <div className="flex items-center justify-center py-10 text-slate-400">Loading responses…</div>}
+                  {responsesError && <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-amber-100">{responsesError}</div>}
+                  {!loadingResponses && !responsesError &&
+                    responses.map((response) => (
+                      <button
+                        key={response.id}
+                        onClick={() => openResponse(response.id)}
+                        className={`group flex w-full flex-col gap-1 rounded-xl border px-3 py-3 text-left transition ${
+                          selectedResponse?.id === response.id ? 'border-emerald-300/70 bg-emerald-500/10' : 'border-white/10 bg-white/5 hover:border-white/25'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="truncate text-sm font-semibold text-white">{response.id.slice(0, 16)}...</div>
+                          <span className={`text-xs rounded-full px-2 py-0.5 ${
+                            response.status === 'completed' ? 'bg-emerald-500/20 text-emerald-100' :
+                            response.status === 'failed' ? 'bg-red-500/20 text-red-100' :
+                            response.status === 'cancelled' ? 'bg-slate-500/20 text-slate-200' :
+                            'bg-amber-500/20 text-amber-100'
+                          }`}>
+                            {response.status}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                          <span>{formatShortDate(response.updated_at)}</span>
+                          <div className="flex flex-wrap gap-1">
+                            <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-slate-200">{response.model}</span>
+                            {response.previous_response_id && (
+                              <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-emerald-100">
+                                <ArrowLeftRight size={10} className="inline mr-1" />continues
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  {!loadingResponses && !responsesError && responses.length === 0 && (
+                    <div className="py-10 text-center text-slate-500">
+                      <Bot size={32} className="mx-auto mb-2 text-slate-600" />
+                      <p>No Responses API records yet.</p>
+                      <p className="mt-1 text-xs">Use the Responses API endpoint to create records.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-slate-950/60">
+                {!selectedResponse && !loadingResponseDetail && (
+                  <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 text-slate-400">
+                    <Bot size={32} className="text-emerald-300" />
+                    <div className="text-sm">Select a response to inspect details.</div>
+                  </div>
+                )}
+                {loadingResponseDetail && (
+                  <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-2 text-slate-300">
+                    <Loader2 className="animate-spin" />
+                    Loading response…
+                  </div>
+                )}
+                {selectedResponse && !loadingResponseDetail && (
+                  <div className="flex h-full flex-col">
+                    <div className="border-b border-white/10 px-5 py-4">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold text-white">{selectedResponse.id}</div>
+                          <span className={`text-xs rounded-full px-2 py-1 ${
+                            selectedResponse.status === 'completed' ? 'bg-emerald-500/20 text-emerald-100' :
+                            selectedResponse.status === 'failed' ? 'bg-red-500/20 text-red-100' :
+                            selectedResponse.status === 'cancelled' ? 'bg-slate-500/20 text-slate-200' :
+                            'bg-amber-500/20 text-amber-100'
+                          }`}>
+                            <CheckCircle size={12} className="inline mr-1" />
+                            {selectedResponse.status}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                            <Clock4 size={12} /> {formatShortDate(selectedResponse.created_at)}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-800/80 px-2 py-1">
+                            <ServerCog size={12} /> {selectedResponse.model}
+                          </span>
+                          {selectedResponse.previous_response_id && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-1 text-emerald-100">
+                              <ArrowLeftRight size={12} /> continues: {selectedResponse.previous_response_id.slice(0, 8)}...
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                      {selectedResponse.request && (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
+                            <Shield size={14} className="text-amber-200" />
+                            <span className="text-slate-200 font-semibold">Request</span>
+                          </div>
+                          <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[200px]">
+                            {JSON.stringify(selectedResponse.request, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                      {selectedResponse.response && (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
+                            <Bot size={14} className="text-emerald-200" />
+                            <span className="text-slate-200 font-semibold">Response</span>
+                          </div>
+                          <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[300px]">
+                            {JSON.stringify(selectedResponse.response, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                      {!selectedResponse.request && !selectedResponse.response && (
+                        <div className="text-sm text-slate-500">No request/response data available.</div>
+                      )}
                     </div>
                   </div>
                 )}

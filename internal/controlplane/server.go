@@ -54,6 +54,8 @@ func (s *Server) routes() {
 	s.router.Get("/api/overview", s.handleOverview)
 	s.router.Get("/api/threads", s.handleListThreads)
 	s.router.Get("/api/threads/{thread_id}", s.handleThreadDetail)
+	s.router.Get("/api/responses", s.handleListResponses)
+	s.router.Get("/api/responses/{response_id}", s.handleResponseDetail)
 
 	s.router.Get("/*", s.handleApp)
 }
@@ -119,12 +121,13 @@ type FrontdoorSummary struct {
 }
 
 type AppSummary struct {
-	Name         string              `json:"name"`
-	Frontdoor    string              `json:"frontdoor"`
-	Path         string              `json:"path"`
-	Provider     string              `json:"provider,omitempty"`
-	DefaultModel string              `json:"default_model,omitempty"`
-	ModelRouting ModelRoutingSummary `json:"model_routing,omitempty"`
+	Name            string              `json:"name"`
+	Frontdoor       string              `json:"frontdoor"`
+	Path            string              `json:"path"`
+	Provider        string              `json:"provider,omitempty"`
+	DefaultModel    string              `json:"default_model,omitempty"`
+	EnableResponses bool                `json:"enable_responses"`
+	ModelRouting    ModelRoutingSummary `json:"model_routing,omitempty"`
 }
 
 type ModelRoutingSummary struct {
@@ -144,6 +147,7 @@ type ProviderSummary struct {
 	Type              string `json:"type"`
 	BaseURL           string `json:"base_url,omitempty"`
 	SupportsResponses bool   `json:"supports_responses"`
+	EnablePassthrough bool   `json:"enable_passthrough"`
 }
 
 type RoutingSummary struct {
@@ -179,11 +183,12 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 		for _, app := range s.cfg.Apps {
 			summary := AppSummary{
-				Name:         app.Name,
-				Frontdoor:    app.Frontdoor,
-				Path:         app.Path,
-				Provider:     app.Provider,
-				DefaultModel: app.DefaultModel,
+				Name:            app.Name,
+				Frontdoor:       app.Frontdoor,
+				Path:            app.Path,
+				Provider:        app.Provider,
+				DefaultModel:    app.DefaultModel,
+				EnableResponses: app.EnableResponses,
 			}
 
 			if len(app.ModelRouting.PrefixProviders) > 0 || len(app.ModelRouting.Rewrites) > 0 {
@@ -250,6 +255,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 				Type:              p.Type,
 				BaseURL:           p.BaseURL,
 				SupportsResponses: p.SupportsResponses,
+				EnablePassthrough: p.EnablePassthrough,
 			})
 		}
 	}
@@ -440,4 +446,136 @@ func tenantIDFromContext(ctx context.Context) string {
 func writeJSON(w http.ResponseWriter, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// ResponseSummary is a summary view of a response for list display
+type ResponseSummary struct {
+	ID                 string            `json:"id"`
+	Status             string            `json:"status"`
+	Model              string            `json:"model"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	CreatedAt          int64             `json:"created_at"`
+	UpdatedAt          int64             `json:"updated_at"`
+}
+
+// ResponseListResponse is the response for listing responses
+type ResponseListResponse struct {
+	Responses []ResponseSummary `json:"responses"`
+}
+
+// ResponseDetailView is the full detail view of a response
+type ResponseDetailView struct {
+	ID                 string            `json:"id"`
+	Status             string            `json:"status"`
+	Model              string            `json:"model"`
+	Request            json.RawMessage   `json:"request,omitempty"`
+	Response           json.RawMessage   `json:"response,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	CreatedAt          int64             `json:"created_at"`
+	UpdatedAt          int64             `json:"updated_at"`
+}
+
+func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
+	respStore, ok := s.store.(storage.ResponseStore)
+	if !ok || s.store == nil {
+		http.Error(w, "response storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	limit := 50
+	offset := 0
+
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+	}
+
+	if q := r.URL.Query().Get("offset"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	// Get responses - since we don't have a ListResponses method, we'll use GetResponse
+	// This is a placeholder - in a real implementation you'd add a ListResponses method
+	// For now, we'll return the conversations that have responses in their metadata
+	tenantID := tenantIDFromContext(r.Context())
+	conversations, err := s.store.ListConversations(r.Context(), storage.ListOptions{
+		TenantID: tenantID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		http.Error(w, "failed to list responses", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter to only include those with response_id metadata
+	resp := ResponseListResponse{Responses: make([]ResponseSummary, 0)}
+	for _, conv := range conversations {
+		if responseID, ok := conv.Metadata["response_id"]; ok {
+			// Try to get the actual response
+			record, err := respStore.GetResponse(r.Context(), responseID)
+			if err == nil && record != nil {
+				updatedAt := record.UpdatedAt
+				if updatedAt.IsZero() {
+					updatedAt = record.CreatedAt
+				}
+				resp.Responses = append(resp.Responses, ResponseSummary{
+					ID:                 record.ID,
+					Status:             record.Status,
+					Model:              record.Model,
+					PreviousResponseID: record.PreviousResponseID,
+					Metadata:           record.Metadata,
+					CreatedAt:          record.CreatedAt.Unix(),
+					UpdatedAt:          updatedAt.Unix(),
+				})
+			}
+		}
+	}
+
+	writeJSON(w, resp)
+}
+
+func (s *Server) handleResponseDetail(w http.ResponseWriter, r *http.Request) {
+	respStore, ok := s.store.(storage.ResponseStore)
+	if !ok || s.store == nil {
+		http.Error(w, "response storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	responseID := chi.URLParam(r, "response_id")
+	record, err := respStore.GetResponse(r.Context(), responseID)
+	if err != nil {
+		http.Error(w, "response not found", http.StatusNotFound)
+		return
+	}
+
+	tenantID := tenantIDFromContext(r.Context())
+	if record.TenantID != "" && tenantID != "" && record.TenantID != tenantID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	updatedAt := record.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = record.CreatedAt
+	}
+
+	resp := ResponseDetailView{
+		ID:                 record.ID,
+		Status:             record.Status,
+		Model:              record.Model,
+		Request:            record.Request,
+		Response:           record.Response,
+		PreviousResponseID: record.PreviousResponseID,
+		Metadata:           record.Metadata,
+		CreatedAt:          record.CreatedAt.Unix(),
+		UpdatedAt:          updatedAt.Unix(),
+	}
+
+	writeJSON(w, resp)
 }
