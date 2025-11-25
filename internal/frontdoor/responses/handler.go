@@ -253,6 +253,7 @@ func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
 		Messages:    messages,
 		MaxTokens:   req.MaxOutputTokens,
 		Temperature: req.Temperature,
+		UserAgent:   r.Header.Get("User-Agent"),
 	}
 
 	canonResp, err := h.provider.Complete(r.Context(), canonReq)
@@ -318,8 +319,9 @@ func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to canonical request
 	canonReq := &domain.CanonicalRequest{
-		Model:    req.Model,
-		Messages: make([]domain.Message, len(conv.Messages)),
+		Model:     req.Model,
+		Messages:  make([]domain.Message, len(conv.Messages)),
+		UserAgent: r.Header.Get("User-Agent"),
 	}
 
 	for i, msg := range conv.Messages {

@@ -3,7 +3,6 @@ package provider
 import (
 	"fmt"
 
-	openai_option "github.com/openai/openai-go/option"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
@@ -20,13 +19,17 @@ func NewRegistry() *Registry {
 func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, error) {
 	switch cfg.Type {
 	case "openai", "openai-compatible":
-		var opts []openai_option.RequestOption
+		var opts []openai.ProviderOption
 		if cfg.BaseURL != "" {
-			opts = append(opts, openai_option.WithBaseURL(cfg.BaseURL))
+			opts = append(opts, openai.WithBaseURL(cfg.BaseURL))
 		}
 		return openai.New(cfg.APIKey, opts...), nil
 	case "anthropic":
-		return anthropic.New(cfg.APIKey), nil
+		var opts []anthropic.ProviderOption
+		if cfg.BaseURL != "" {
+			opts = append(opts, anthropic.WithBaseURL(cfg.BaseURL))
+		}
+		return anthropic.New(cfg.APIKey, opts...), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
 	}

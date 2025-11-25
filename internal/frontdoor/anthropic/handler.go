@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	anthropic_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
@@ -40,116 +42,14 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 	}
 }
 
-// Anthropic Messages API request format
-type MessagesRequest struct {
-	Model       string         `json:"model"`
-	Messages    []Message      `json:"messages"`
-	MaxTokens   int            `json:"max_tokens,omitempty"`
-	Stream      bool           `json:"stream,omitempty"`
-	System      SystemMessages `json:"system,omitempty"`
-	Temperature float32        `json:"temperature,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-}
-
-type Message struct {
-	Role    string             `json:"role"`
-	Content MessageContentList `json:"content"`
-	Name    string             `json:"name,omitempty"`
-}
-
-type SystemMessage struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type SystemMessages []SystemMessage
-
-func (s *SystemMessages) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Accept a single string
-	var single string
-	if err := json.Unmarshal(data, &single); err == nil {
-		*s = SystemMessages{{Type: "text", Text: single}}
-		return nil
-	}
-
-	// Accept an array of text blocks
-	var blocks []SystemMessage
-	if err := json.Unmarshal(data, &blocks); err == nil {
-		*s = blocks
-		return nil
-	}
-
-	return fmt.Errorf("system must be a string or array of text blocks")
-}
-
-type MessageContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-// MessageContentList supports both the Claude string shortcut and the full array format.
-type MessageContentList []MessageContent
-
-func (m *MessageContentList) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-
-	// Allow the simple string form
-	var single string
-	if err := json.Unmarshal(data, &single); err == nil {
-		*m = MessageContentList{{Type: "text", Text: single}}
-		return nil
-	}
-
-	// Allow the array-of-blocks form
-	var blocks []MessageContent
-	if err := json.Unmarshal(data, &blocks); err == nil {
-		// Default missing types to text for compatibility
-		for i := range blocks {
-			if blocks[i].Type == "" {
-				blocks[i].Type = "text"
-			}
-		}
-		*m = blocks
-		return nil
-	}
-
-	return fmt.Errorf("content must be a string or array of content blocks")
-}
-
-// Anthropic Messages API response format
-type MessagesResponse struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Role       string         `json:"role"`
-	Content    []ContentBlock `json:"content"`
-	Model      string         `json:"model"`
-	StopReason string         `json:"stop_reason"`
-	Usage      Usage          `json:"usage"`
-}
-
-type ContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-}
-
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 	providerName := h.provider.Name()
 
-	var req MessagesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Decode directly into Anthropic API request type
+	var apiReq anthropicapi.MessagesRequest
+	if err := json.NewDecoder(r.Body).Decode(&apiReq); err != nil {
 		logger.Error("failed to decode anthropic messages request",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
@@ -159,7 +59,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canonReq, err := toCanonicalRequest(req)
+	// Convert to canonical request using provider helper
+	canonReq, err := anthropic_provider.ToCanonicalRequest(&apiReq)
 	if err != nil {
 		logger.Error("invalid anthropic messages request",
 			slog.String("request_id", requestID),
@@ -170,12 +71,15 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture User-Agent from incoming request and pass it through
+	canonReq.UserAgent = r.Header.Get("User-Agent")
+
 	server.AddLogField(r.Context(), "requested_model", canonReq.Model)
 	server.AddLogField(r.Context(), "frontdoor", "anthropic")
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", providerName)
 
-	if req.Stream {
+	if apiReq.Stream {
 		h.handleStream(w, r, canonReq)
 		return
 	}
@@ -193,20 +97,20 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to Anthropic format
-	anthropicResp := MessagesResponse{
+	// Convert to Anthropic response format using shared types
+	anthropicResp := anthropicapi.MessagesResponse{
 		ID:         resp.ID,
 		Type:       "message",
 		Role:       "assistant",
 		Model:      resp.Model,
 		StopReason: resp.Choices[0].FinishReason,
-		Content: []ContentBlock{
+		Content: []anthropicapi.ResponseContent{
 			{
 				Type: "text",
 				Text: resp.Choices[0].Message.Content,
 			},
 		},
-		Usage: Usage{
+		Usage: anthropicapi.MessagesUsage{
 			InputTokens:  resp.Usage.PromptTokens,
 			OutputTokens: resp.Usage.CompletionTokens,
 		},
@@ -261,74 +165,6 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-func toCanonicalRequest(req MessagesRequest) (*domain.CanonicalRequest, error) {
-	canonReq := &domain.CanonicalRequest{
-		Model:       req.Model,
-		Messages:    make([]domain.Message, 0, len(req.Messages)+len(req.System)),
-		Stream:      req.Stream,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-	}
-
-	if len(req.Metadata) > 0 {
-		canonReq.Metadata = make(map[string]string, len(req.Metadata))
-		for k, v := range req.Metadata {
-			strVal, ok := v.(string)
-			if !ok {
-				return nil, fmt.Errorf("metadata values must be strings (got %T for %s)", v, k)
-			}
-			canonReq.Metadata[k] = strVal
-		}
-	}
-
-	// Add system messages first
-	for _, sys := range req.System {
-		if sys.Type != "" && sys.Type != "text" {
-			return nil, fmt.Errorf("unsupported system block type: %s", sys.Type)
-		}
-		canonReq.Messages = append(canonReq.Messages, domain.Message{
-			Role:    "system",
-			Content: sys.Text,
-		})
-	}
-
-	// Add conversation messages
-	for idx, msg := range req.Messages {
-		content, err := collapseContent(msg.Content)
-		if err != nil {
-			return nil, fmt.Errorf("message %d: %w", idx, err)
-		}
-
-		canonReq.Messages = append(canonReq.Messages, domain.Message{
-			Role:    msg.Role,
-			Content: content,
-			Name:    msg.Name,
-		})
-	}
-
-	return canonReq, nil
-}
-
-func collapseContent(blocks MessageContentList) (string, error) {
-	if len(blocks) == 0 {
-		return "", fmt.Errorf("content is required")
-	}
-
-	var b strings.Builder
-	for _, block := range blocks {
-		blockType := block.Type
-		if blockType == "" {
-			blockType = "text"
-		}
-		if blockType != "text" {
-			return "", fmt.Errorf("unsupported content block type: %s", blockType)
-		}
-		b.WriteString(block.Text)
-	}
-
-	return b.String(), nil
-}
-
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
@@ -371,20 +207,15 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 		builder.WriteString(event.ContentDelta)
 
-		// Anthropic streaming format
-		chunk := struct {
-			Type  string `json:"type"`
-			Index int    `json:"index,omitempty"`
-			Delta struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"delta,omitempty"`
-		}{
+		// Use shared Anthropic streaming types
+		chunk := anthropicapi.ContentBlockDeltaEvent{
 			Type:  "content_block_delta",
 			Index: 0,
+			Delta: anthropicapi.BlockDelta{
+				Type: "text_delta",
+				Text: event.ContentDelta,
+			},
 		}
-		chunk.Delta.Type = "text_delta"
-		chunk.Delta.Text = event.ContentDelta
 
 		data, _ := json.Marshal(chunk)
 		fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", data)
