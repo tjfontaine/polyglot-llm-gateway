@@ -78,6 +78,10 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Capture User-Agent from incoming request and pass it through
 	req.UserAgent = r.Header.Get("User-Agent")
 
+	// Set source API type and raw request for pass-through optimization
+	req.SourceAPIType = domain.APITypeOpenAI
+	req.RawRequest = body
+
 	server.AddLogField(r.Context(), "frontdoor", "openai")
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", h.provider.Name())
@@ -119,15 +123,25 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, req, resp, metadata)
 
-	// Use codec to encode response
-	respBody, err := h.codec.EncodeResponse(resp)
-	if err != nil {
-		logger.Error("failed to encode response",
+	// Use raw response if available (pass-through mode), otherwise encode
+	var respBody []byte
+	if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeOpenAI {
+		// Pass-through: use raw response directly
+		respBody = resp.RawResponse
+		logger.Debug("using pass-through response",
 			slog.String("request_id", requestID),
-			slog.String("error", err.Error()),
 		)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	} else {
+		// Standard path: encode canonical response to OpenAI format
+		respBody, err = h.codec.EncodeResponse(resp)
+		if err != nil {
+			logger.Error("failed to encode response",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

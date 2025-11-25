@@ -63,6 +63,10 @@ func (p *Provider) Name() string {
 	return "anthropic"
 }
 
+func (p *Provider) APIType() domain.APIType {
+	return domain.APITypeAnthropic
+}
+
 func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	// Use codec to convert canonical request to API request
 	apiReq := anthropiccodec.CanonicalToAPIRequest(req)

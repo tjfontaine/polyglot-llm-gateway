@@ -73,8 +73,9 @@ type ProviderConfig struct {
 	Name              string `koanf:"name"`
 	Type              string `koanf:"type"`
 	APIKey            string `koanf:"api_key"`
-	BaseURL           string `koanf:"base_url"`           // New: Custom API endpoint
-	SupportsResponses bool   `koanf:"supports_responses"` // New: Flag for native Responses API support
+	BaseURL           string `koanf:"base_url"`           // Custom API endpoint
+	SupportsResponses bool   `koanf:"supports_responses"` // Flag for native Responses API support
+	EnablePassthrough bool   `koanf:"enable_passthrough"` // Enable pass-through mode when frontdoor matches
 }
 
 type RoutingConfig struct {

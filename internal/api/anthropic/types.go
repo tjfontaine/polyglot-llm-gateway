@@ -21,6 +21,9 @@ type MessagesRequest struct {
 	Tools         []Tool         `json:"tools,omitempty"`
 	ToolChoice    *ToolChoice    `json:"tool_choice,omitempty"`
 	Metadata      *Metadata      `json:"metadata,omitempty"`
+
+	// Extended thinking support (beta)
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 }
 
 // Message represents a message in the conversation.
@@ -69,7 +72,7 @@ func (c ContentBlock) String() string {
 
 // ContentPart represents a single content part in a message.
 type ContentPart struct {
-	Type string `json:"type"`
+	Type string `json:"type"` // "text", "image", "tool_use", "tool_result", "thinking"
 	Text string `json:"text,omitempty"`
 
 	// For tool_use blocks
@@ -84,6 +87,9 @@ type ContentPart struct {
 
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
+
+	// For thinking blocks (extended thinking beta)
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // ImageSource represents an image source.
@@ -135,6 +141,18 @@ type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	InputSchema any    `json:"input_schema"`
+	Type        string `json:"type,omitempty"` // "custom" (default), "computer_20241022", "text_editor_20241022", "bash_20241022"
+
+	// For computer use tools
+	DisplayWidthPx  int `json:"display_width_px,omitempty"`
+	DisplayHeightPx int `json:"display_height_px,omitempty"`
+	DisplayNumber   int `json:"display_number,omitempty"`
+}
+
+// ThinkingConfig configures extended thinking behavior.
+type ThinkingConfig struct {
+	Type         string `json:"type"`          // "enabled"
+	BudgetTokens int    `json:"budget_tokens"` // Max tokens for thinking
 }
 
 // ToolChoice represents how the model should use tools.
@@ -150,14 +168,14 @@ type Metadata struct {
 
 // MessagesResponse represents an Anthropic Messages API response.
 type MessagesResponse struct {
-	ID           string              `json:"id"`
-	Type         string              `json:"type"`
-	Role         string              `json:"role"`
-	Content      []ResponseContent   `json:"content"`
-	Model        string              `json:"model"`
-	StopReason   string              `json:"stop_reason"`
-	StopSequence *string             `json:"stop_sequence,omitempty"`
-	Usage        MessagesUsage       `json:"usage"`
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	Role         string            `json:"role"`
+	Content      []ResponseContent `json:"content"`
+	Model        string            `json:"model"`
+	StopReason   string            `json:"stop_reason"`
+	StopSequence *string           `json:"stop_sequence,omitempty"`
+	Usage        MessagesUsage     `json:"usage"`
 }
 
 // ResponseContent represents content in a response.

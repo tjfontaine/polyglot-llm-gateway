@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -24,6 +25,23 @@ type ConversationStore interface {
 
 	// Close closes the storage connection
 	Close() error
+}
+
+// ResponseStore defines the interface for Responses API storage
+type ResponseStore interface {
+	ConversationStore
+
+	// SaveResponse saves a response for later retrieval
+	SaveResponse(ctx context.Context, resp *ResponseRecord) error
+
+	// GetResponse retrieves a response by ID
+	GetResponse(ctx context.Context, id string) (*ResponseRecord, error)
+
+	// UpdateResponseStatus updates the status of a response
+	UpdateResponseStatus(ctx context.Context, id, status string) error
+
+	// GetResponsesByPreviousID retrieves responses that continue from a given response
+	GetResponsesByPreviousID(ctx context.Context, previousID string) ([]*ResponseRecord, error)
 }
 
 // Conversation represents a conversation thread
@@ -49,4 +67,18 @@ type ListOptions struct {
 	TenantID string
 	Limit    int
 	Offset   int
+}
+
+// ResponseRecord represents a stored Responses API response
+type ResponseRecord struct {
+	ID                 string            `json:"id"`
+	TenantID           string            `json:"tenant_id"`
+	Status             string            `json:"status"` // "in_progress", "completed", "failed", "cancelled"
+	Model              string            `json:"model"`
+	Request            json.RawMessage   `json:"request"`  // Serialized request
+	Response           json.RawMessage   `json:"response"` // Serialized response
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }

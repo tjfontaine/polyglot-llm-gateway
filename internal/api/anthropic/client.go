@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	defaultBaseURL   = "https://api.anthropic.com"
-	defaultVersion   = "2023-06-01"
+	defaultBaseURL = "https://api.anthropic.com"
+	defaultVersion = "2023-06-01" // Base version
+	latestVersion  = "2024-10-22" // Latest stable version
 )
 
 // ClientOption configures the client.
@@ -67,6 +68,10 @@ type RequestOptions struct {
 	// UserAgent is the User-Agent header to send with the request.
 	// If set, it will be forwarded as-is to the upstream API.
 	UserAgent string
+
+	// BetaFeatures specifies which beta features to enable.
+	// Example: "extended-thinking-2025-05-14,computer-use-2024-10-22"
+	BetaFeatures string
 }
 
 // CreateMessage sends a messages request.
@@ -296,5 +301,10 @@ func (c *Client) setHeaders(req *http.Request, opts *RequestOptions) {
 		req.Header.Set("User-Agent", opts.UserAgent)
 	} else {
 		req.Header.Set("User-Agent", "polyglot-llm-gateway/1.0")
+	}
+
+	// Set beta features header if specified
+	if opts != nil && opts.BetaFeatures != "" {
+		req.Header.Set("anthropic-beta", opts.BetaFeatures)
 	}
 }

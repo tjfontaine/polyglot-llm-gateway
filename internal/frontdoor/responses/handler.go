@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
-
-	"errors"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -20,6 +21,7 @@ import (
 type Handler struct {
 	store    storage.ConversationStore
 	provider domain.Provider
+	logger   *slog.Logger
 }
 
 // NewHandler creates a new Responses API handler
@@ -27,97 +29,470 @@ func NewHandler(store storage.ConversationStore, provider domain.Provider) *Hand
 	return &Handler{
 		store:    store,
 		provider: provider,
+		logger:   slog.Default(),
 	}
 }
 
-// Thread request/response types
-type CreateThreadRequest struct {
-	Metadata map[string]string `json:"metadata,omitempty"`
-}
-
-type ThreadResponse struct {
-	ID        string            `json:"id"`
-	Object    string            `json:"object"`
-	CreatedAt int64             `json:"created_at"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-}
-
-type CreateMessageRequest struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type MessageResponse struct {
-	ID        string            `json:"id"`
-	Object    string            `json:"object"`
-	CreatedAt int64             `json:"created_at"`
-	ThreadID  string            `json:"thread_id"`
-	Role      string            `json:"role"`
-	Content   []ContentBlock    `json:"content"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
-}
-
-type ContentBlock struct {
-	Type string      `json:"type"`
-	Text TextContent `json:"text"`
-}
-
-type TextContent struct {
-	Value string `json:"value"`
-}
-
-type CreateRunRequest struct {
-	Model string `json:"model"`
-}
-
-type RunResponse struct {
-	ID        string `json:"id"`
-	Object    string `json:"object"`
-	CreatedAt int64  `json:"created_at"`
-	ThreadID  string `json:"thread_id"`
-	Status    string `json:"status"`
-	Model     string `json:"model"`
-}
-
-// Responses API request/response types (one-shot)
-type CreateResponseRequest struct {
-	Model           string                 `json:"model"`
-	Input           json.RawMessage        `json:"input"`
-	Messages        []CreateMessageRequest `json:"messages"` // Optional compatibility field
-	Stream          bool                   `json:"stream,omitempty"`
-	MaxOutputTokens int                    `json:"max_output_tokens,omitempty"`
-	Temperature     float32                `json:"temperature,omitempty"`
-}
-
-type ResponseOutput struct {
-	Role    string                `json:"role"`
-	Content []ResponseTextContent `json:"content"`
-}
-
-type ResponseTextContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type CreateResponseResponse struct {
-	ID      string           `json:"id"`
-	Object  string           `json:"object"`
-	Created int64            `json:"created"`
-	Model   string           `json:"model"`
-	Status  string           `json:"status"`
-	Output  []ResponseOutput `json:"output"`
-	Usage   *domain.Usage    `json:"usage,omitempty"`
-}
-
-// HandleCreateThread creates a new conversation thread
-func (h *Handler) HandleCreateThread(w http.ResponseWriter, r *http.Request) {
-	var req CreateThreadRequest
+// HandleCreateResponse handles POST /v1/responses
+func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
+	var req domain.ResponsesAPIRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body: "+err.Error())
 		return
 	}
 
-	// Get tenant from context (set by auth middleware)
+	if req.Model == "" {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "model is required")
+		return
+	}
+
+	tenantID := getTenantID(r.Context())
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
+	h.logger.Info("responses API request",
+		slog.String("request_id", requestID),
+		slog.String("model", req.Model),
+		slog.Bool("stream", req.Stream),
+	)
+
+	// Convert to canonical request
+	canonReq := domain.FromResponsesAPIRequest(&req)
+	canonReq.TenantID = tenantID
+	canonReq.UserAgent = r.Header.Get("User-Agent")
+	canonReq.SourceAPIType = domain.APITypeResponses
+
+	// Handle previous response continuation
+	if req.PreviousResponseID != "" {
+		if err := h.loadPreviousContext(r.Context(), req.PreviousResponseID, canonReq); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+
+	// Generate response ID
+	responseID := "resp_" + uuid.New().String()
+
+	if req.Stream {
+		h.handleStreamingResponse(w, r, &req, canonReq, responseID, tenantID)
+		return
+	}
+
+	h.handleNonStreamingResponse(w, r, &req, canonReq, responseID, tenantID)
+}
+
+func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, tenantID string) {
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
+	// Call provider
+	canonResp, err := h.provider.Complete(r.Context(), canonReq)
+	if err != nil {
+		h.logger.Error("provider error",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
+		return
+	}
+
+	// Convert to Responses API format
+	resp := h.canonicalToResponsesAPI(canonResp, responseID, req)
+
+	// Save response if store supports it
+	if respStore, ok := h.store.(storage.ResponseStore); ok && (req.Store == nil || *req.Store) {
+		reqJSON, _ := json.Marshal(req)
+		respJSON, _ := json.Marshal(resp)
+		record := &storage.ResponseRecord{
+			ID:                 responseID,
+			TenantID:           tenantID,
+			Status:             "completed",
+			Model:              req.Model,
+			Request:            reqJSON,
+			Response:           respJSON,
+			Metadata:           req.Metadata,
+			PreviousResponseID: req.PreviousResponseID,
+		}
+		if err := respStore.SaveResponse(r.Context(), record); err != nil {
+			h.logger.Warn("failed to save response",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, tenantID string) {
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
+	// Start streaming from provider
+	events, err := h.provider.Stream(r.Context(), canonReq)
+	if err != nil {
+		h.logger.Error("provider stream error",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
+		return
+	}
+
+	// Set up SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeError(w, http.StatusInternalServerError, "streaming_error", "Streaming not supported")
+		return
+	}
+
+	// Create initial response object
+	createdAt := time.Now().Unix()
+	initialResp := &domain.ResponsesAPIResponse{
+		ID:                 responseID,
+		Object:             "response",
+		CreatedAt:          createdAt,
+		Status:             "in_progress",
+		Model:              req.Model,
+		Output:             []domain.ResponsesOutputItem{},
+		PreviousResponseID: req.PreviousResponseID,
+		Metadata:           req.Metadata,
+	}
+
+	// Send response.created event
+	h.sendSSEEvent(w, flusher, "response.created", domain.ResponseCreatedEvent{
+		Type:     "response.created",
+		Response: *initialResp,
+	})
+
+	// Send response.in_progress event
+	h.sendSSEEvent(w, flusher, "response.in_progress", domain.ResponseInProgressEvent{
+		Type:     "response.in_progress",
+		Response: *initialResp,
+	})
+
+	// Create output item for the message
+	outputIndex := 0
+	contentIndex := 0
+	itemID := "item_" + uuid.New().String()
+
+	// Send output_item.added event
+	outputItem := domain.ResponsesOutputItem{
+		Type:   "message",
+		ID:     itemID,
+		Role:   "assistant",
+		Status: "in_progress",
+	}
+	h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: outputIndex,
+		Item:        outputItem,
+	})
+
+	// Send content_part.added event
+	contentPart := domain.ResponsesContentPart{
+		Type: "output_text",
+		Text: "",
+	}
+	h.sendSSEEvent(w, flusher, "response.content_part.added", domain.ContentPartAddedEvent{
+		Type:         "response.content_part.added",
+		ItemID:       itemID,
+		OutputIndex:  outputIndex,
+		ContentIndex: contentIndex,
+		Part:         contentPart,
+	})
+
+	// Stream content deltas
+	var fullText strings.Builder
+	var finalUsage *domain.Usage
+
+	for event := range events {
+		if event.Error != nil {
+			h.logger.Error("stream event error",
+				slog.String("request_id", requestID),
+				slog.String("error", event.Error.Error()),
+			)
+			// Send error response
+			h.sendSSEEvent(w, flusher, "response.failed", domain.ResponseFailedEvent{
+				Type: "response.failed",
+				Response: domain.ResponsesAPIResponse{
+					ID:        responseID,
+					Object:    "response",
+					CreatedAt: createdAt,
+					Status:    "failed",
+					Model:     req.Model,
+					Error: &domain.ResponsesError{
+						Type:    "server_error",
+						Code:    "stream_error",
+						Message: event.Error.Error(),
+					},
+				},
+			})
+			return
+		}
+
+		// Send text delta
+		if event.ContentDelta != "" {
+			fullText.WriteString(event.ContentDelta)
+			h.sendSSEEvent(w, flusher, "response.output_text.delta", domain.TextDeltaEvent{
+				Type:         "response.output_text.delta",
+				ItemID:       itemID,
+				OutputIndex:  outputIndex,
+				ContentIndex: contentIndex,
+				Delta:        event.ContentDelta,
+			})
+		}
+
+		// Capture usage if provided
+		if event.Usage != nil {
+			finalUsage = event.Usage
+		}
+	}
+
+	// Send content_part.done event
+	finalContentPart := domain.ResponsesContentPart{
+		Type: "output_text",
+		Text: fullText.String(),
+	}
+	h.sendSSEEvent(w, flusher, "response.content_part.done", domain.ContentPartDoneEvent{
+		Type:         "response.content_part.done",
+		ItemID:       itemID,
+		OutputIndex:  outputIndex,
+		ContentIndex: contentIndex,
+		Part:         finalContentPart,
+	})
+
+	// Send output_text.done event
+	h.sendSSEEvent(w, flusher, "response.output_text.done", domain.TextDoneEvent{
+		Type:         "response.output_text.done",
+		ItemID:       itemID,
+		OutputIndex:  outputIndex,
+		ContentIndex: contentIndex,
+		Text:         fullText.String(),
+	})
+
+	// Send output_item.done event
+	finalOutputItem := domain.ResponsesOutputItem{
+		Type:   "message",
+		ID:     itemID,
+		Role:   "assistant",
+		Status: "completed",
+		Content: []domain.ResponsesContentPart{
+			finalContentPart,
+		},
+	}
+	h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: outputIndex,
+		Item:        finalOutputItem,
+	})
+
+	// Build final response
+	finalResp := &domain.ResponsesAPIResponse{
+		ID:                 responseID,
+		Object:             "response",
+		CreatedAt:          createdAt,
+		Status:             "completed",
+		Model:              req.Model,
+		Output:             []domain.ResponsesOutputItem{finalOutputItem},
+		PreviousResponseID: req.PreviousResponseID,
+		Metadata:           req.Metadata,
+	}
+
+	if finalUsage != nil {
+		finalResp.Usage = &domain.ResponsesUsage{
+			InputTokens:  finalUsage.PromptTokens,
+			OutputTokens: finalUsage.CompletionTokens,
+			TotalTokens:  finalUsage.TotalTokens,
+		}
+	}
+
+	// Send response.completed event
+	h.sendSSEEvent(w, flusher, "response.completed", domain.ResponseCompletedEvent{
+		Type:     "response.completed",
+		Response: *finalResp,
+	})
+
+	// Send done event
+	fmt.Fprintf(w, "event: done\ndata: [DONE]\n\n")
+	flusher.Flush()
+
+	// Save response if store supports it
+	if respStore, ok := h.store.(storage.ResponseStore); ok && (req.Store == nil || *req.Store) {
+		reqJSON, _ := json.Marshal(req)
+		respJSON, _ := json.Marshal(finalResp)
+		record := &storage.ResponseRecord{
+			ID:                 responseID,
+			TenantID:           tenantID,
+			Status:             "completed",
+			Model:              req.Model,
+			Request:            reqJSON,
+			Response:           respJSON,
+			Metadata:           req.Metadata,
+			PreviousResponseID: req.PreviousResponseID,
+		}
+		if err := respStore.SaveResponse(r.Context(), record); err != nil {
+			h.logger.Warn("failed to save streaming response",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+}
+
+func (h *Handler) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data any) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		h.logger.Error("failed to marshal SSE event", slog.String("error", err.Error()))
+		return
+	}
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
+	flusher.Flush()
+}
+
+func (h *Handler) canonicalToResponsesAPI(canonResp *domain.CanonicalResponse, responseID string, req *domain.ResponsesAPIRequest) *domain.ResponsesAPIResponse {
+	resp := domain.ToResponsesAPIResponse(canonResp)
+	resp.ID = responseID
+	resp.PreviousResponseID = req.PreviousResponseID
+	resp.Metadata = req.Metadata
+	return resp
+}
+
+func (h *Handler) loadPreviousContext(ctx context.Context, previousID string, canonReq *domain.CanonicalRequest) error {
+	respStore, ok := h.store.(storage.ResponseStore)
+	if !ok {
+		return fmt.Errorf("response storage not available")
+	}
+
+	record, err := respStore.GetResponse(ctx, previousID)
+	if err != nil {
+		return fmt.Errorf("previous response not found: %w", err)
+	}
+
+	var prevResp domain.ResponsesAPIResponse
+	if err := json.Unmarshal(record.Response, &prevResp); err != nil {
+		return fmt.Errorf("failed to parse previous response: %w", err)
+	}
+
+	// Build messages from previous response
+	for _, item := range prevResp.Output {
+		if item.Type == "message" {
+			var content string
+			for _, part := range item.Content {
+				if part.Type == "output_text" {
+					content += part.Text
+				}
+			}
+			// Prepend previous messages
+			msg := domain.Message{
+				Role:    item.Role,
+				Content: content,
+			}
+			canonReq.Messages = append([]domain.Message{msg}, canonReq.Messages...)
+		}
+	}
+
+	// Recursively load earlier context
+	if record.PreviousResponseID != "" {
+		return h.loadPreviousContext(ctx, record.PreviousResponseID, canonReq)
+	}
+
+	return nil
+}
+
+// HandleGetResponse handles GET /v1/responses/{response_id}
+func (h *Handler) HandleGetResponse(w http.ResponseWriter, r *http.Request) {
+	responseID := chi.URLParam(r, "response_id")
+
+	respStore, ok := h.store.(storage.ResponseStore)
+	if !ok {
+		h.writeError(w, http.StatusNotImplemented, "not_implemented", "Response storage not available")
+		return
+	}
+
+	record, err := respStore.GetResponse(r.Context(), responseID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "not_found", "Response not found")
+		return
+	}
+
+	// Verify tenant access
+	tenantID := getTenantID(r.Context())
+	if record.TenantID != tenantID {
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
+		return
+	}
+
+	var resp domain.ResponsesAPIResponse
+	if err := json.Unmarshal(record.Response, &resp); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "parse_error", "Failed to parse response")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// HandleCancelResponse handles POST /v1/responses/{response_id}/cancel
+func (h *Handler) HandleCancelResponse(w http.ResponseWriter, r *http.Request) {
+	responseID := chi.URLParam(r, "response_id")
+
+	respStore, ok := h.store.(storage.ResponseStore)
+	if !ok {
+		h.writeError(w, http.StatusNotImplemented, "not_implemented", "Response storage not available")
+		return
+	}
+
+	record, err := respStore.GetResponse(r.Context(), responseID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "not_found", "Response not found")
+		return
+	}
+
+	// Verify tenant access
+	tenantID := getTenantID(r.Context())
+	if record.TenantID != tenantID {
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
+		return
+	}
+
+	// Only in_progress responses can be cancelled
+	if record.Status != "in_progress" {
+		h.writeError(w, http.StatusBadRequest, "invalid_state", "Response is not in progress")
+		return
+	}
+
+	if err := respStore.UpdateResponseStatus(r.Context(), responseID, "cancelled"); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "update_error", "Failed to cancel response")
+		return
+	}
+
+	var resp domain.ResponsesAPIResponse
+	if err := json.Unmarshal(record.Response, &resp); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "parse_error", "Failed to parse response")
+		return
+	}
+	resp.Status = "cancelled"
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// Thread-based API (legacy compatibility)
+
+// HandleCreateThread creates a new conversation thread
+func (h *Handler) HandleCreateThread(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Metadata map[string]string `json:"metadata,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
 	tenantID := getTenantID(r.Context())
 
 	conv := &storage.Conversation{
@@ -127,15 +502,15 @@ func (h *Handler) HandleCreateThread(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateConversation(r.Context(), conv); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create thread: %v", err), http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "storage_error", "Failed to create thread")
 		return
 	}
 
-	resp := ThreadResponse{
-		ID:        conv.ID,
-		Object:    "thread",
-		CreatedAt: conv.CreatedAt.Unix(),
-		Metadata:  conv.Metadata,
+	resp := map[string]interface{}{
+		"id":         conv.ID,
+		"object":     "thread",
+		"created_at": conv.CreatedAt.Unix(),
+		"metadata":   conv.Metadata,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -148,22 +523,21 @@ func (h *Handler) HandleGetThread(w http.ResponseWriter, r *http.Request) {
 
 	conv, err := h.store.GetConversation(r.Context(), threadID)
 	if err != nil {
-		http.Error(w, "Thread not found", http.StatusNotFound)
+		h.writeError(w, http.StatusNotFound, "not_found", "Thread not found")
 		return
 	}
 
-	// Verify tenant access
 	tenantID := getTenantID(r.Context())
 	if conv.TenantID != tenantID {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
-	resp := ThreadResponse{
-		ID:        conv.ID,
-		Object:    "thread",
-		CreatedAt: conv.CreatedAt.Unix(),
-		Metadata:  conv.Metadata,
+	resp := map[string]interface{}{
+		"id":         conv.ID,
+		"object":     "thread",
+		"created_at": conv.CreatedAt.Unix(),
+		"metadata":   conv.Metadata,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -174,22 +548,24 @@ func (h *Handler) HandleGetThread(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 	threadID := chi.URLParam(r, "thread_id")
 
-	var req CreateMessageRequest
+	var req struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
 
-	// Verify thread exists and tenant has access
 	conv, err := h.store.GetConversation(r.Context(), threadID)
 	if err != nil {
-		http.Error(w, "Thread not found", http.StatusNotFound)
+		h.writeError(w, http.StatusNotFound, "not_found", "Thread not found")
 		return
 	}
 
 	tenantID := getTenantID(r.Context())
 	if conv.TenantID != tenantID {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
@@ -200,20 +576,20 @@ func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.AddMessage(r.Context(), threadID, msg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to add message: %v", err), http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "storage_error", "Failed to add message")
 		return
 	}
 
-	resp := MessageResponse{
-		ID:        msg.ID,
-		Object:    "thread.message",
-		CreatedAt: msg.CreatedAt.Unix(),
-		ThreadID:  threadID,
-		Role:      msg.Role,
-		Content: []ContentBlock{
+	resp := map[string]interface{}{
+		"id":         msg.ID,
+		"object":     "thread.message",
+		"created_at": msg.CreatedAt.Unix(),
+		"thread_id":  threadID,
+		"role":       msg.Role,
+		"content": []map[string]interface{}{
 			{
-				Type: "text",
-				Text: TextContent{Value: msg.Content},
+				"type": "text",
+				"text": map[string]string{"value": msg.Content},
 			},
 		},
 	}
@@ -222,71 +598,42 @@ func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// HandleCreateResponse provides a lightweight Responses API entrypoint similar to OpenAI's /v1/responses.
-func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
-	var req CreateResponseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
+// HandleListMessages lists messages in a thread
+func (h *Handler) HandleListMessages(w http.ResponseWriter, r *http.Request) {
+	threadID := chi.URLParam(r, "thread_id")
 
-	if req.Model == "" {
-		http.Error(w, "model is required", http.StatusBadRequest)
-		return
-	}
-
-	if req.Stream {
-		http.Error(w, "streaming responses are not yet supported", http.StatusBadRequest)
-		return
-	}
-
-	messages, err := parseInputMessages(req.Input, req.Messages)
+	conv, err := h.store.GetConversation(r.Context(), threadID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("invalid input: %v", err), http.StatusBadRequest)
+		h.writeError(w, http.StatusNotFound, "not_found", "Thread not found")
 		return
 	}
 
 	tenantID := getTenantID(r.Context())
-	canonReq := &domain.CanonicalRequest{
-		TenantID:    tenantID,
-		Model:       req.Model,
-		Messages:    messages,
-		MaxTokens:   req.MaxOutputTokens,
-		Temperature: req.Temperature,
-		UserAgent:   r.Header.Get("User-Agent"),
-	}
-
-	canonResp, err := h.provider.Complete(r.Context(), canonReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("provider error: %v", err), http.StatusInternalServerError)
+	if conv.TenantID != tenantID {
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
-	if len(canonResp.Choices) == 0 {
-		http.Error(w, "provider returned no choices", http.StatusInternalServerError)
-		return
-	}
-
-	choice := canonResp.Choices[0]
-	resp := CreateResponseResponse{
-		ID:      canonResp.ID,
-		Object:  "response",
-		Created: canonResp.Created,
-		Model:   canonResp.Model,
-		Status:  "completed",
-		Output: []ResponseOutput{
-			{
-				Role: choice.Message.Role,
-				Content: []ResponseTextContent{
-					{Type: "output_text", Text: choice.Message.Content},
+	messages := make([]map[string]interface{}, len(conv.Messages))
+	for i, msg := range conv.Messages {
+		messages[i] = map[string]interface{}{
+			"id":         msg.ID,
+			"object":     "thread.message",
+			"created_at": msg.CreatedAt.Unix(),
+			"thread_id":  threadID,
+			"role":       msg.Role,
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": map[string]string{"value": msg.Content},
 				},
 			},
-		},
+		}
 	}
 
-	// Only attach usage if provider supplied it.
-	if canonResp.Usage != (domain.Usage{}) {
-		resp.Usage = &canonResp.Usage
+	resp := map[string]interface{}{
+		"object": "list",
+		"data":   messages,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -297,23 +644,23 @@ func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	threadID := chi.URLParam(r, "thread_id")
 
-	var req CreateRunRequest
+	var req struct {
+		Model string `json:"model"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
 
-	// Get conversation
 	conv, err := h.store.GetConversation(r.Context(), threadID)
 	if err != nil {
-		http.Error(w, "Thread not found", http.StatusNotFound)
+		h.writeError(w, http.StatusNotFound, "not_found", "Thread not found")
 		return
 	}
 
-	// Verify tenant access
 	tenantID := getTenantID(r.Context())
 	if conv.TenantID != tenantID {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
@@ -334,7 +681,7 @@ func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 	// Call provider
 	canonResp, err := h.provider.Complete(r.Context(), canonReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Provider error: %v", err), http.StatusInternalServerError)
+		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
 		return
 	}
 
@@ -347,134 +694,38 @@ func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.store.AddMessage(r.Context(), threadID, assistantMsg); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to store response: %v", err), http.StatusInternalServerError)
+			h.writeError(w, http.StatusInternalServerError, "storage_error", "Failed to store response")
 			return
 		}
 	}
 
-	resp := RunResponse{
-		ID:        "run_" + uuid.New().String(),
-		Object:    "thread.run",
-		CreatedAt: time.Now().Unix(),
-		ThreadID:  threadID,
-		Status:    "completed",
-		Model:     req.Model,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// HandleListMessages lists messages in a thread
-func (h *Handler) HandleListMessages(w http.ResponseWriter, r *http.Request) {
-	threadID := chi.URLParam(r, "thread_id")
-
-	conv, err := h.store.GetConversation(r.Context(), threadID)
-	if err != nil {
-		http.Error(w, "Thread not found", http.StatusNotFound)
-		return
-	}
-
-	// Verify tenant access
-	tenantID := getTenantID(r.Context())
-	if conv.TenantID != tenantID {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	messages := make([]MessageResponse, len(conv.Messages))
-	for i, msg := range conv.Messages {
-		messages[i] = MessageResponse{
-			ID:        msg.ID,
-			Object:    "thread.message",
-			CreatedAt: msg.CreatedAt.Unix(),
-			ThreadID:  threadID,
-			Role:      msg.Role,
-			Content: []ContentBlock{
-				{
-					Type: "text",
-					Text: TextContent{Value: msg.Content},
-				},
-			},
-		}
-	}
-
 	resp := map[string]interface{}{
-		"object": "list",
-		"data":   messages,
+		"id":         "run_" + uuid.New().String(),
+		"object":     "thread.run",
+		"created_at": time.Now().Unix(),
+		"thread_id":  threadID,
+		"status":     "completed",
+		"model":      req.Model,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
-// getTenantID extracts tenant ID from context
+func (h *Handler) writeError(w http.ResponseWriter, status int, errType, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]string{
+			"type":    errType,
+			"message": message,
+		},
+	})
+}
+
 func getTenantID(ctx context.Context) string {
-	// Try to get tenant from context
 	if tenant := ctx.Value("tenant"); tenant != nil {
-		// Type assert to get tenant ID
-		// This is a simplified version - in production you'd have proper tenant type
 		return "default"
 	}
 	return "default"
-}
-
-func parseInputMessages(rawInput json.RawMessage, fallbackMessages []CreateMessageRequest) ([]domain.Message, error) {
-	// Accept either the new Responses API "input" field or a legacy "messages" field.
-	if len(rawInput) == 0 && len(fallbackMessages) == 0 {
-		return nil, errors.New("input is required")
-	}
-
-	// Try to parse "input" as a simple string
-	var inputText string
-	if len(rawInput) > 0 && json.Unmarshal(rawInput, &inputText) == nil {
-		return []domain.Message{{Role: "user", Content: inputText}}, nil
-	}
-
-	// Try to parse "input" as an array of role/content pairs
-	var inputMessages []CreateMessageRequest
-	if len(rawInput) > 0 && json.Unmarshal(rawInput, &inputMessages) == nil && len(inputMessages) > 0 {
-		msgs := make([]domain.Message, 0, len(inputMessages))
-		for _, m := range inputMessages {
-			if m.Content == "" {
-				continue
-			}
-			role := m.Role
-			if role == "" {
-				role = "user"
-			}
-			msgs = append(msgs, domain.Message{
-				Role:    role,
-				Content: m.Content,
-			})
-		}
-		if len(msgs) == 0 {
-			return nil, errors.New("input messages missing content")
-		}
-		return msgs, nil
-	}
-
-	// Fallback to explicit messages field
-	if len(fallbackMessages) > 0 {
-		msgs := make([]domain.Message, 0, len(fallbackMessages))
-		for _, m := range fallbackMessages {
-			if m.Content == "" {
-				continue
-			}
-			role := m.Role
-			if role == "" {
-				role = "user"
-			}
-			msgs = append(msgs, domain.Message{
-				Role:    role,
-				Content: m.Content,
-			})
-		}
-		if len(msgs) == 0 {
-			return nil, errors.New("messages missing content")
-		}
-		return msgs, nil
-	}
-
-	return nil, errors.New("unsupported input format")
 }

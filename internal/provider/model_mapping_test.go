@@ -13,7 +13,8 @@ type recordingProvider struct {
 	lastReq *domain.CanonicalRequest
 }
 
-func (p *recordingProvider) Name() string { return p.name }
+func (p *recordingProvider) Name() string            { return p.name }
+func (p *recordingProvider) APIType() domain.APIType { return domain.APITypeOpenAI }
 
 func (p *recordingProvider) Complete(_ context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	p.lastReq = req

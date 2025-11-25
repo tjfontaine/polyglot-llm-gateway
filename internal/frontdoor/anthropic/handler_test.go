@@ -17,7 +17,8 @@ type stubProvider struct {
 	listCalled bool
 }
 
-func (s *stubProvider) Name() string { return "stub" }
+func (s *stubProvider) Name() string            { return "stub" }
+func (s *stubProvider) APIType() domain.APIType { return domain.APITypeAnthropic }
 
 func (s *stubProvider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	s.lastReq = req

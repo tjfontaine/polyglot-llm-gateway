@@ -29,6 +29,10 @@ func (m *mockProvider) Name() string {
 	return m.name
 }
 
+func (m *mockProvider) APIType() domain.APIType {
+	return domain.APITypeOpenAI
+}
+
 func (m *mockProvider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	return nil, nil
 }

@@ -9,18 +9,23 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
-// Store is an in-memory implementation of ConversationStore
+// Store is an in-memory implementation of ConversationStore and ResponseStore
 type Store struct {
 	mu            sync.RWMutex
 	conversations map[string]*storage.Conversation
+	responses     map[string]*storage.ResponseRecord
 }
 
 // New creates a new in-memory store
 func New() *Store {
 	return &Store{
 		conversations: make(map[string]*storage.Conversation),
+		responses:     make(map[string]*storage.ResponseRecord),
 	}
 }
+
+// Ensure Store implements ResponseStore
+var _ storage.ResponseStore = (*Store)(nil)
 
 func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversation) error {
 	s.mu.Lock()
@@ -106,4 +111,54 @@ func (s *Store) DeleteConversation(ctx context.Context, id string) error {
 
 func (s *Store) Close() error {
 	return nil
+}
+
+// ResponseStore implementation
+
+func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resp.CreatedAt = time.Now()
+	resp.UpdatedAt = time.Now()
+	s.responses[resp.ID] = resp
+	return nil
+}
+
+func (s *Store) GetResponse(ctx context.Context, id string) (*storage.ResponseRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	resp, exists := s.responses[id]
+	if !exists {
+		return nil, fmt.Errorf("response %s not found", id)
+	}
+	return resp, nil
+}
+
+func (s *Store) UpdateResponseStatus(ctx context.Context, id, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resp, exists := s.responses[id]
+	if !exists {
+		return fmt.Errorf("response %s not found", id)
+	}
+
+	resp.Status = status
+	resp.UpdatedAt = time.Now()
+	return nil
+}
+
+func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string) ([]*storage.ResponseRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*storage.ResponseRecord
+	for _, resp := range s.responses {
+		if resp.PreviousResponseID == previousID {
+			result = append(result, resp)
+		}
+	}
+	return result, nil
 }
