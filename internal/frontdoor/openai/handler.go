@@ -3,17 +3,18 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	openaiapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
+	openaicodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	openai_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
@@ -23,6 +24,7 @@ type Handler struct {
 	store    storage.ConversationStore
 	appName  string
 	models   []domain.Model
+	codec    codec.Codec
 }
 
 func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
@@ -41,6 +43,7 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		store:    store,
 		appName:  appName,
 		models:   exposedModels,
+		codec:    openaicodec.New(),
 	}
 }
 
@@ -48,10 +51,10 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 
-	// Decode directly into OpenAI API request type for better compatibility
-	var apiReq openaiapi.ChatCompletionRequest
-	if err := json.NewDecoder(r.Body).Decode(&apiReq); err != nil {
-		logger.Error("failed to decode openai chat completion request",
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error("failed to read request body",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
@@ -60,8 +63,17 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to canonical request
-	req := openai_provider.ToCanonicalRequest(&apiReq)
+	// Use codec to decode request to canonical format
+	req, err := h.codec.DecodeRequest(body)
+	if err != nil {
+		logger.Error("failed to decode openai chat completion request",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		server.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Capture User-Agent from incoming request and pass it through
 	req.UserAgent = r.Header.Get("User-Agent")
@@ -107,8 +119,19 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, req, resp, metadata)
 
+	// Use codec to encode response
+	respBody, err := h.codec.EncodeResponse(resp)
+	if err != nil {
+		logger.Error("failed to encode response",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	w.Write(respBody)
 }
 
 func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +191,13 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	streamID := "chatcmpl-" + uuid.New().String()
 	created := time.Now().Unix()
 
+	// Stream metadata for encoding chunks
+	metadata := &codec.StreamMetadata{
+		ID:      streamID,
+		Model:   req.Model,
+		Created: created,
+	}
+
 	for event := range events {
 		if event.Error != nil {
 			logger.Error("stream event error",
@@ -180,40 +210,16 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 		builder.WriteString(event.ContentDelta)
 
-		// Construct an OpenAI-compatible chunk using our shared types
-		chunk := openaiapi.ChatCompletionChunk{
-			ID:      streamID,
-			Object:  "chat.completion.chunk",
-			Created: created,
-			Model:   req.Model,
-			Choices: []openaiapi.ChunkChoice{
-				{
-					Index: 0,
-					Delta: openaiapi.ChunkDelta{
-						Role:    event.Role,
-						Content: event.ContentDelta,
-					},
-					FinishReason: nil,
-				},
-			},
+		// Use codec to encode stream chunk
+		data, err := h.codec.EncodeStreamChunk(&event, metadata)
+		if err != nil {
+			logger.Error("failed to encode stream chunk",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			break
 		}
 
-		// Handle tool calls
-		if event.ToolCall != nil {
-			chunk.Choices[0].Delta.ToolCalls = []openaiapi.ToolCallChunk{
-				{
-					Index: event.ToolCall.Index,
-					ID:    event.ToolCall.ID,
-					Type:  event.ToolCall.Type,
-					Function: &openaiapi.FunctionCallChunk{
-						Name:      event.ToolCall.Function.Name,
-						Arguments: event.ToolCall.Function.Arguments,
-					},
-				},
-			}
-		}
-
-		data, _ := json.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -221,7 +227,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 
-	metadata := map[string]string{
+	recordMetadata := map[string]string{
 		"frontdoor": "openai",
 		"app":       h.appName,
 		"provider":  h.provider.Name(),
@@ -240,7 +246,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 				},
 			},
 		},
-	}, metadata)
+	}, recordMetadata)
 
 	logger.Info("chat stream completed",
 		slog.String("frontdoor", "openai"),

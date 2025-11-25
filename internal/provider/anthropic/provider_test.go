@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
+	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
@@ -198,24 +198,19 @@ func TestDefaultUserAgent(t *testing.T) {
 	}
 }
 
-func TestToCanonicalRequest(t *testing.T) {
-	apiReq := &anthropicapi.MessagesRequest{
-		Model: "claude-3-haiku-20240307",
-		Messages: []anthropicapi.Message{
-			{
-				Role:    "user",
-				Content: anthropicapi.ContentBlock{{Type: "text", Text: "Hello"}},
-			},
-		},
-		System: anthropicapi.SystemMessages{
-			{Type: "text", Text: "You are a helpful assistant."},
-		},
-		MaxTokens: 100,
-	}
+func TestCodecAPIRequestToCanonical(t *testing.T) {
+	codec := anthropiccodec.New()
 
-	canonReq, err := ToCanonicalRequest(apiReq)
+	reqJSON := []byte(`{
+		"model": "claude-3-haiku-20240307",
+		"messages": [{"role": "user", "content": "Hello"}],
+		"system": [{"type": "text", "text": "You are a helpful assistant."}],
+		"max_tokens": 100
+	}`)
+
+	canonReq, err := codec.DecodeRequest(reqJSON)
 	if err != nil {
-		t.Fatalf("ToCanonicalRequest returned error: %v", err)
+		t.Fatalf("DecodeRequest returned error: %v", err)
 	}
 
 	if canonReq.Model != "claude-3-haiku-20240307" {
@@ -239,5 +234,47 @@ func TestToCanonicalRequest(t *testing.T) {
 	}
 	if canonReq.Messages[1].Content != "Hello" {
 		t.Errorf("unexpected user content: %s", canonReq.Messages[1].Content)
+	}
+}
+
+func TestCodecEncodeResponse(t *testing.T) {
+	codec := anthropiccodec.New()
+
+	canonResp := &domain.CanonicalResponse{
+		ID:    "msg_123",
+		Model: "claude-3-haiku-20240307",
+		Choices: []domain.Choice{
+			{
+				Index: 0,
+				Message: domain.Message{
+					Role:    "assistant",
+					Content: "Hello!",
+				},
+				FinishReason: "end_turn",
+			},
+		},
+		Usage: domain.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+		},
+	}
+
+	respJSON, err := codec.EncodeResponse(canonResp)
+	if err != nil {
+		t.Fatalf("EncodeResponse returned error: %v", err)
+	}
+
+	// Verify it can be decoded back
+	decoded, err := codec.DecodeResponse(respJSON)
+	if err != nil {
+		t.Fatalf("DecodeResponse returned error: %v", err)
+	}
+
+	if decoded.ID != canonResp.ID {
+		t.Errorf("ID mismatch: got %s, want %s", decoded.ID, canonResp.ID)
+	}
+	if decoded.Model != canonResp.Model {
+		t.Errorf("Model mismatch: got %s, want %s", decoded.Model, canonResp.Model)
 	}
 }

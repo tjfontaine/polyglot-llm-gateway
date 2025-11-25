@@ -3,15 +3,16 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
-	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
+	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	anthropic_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
@@ -21,6 +22,7 @@ type Handler struct {
 	store    storage.ConversationStore
 	appName  string
 	models   []domain.Model
+	codec    codec.Codec
 }
 
 func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
@@ -39,6 +41,7 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		store:    store,
 		appName:  appName,
 		models:   exposedModels,
+		codec:    anthropiccodec.New(),
 	}
 }
 
@@ -47,10 +50,10 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 	providerName := h.provider.Name()
 
-	// Decode directly into Anthropic API request type
-	var apiReq anthropicapi.MessagesRequest
-	if err := json.NewDecoder(r.Body).Decode(&apiReq); err != nil {
-		logger.Error("failed to decode anthropic messages request",
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error("failed to read request body",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
@@ -59,10 +62,10 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to canonical request using provider helper
-	canonReq, err := anthropic_provider.ToCanonicalRequest(&apiReq)
+	// Use codec to decode request to canonical format
+	canonReq, err := h.codec.DecodeRequest(body)
 	if err != nil {
-		logger.Error("invalid anthropic messages request",
+		logger.Error("failed to decode anthropic messages request",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
@@ -79,7 +82,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", providerName)
 
-	if apiReq.Stream {
+	if canonReq.Stream {
 		h.handleStream(w, r, canonReq)
 		return
 	}
@@ -95,25 +98,6 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		server.AddError(r.Context(), err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	// Convert to Anthropic response format using shared types
-	anthropicResp := anthropicapi.MessagesResponse{
-		ID:         resp.ID,
-		Type:       "message",
-		Role:       "assistant",
-		Model:      resp.Model,
-		StopReason: resp.Choices[0].FinishReason,
-		Content: []anthropicapi.ResponseContent{
-			{
-				Type: "text",
-				Text: resp.Choices[0].Message.Content,
-			},
-		},
-		Usage: anthropicapi.MessagesUsage{
-			InputTokens:  resp.Usage.PromptTokens,
-			OutputTokens: resp.Usage.CompletionTokens,
-		},
 	}
 
 	logger.Info("messages completion",
@@ -135,8 +119,19 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, canonReq, resp, metadata)
 
+	// Use codec to encode response to Anthropic format
+	respBody, err := h.codec.EncodeResponse(resp)
+	if err != nil {
+		logger.Error("failed to encode response",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(anthropicResp)
+	w.Write(respBody)
 }
 
 func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
@@ -207,17 +202,16 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 		builder.WriteString(event.ContentDelta)
 
-		// Use shared Anthropic streaming types
-		chunk := anthropicapi.ContentBlockDeltaEvent{
-			Type:  "content_block_delta",
-			Index: 0,
-			Delta: anthropicapi.BlockDelta{
-				Type: "text_delta",
-				Text: event.ContentDelta,
-			},
+		// Use codec to encode stream chunk
+		data, err := h.codec.EncodeStreamChunk(&event, nil)
+		if err != nil {
+			logger.Error("failed to encode stream chunk",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			break
 		}
 
-		data, _ := json.Marshal(chunk)
 		fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", data)
 		flusher.Flush()
 	}
