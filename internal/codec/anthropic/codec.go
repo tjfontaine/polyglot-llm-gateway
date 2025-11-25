@@ -197,6 +197,22 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 	var systemBlocks anthropic.SystemMessages
 	var messages []anthropic.Message
 
+	// Handle system prompt if set separately
+	if req.SystemPrompt != "" {
+		systemBlocks = append(systemBlocks, anthropic.SystemBlock{
+			Type: "text",
+			Text: req.SystemPrompt,
+		})
+	}
+
+	// Handle instructions (Responses API) as system message
+	if req.Instructions != "" && req.SystemPrompt == "" {
+		systemBlocks = append(systemBlocks, anthropic.SystemBlock{
+			Type: "text",
+			Text: req.Instructions,
+		})
+	}
+
 	for _, m := range req.Messages {
 		switch m.Role {
 		case "system":
@@ -204,10 +220,57 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 				Type: "text",
 				Text: m.Content,
 			})
-		case "user", "assistant":
+		case "user":
+			// Check if this is a tool result message
+			if m.ToolCallID != "" {
+				messages = append(messages, anthropic.Message{
+					Role: "user",
+					Content: anthropic.ContentBlock{{
+						Type:      "tool_result",
+						ToolUseID: m.ToolCallID,
+						Content:   m.Content,
+					}},
+				})
+			} else {
+				messages = append(messages, anthropic.Message{
+					Role:    m.Role,
+					Content: anthropic.ContentBlock{{Type: "text", Text: m.Content}},
+				})
+			}
+		case "assistant":
+			// Check if assistant message has tool calls
+			if len(m.ToolCalls) > 0 {
+				var content anthropic.ContentBlock
+				if m.Content != "" {
+					content = append(content, anthropic.ContentPart{Type: "text", Text: m.Content})
+				}
+				for _, tc := range m.ToolCalls {
+					content = append(content, anthropic.ContentPart{
+						Type:  "tool_use",
+						ID:    tc.ID,
+						Name:  tc.Function.Name,
+						Input: tc.Function.Arguments, // Note: Anthropic expects parsed JSON, not string
+					})
+				}
+				messages = append(messages, anthropic.Message{
+					Role:    m.Role,
+					Content: content,
+				})
+			} else {
+				messages = append(messages, anthropic.Message{
+					Role:    m.Role,
+					Content: anthropic.ContentBlock{{Type: "text", Text: m.Content}},
+				})
+			}
+		case "tool":
+			// OpenAI tool role maps to user with tool_result in Anthropic
 			messages = append(messages, anthropic.Message{
-				Role:    m.Role,
-				Content: anthropic.ContentBlock{{Type: "text", Text: m.Content}},
+				Role: "user",
+				Content: anthropic.ContentBlock{{
+					Type:      "tool_result",
+					ToolUseID: m.ToolCallID,
+					Content:   m.Content,
+				}},
 			})
 		}
 	}
@@ -226,11 +289,39 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 	if req.MaxTokens > 0 {
 		apiReq.MaxTokens = req.MaxTokens
 	} else {
-		apiReq.MaxTokens = 1024 // Default
+		apiReq.MaxTokens = 4096 // Default - increased from 1024
 	}
 
 	if req.Temperature > 0 {
 		apiReq.Temperature = &req.Temperature
+	}
+
+	if req.TopP > 0 {
+		apiReq.TopP = &req.TopP
+	}
+
+	// Convert stop sequences
+	if len(req.Stop) > 0 {
+		apiReq.StopSequences = req.Stop
+	}
+
+	// Convert tool choice
+	if req.ToolChoice != nil {
+		switch tc := req.ToolChoice.(type) {
+		case string:
+			switch tc {
+			case "auto":
+				apiReq.ToolChoice = &anthropic.ToolChoice{Type: "auto"}
+			case "none":
+				// Anthropic doesn't have "none", just don't send tools
+			case "required":
+				apiReq.ToolChoice = &anthropic.ToolChoice{Type: "any"}
+			}
+		case map[string]interface{}:
+			if name, ok := tc["function"].(map[string]interface{})["name"].(string); ok {
+				apiReq.ToolChoice = &anthropic.ToolChoice{Type: "tool", Name: name}
+			}
+		}
 	}
 
 	// Convert tools
@@ -251,10 +342,38 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 // APIResponseToCanonical converts an Anthropic API response to canonical format.
 func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.CanonicalResponse {
 	content := ""
+	var toolCalls []domain.ToolCall
+
 	for _, c := range apiResp.Content {
-		if c.Type == "text" {
+		switch c.Type {
+		case "text":
 			content += c.Text
+		case "tool_use":
+			// Convert Anthropic tool_use to OpenAI-style tool call
+			tc := domain.ToolCall{
+				ID:   c.ID,
+				Type: "function",
+				Function: domain.ToolCallFunction{
+					Name: c.Name,
+				},
+			}
+			// Convert input to JSON string (Anthropic sends parsed object, OpenAI expects string)
+			if c.Input != nil {
+				if inputBytes, err := json.Marshal(c.Input); err == nil {
+					tc.Function.Arguments = string(inputBytes)
+				}
+			}
+			toolCalls = append(toolCalls, tc)
 		}
+	}
+
+	// Map Anthropic stop_reason to OpenAI finish_reason
+	finishReason := mapAnthropicStopReason(apiResp.StopReason)
+
+	msg := domain.Message{
+		Role:      apiResp.Role,
+		Content:   content,
+		ToolCalls: toolCalls,
 	}
 
 	return &domain.CanonicalResponse{
@@ -264,12 +383,9 @@ func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.Canonic
 		Model:   apiResp.Model,
 		Choices: []domain.Choice{
 			{
-				Index: 0,
-				Message: domain.Message{
-					Role:    apiResp.Role,
-					Content: content,
-				},
-				FinishReason: apiResp.StopReason,
+				Index:        0,
+				Message:      msg,
+				FinishReason: finishReason,
 			},
 		},
 		Usage: domain.Usage{
@@ -277,16 +393,78 @@ func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.Canonic
 			CompletionTokens: apiResp.Usage.OutputTokens,
 			TotalTokens:      apiResp.Usage.InputTokens + apiResp.Usage.OutputTokens,
 		},
+		SourceAPIType: domain.APITypeAnthropic,
+	}
+}
+
+// mapAnthropicStopReason maps Anthropic stop_reason to OpenAI finish_reason
+func mapAnthropicStopReason(stopReason string) string {
+	switch stopReason {
+	case "end_turn":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	case "stop_sequence":
+		return "stop"
+	case "tool_use":
+		return "tool_calls"
+	default:
+		return stopReason
+	}
+}
+
+// mapOpenAIFinishReason maps OpenAI finish_reason to Anthropic stop_reason
+func mapOpenAIFinishReason(finishReason string) string {
+	switch finishReason {
+	case "stop":
+		return "end_turn"
+	case "length":
+		return "max_tokens"
+	case "tool_calls":
+		return "tool_use"
+	case "content_filter":
+		return "end_turn" // No direct equivalent
+	default:
+		return finishReason
 	}
 }
 
 // CanonicalToAPIResponse converts a canonical response to Anthropic API format.
 func CanonicalToAPIResponse(resp *domain.CanonicalResponse) *anthropic.MessagesResponse {
-	content := ""
+	var contentBlocks []anthropic.ResponseContent
 	finishReason := ""
+
 	if len(resp.Choices) > 0 {
-		content = resp.Choices[0].Message.Content
-		finishReason = resp.Choices[0].FinishReason
+		choice := resp.Choices[0]
+		finishReason = mapOpenAIFinishReason(choice.FinishReason)
+
+		// Add text content if present
+		if choice.Message.Content != "" {
+			contentBlocks = append(contentBlocks, anthropic.ResponseContent{
+				Type: "text",
+				Text: choice.Message.Content,
+			})
+		}
+
+		// Convert tool calls to Anthropic tool_use blocks
+		for _, tc := range choice.Message.ToolCalls {
+			var input any
+			// Parse arguments JSON string back to object
+			if tc.Function.Arguments != "" {
+				json.Unmarshal([]byte(tc.Function.Arguments), &input)
+			}
+			contentBlocks = append(contentBlocks, anthropic.ResponseContent{
+				Type:  "tool_use",
+				ID:    tc.ID,
+				Name:  tc.Function.Name,
+				Input: input,
+			})
+		}
+	}
+
+	// Ensure at least one content block
+	if len(contentBlocks) == 0 {
+		contentBlocks = []anthropic.ResponseContent{{Type: "text", Text: ""}}
 	}
 
 	return &anthropic.MessagesResponse{
@@ -295,12 +473,7 @@ func CanonicalToAPIResponse(resp *domain.CanonicalResponse) *anthropic.MessagesR
 		Role:       "assistant",
 		Model:      resp.Model,
 		StopReason: finishReason,
-		Content: []anthropic.ResponseContent{
-			{
-				Type: "text",
-				Text: content,
-			},
-		},
+		Content:    contentBlocks,
 		Usage: anthropic.MessagesUsage{
 			InputTokens:  resp.Usage.PromptTokens,
 			OutputTokens: resp.Usage.CompletionTokens,
