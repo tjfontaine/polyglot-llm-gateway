@@ -121,10 +121,10 @@ type ChatCompletionChunk struct {
 
 // ChunkChoice represents a choice in a streaming chunk.
 type ChunkChoice struct {
-	Index        int         `json:"index"`
-	Delta        ChunkDelta  `json:"delta"`
-	FinishReason *string     `json:"finish_reason"`
-	Logprobs     *Logprobs   `json:"logprobs,omitempty"`
+	Index        int        `json:"index"`
+	Delta        ChunkDelta `json:"delta"`
+	FinishReason *string    `json:"finish_reason"`
+	Logprobs     *Logprobs  `json:"logprobs,omitempty"`
 }
 
 // ChunkDelta represents the delta content in a streaming chunk.
@@ -136,10 +136,10 @@ type ChunkDelta struct {
 
 // ToolCallChunk represents a partial tool call in streaming.
 type ToolCallChunk struct {
-	Index    int                   `json:"index"`
-	ID       string                `json:"id,omitempty"`
-	Type     string                `json:"type,omitempty"`
-	Function *FunctionCallChunk    `json:"function,omitempty"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *FunctionCallChunk `json:"function,omitempty"`
 }
 
 // FunctionCallChunk represents a partial function call.

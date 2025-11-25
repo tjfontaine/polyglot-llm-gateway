@@ -59,6 +59,10 @@ func (p *ModelMappingProvider) Name() string {
 	return "model-mapper"
 }
 
+func (p *ModelMappingProvider) APIType() domain.APIType {
+	return p.defaultProvider.APIType()
+}
+
 func (p *ModelMappingProvider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	provider, mappedReq, responseModel, err := p.selectProvider(req)
 	if err != nil {

@@ -24,6 +24,10 @@ func (p *ModelOverrideProvider) Name() string {
 	return p.inner.Name()
 }
 
+func (p *ModelOverrideProvider) APIType() domain.APIType {
+	return p.inner.APIType()
+}
+
 func (p *ModelOverrideProvider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	// Clone request to avoid side effects
 	newReq := *req

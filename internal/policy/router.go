@@ -27,6 +27,21 @@ func (r *Router) Name() string {
 	return "router"
 }
 
+// APIType returns the API type of the default provider.
+// Since the router can route to multiple providers, this returns the default.
+func (r *Router) APIType() domain.APIType {
+	if r.defaultProvider != "" {
+		if p, ok := r.providers[r.defaultProvider]; ok {
+			return p.APIType()
+		}
+	}
+	// Fall back to first available provider
+	for _, p := range r.providers {
+		return p.APIType()
+	}
+	return domain.APITypeOpenAI // Default
+}
+
 func (r *Router) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
 	p, err := r.Route(req)
 	if err != nil {

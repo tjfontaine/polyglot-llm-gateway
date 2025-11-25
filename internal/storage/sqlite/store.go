@@ -12,10 +12,13 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
-// Store is a SQLite implementation of ConversationStore
+// Store is a SQLite implementation of ConversationStore and ResponseStore
 type Store struct {
 	db *sql.DB
 }
+
+// Ensure Store implements ResponseStore
+var _ storage.ResponseStore = (*Store)(nil)
 
 // New creates a new SQLite store
 func New(dbPath string) (*Store, error) {
@@ -52,8 +55,22 @@ func (s *Store) initSchema() error {
 			created_at TIMESTAMP NOT NULL,
 			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS responses (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			model TEXT NOT NULL,
+			request TEXT NOT NULL,
+			response TEXT,
+			metadata TEXT,
+			previous_response_id TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_responses_previous ON responses(previous_response_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -237,4 +254,130 @@ func (s *Store) DeleteConversation(ctx context.Context, id string) error {
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// ResponseStore implementation
+
+func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) error {
+	resp.CreatedAt = time.Now()
+	resp.UpdatedAt = time.Now()
+
+	metadata, err := json.Marshal(resp.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `INSERT INTO responses (id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err = s.db.ExecContext(ctx, query,
+		resp.ID, resp.TenantID, resp.Status, resp.Model,
+		string(resp.Request), string(resp.Response), string(metadata),
+		resp.PreviousResponseID, resp.CreatedAt, resp.UpdatedAt)
+
+	if err != nil {
+		return fmt.Errorf("failed to save response: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) GetResponse(ctx context.Context, id string) (*storage.ResponseRecord, error) {
+	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	          FROM responses WHERE id = ?`
+
+	var resp storage.ResponseRecord
+	var requestStr, responseStr, metadataStr, previousID sql.NullString
+
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
+		&requestStr, &responseStr, &metadataStr, &previousID,
+		&resp.CreatedAt, &resp.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("response %s not found", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get response: %w", err)
+	}
+
+	if requestStr.Valid {
+		resp.Request = json.RawMessage(requestStr.String)
+	}
+	if responseStr.Valid {
+		resp.Response = json.RawMessage(responseStr.String)
+	}
+	if metadataStr.Valid && metadataStr.String != "" {
+		if err := json.Unmarshal([]byte(metadataStr.String), &resp.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+	if previousID.Valid {
+		resp.PreviousResponseID = previousID.String
+	}
+
+	return &resp, nil
+}
+
+func (s *Store) UpdateResponseStatus(ctx context.Context, id, status string) error {
+	query := `UPDATE responses SET status = ?, updated_at = ? WHERE id = ?`
+
+	result, err := s.db.ExecContext(ctx, query, status, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update response status: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("response %s not found", id)
+	}
+
+	return nil
+}
+
+func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string) ([]*storage.ResponseRecord, error) {
+	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	          FROM responses WHERE previous_response_id = ?
+	          ORDER BY created_at ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, previousID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query responses: %w", err)
+	}
+	defer rows.Close()
+
+	var responses []*storage.ResponseRecord
+	for rows.Next() {
+		var resp storage.ResponseRecord
+		var requestStr, responseStr, metadataStr, prevID sql.NullString
+
+		if err := rows.Scan(&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
+			&requestStr, &responseStr, &metadataStr, &prevID,
+			&resp.CreatedAt, &resp.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan response: %w", err)
+		}
+
+		if requestStr.Valid {
+			resp.Request = json.RawMessage(requestStr.String)
+		}
+		if responseStr.Valid {
+			resp.Response = json.RawMessage(responseStr.String)
+		}
+		if metadataStr.Valid && metadataStr.String != "" {
+			if err := json.Unmarshal([]byte(metadataStr.String), &resp.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+		if prevID.Valid {
+			resp.PreviousResponseID = prevID.String
+		}
+
+		responses = append(responses, &resp)
+	}
+
+	return responses, rows.Err()
 }

@@ -77,6 +77,10 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	// Capture User-Agent from incoming request and pass it through
 	canonReq.UserAgent = r.Header.Get("User-Agent")
 
+	// Set source API type and raw request for pass-through optimization
+	canonReq.SourceAPIType = domain.APITypeAnthropic
+	canonReq.RawRequest = body
+
 	server.AddLogField(r.Context(), "requested_model", canonReq.Model)
 	server.AddLogField(r.Context(), "frontdoor", "anthropic")
 	server.AddLogField(r.Context(), "app", h.appName)
@@ -119,15 +123,25 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, canonReq, resp, metadata)
 
-	// Use codec to encode response to Anthropic format
-	respBody, err := h.codec.EncodeResponse(resp)
-	if err != nil {
-		logger.Error("failed to encode response",
+	// Use raw response if available (pass-through mode), otherwise encode
+	var respBody []byte
+	if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
+		// Pass-through: use raw response directly
+		respBody = resp.RawResponse
+		logger.Debug("using pass-through response",
 			slog.String("request_id", requestID),
-			slog.String("error", err.Error()),
 		)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	} else {
+		// Standard path: encode canonical response to Anthropic format
+		respBody, err = h.codec.EncodeResponse(resp)
+		if err != nil {
+			logger.Error("failed to encode response",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
