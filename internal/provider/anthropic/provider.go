@@ -7,6 +7,7 @@ import (
 	"time"
 
 	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
+	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
@@ -63,7 +64,8 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
-	apiReq := toAPIRequest(req)
+	// Use codec to convert canonical request to API request
+	apiReq := anthropiccodec.CanonicalToAPIRequest(req)
 
 	opts := &anthropicapi.RequestOptions{
 		UserAgent: req.UserAgent,
@@ -74,11 +76,13 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 		return nil, err
 	}
 
-	return toCanonicalResponse(resp), nil
+	// Use codec to convert API response to canonical response
+	return anthropiccodec.APIResponseToCanonical(resp), nil
 }
 
 func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
-	apiReq := toAPIRequest(req)
+	// Use codec to convert canonical request to API request
+	apiReq := anthropiccodec.CanonicalToAPIRequest(req)
 
 	opts := &anthropicapi.RequestOptions{
 		UserAgent: req.UserAgent,
@@ -183,208 +187,8 @@ func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {
 	}, nil
 }
 
-// toAPIRequest converts a canonical request to an Anthropic API request.
-func toAPIRequest(req *domain.CanonicalRequest) *anthropicapi.MessagesRequest {
-	var systemBlocks anthropicapi.SystemMessages
-	var messages []anthropicapi.Message
-
-	for _, m := range req.Messages {
-		switch m.Role {
-		case "system":
-			systemBlocks = append(systemBlocks, anthropicapi.SystemBlock{
-				Type: "text",
-				Text: m.Content,
-			})
-		case "user", "assistant":
-			messages = append(messages, anthropicapi.Message{
-				Role:    m.Role,
-				Content: anthropicapi.ContentBlock{{Type: "text", Text: m.Content}},
-			})
-		}
-	}
-
-	apiReq := &anthropicapi.MessagesRequest{
-		Model:    req.Model,
-		Messages: messages,
-		Stream:   req.Stream,
-	}
-
-	if len(systemBlocks) > 0 {
-		apiReq.System = systemBlocks
-	}
-
-	// Set max tokens (required for Anthropic)
-	if req.MaxTokens > 0 {
-		apiReq.MaxTokens = req.MaxTokens
-	} else {
-		apiReq.MaxTokens = 1024 // Default
-	}
-
-	if req.Temperature > 0 {
-		apiReq.Temperature = &req.Temperature
-	}
-
-	// Convert tools if present
-	if len(req.Tools) > 0 {
-		apiReq.Tools = make([]anthropicapi.Tool, len(req.Tools))
-		for i, t := range req.Tools {
-			apiReq.Tools[i] = anthropicapi.Tool{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				InputSchema: t.Function.Parameters,
-			}
-		}
-	}
-
-	return apiReq
-}
-
-// toCanonicalResponse converts an Anthropic API response to a canonical response.
-func toCanonicalResponse(resp *anthropicapi.MessagesResponse) *domain.CanonicalResponse {
-	content := ""
-	if len(resp.Content) > 0 {
-		for _, c := range resp.Content {
-			if c.Type == "text" {
-				content += c.Text
-			}
-		}
-	}
-
-	return &domain.CanonicalResponse{
-		ID:      resp.ID,
-		Object:  "chat.completion", // Map to OpenAI-compatible object type
-		Created: 0,                 // Anthropic doesn't return created timestamp
-		Model:   resp.Model,
-		Choices: []domain.Choice{
-			{
-				Index: 0,
-				Message: domain.Message{
-					Role:    resp.Role,
-					Content: content,
-				},
-				FinishReason: resp.StopReason,
-			},
-		},
-		Usage: domain.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
-	}
-}
-
-// ToAPIRequest is exported for use by frontdoor handlers that want to
-// directly work with Anthropic API types.
-func ToAPIRequest(req *domain.CanonicalRequest) *anthropicapi.MessagesRequest {
-	return toAPIRequest(req)
-}
-
-// ToCanonicalResponse is exported for use by frontdoor handlers.
-func ToCanonicalResponse(resp *anthropicapi.MessagesResponse) *domain.CanonicalResponse {
-	return toCanonicalResponse(resp)
-}
-
 // ToCanonicalRequest converts an Anthropic API request to a canonical request.
-// This is useful for frontdoor handlers that receive Anthropic format requests.
+// Exposed for use by frontdoor handlers via the codec.
 func ToCanonicalRequest(apiReq *anthropicapi.MessagesRequest) (*domain.CanonicalRequest, error) {
-	messages := make([]domain.Message, 0, len(apiReq.Messages)+len(apiReq.System))
-
-	// Add system messages first
-	for _, sys := range apiReq.System {
-		if sys.Type != "" && sys.Type != "text" {
-			return nil, fmt.Errorf("unsupported system block type: %s", sys.Type)
-		}
-		messages = append(messages, domain.Message{
-			Role:    "system",
-			Content: sys.Text,
-		})
-	}
-
-	// Add conversation messages
-	for idx, msg := range apiReq.Messages {
-		content, err := collapseContentBlocks(msg.Content)
-		if err != nil {
-			return nil, fmt.Errorf("message %d: %w", idx, err)
-		}
-		messages = append(messages, domain.Message{
-			Role:    msg.Role,
-			Content: content,
-		})
-	}
-
-	req := &domain.CanonicalRequest{
-		Model:     apiReq.Model,
-		Messages:  messages,
-		Stream:    apiReq.Stream,
-		MaxTokens: apiReq.MaxTokens,
-	}
-
-	if apiReq.Temperature != nil {
-		req.Temperature = *apiReq.Temperature
-	}
-
-	// Convert tools
-	if len(apiReq.Tools) > 0 {
-		req.Tools = make([]domain.ToolDefinition, len(apiReq.Tools))
-		for i, t := range apiReq.Tools {
-			req.Tools[i] = domain.ToolDefinition{
-				Type: "function",
-				Function: domain.FunctionDef{
-					Name:        t.Name,
-					Description: t.Description,
-					Parameters:  t.InputSchema,
-				},
-			}
-		}
-	}
-
-	return req, nil
-}
-
-// collapseContentBlocks validates and collapses content blocks into a single string.
-// Returns an error if unsupported content types are found.
-func collapseContentBlocks(blocks anthropicapi.ContentBlock) (string, error) {
-	if len(blocks) == 0 {
-		return "", fmt.Errorf("content is required")
-	}
-
-	var result string
-	for _, block := range blocks {
-		blockType := block.Type
-		if blockType == "" {
-			blockType = "text"
-		}
-		if blockType != "text" {
-			return "", fmt.Errorf("unsupported content block type: %s", blockType)
-		}
-		result += block.Text
-	}
-
-	return result, nil
-}
-
-// APIRequest is the Anthropic API request type, exported for frontdoor use.
-type APIRequest = anthropicapi.MessagesRequest
-
-// APIResponse is the Anthropic API response type, exported for frontdoor use.
-type APIResponse = anthropicapi.MessagesResponse
-
-// APIMessage is the Anthropic API message type, exported for frontdoor use.
-type APIMessage = anthropicapi.Message
-
-// APIContentBlock is the Anthropic API content block type, exported for frontdoor use.
-type APIContentBlock = anthropicapi.ContentBlock
-
-// APIContentPart is the Anthropic API content part type, exported for frontdoor use.
-type APIContentPart = anthropicapi.ContentPart
-
-// APISystemMessages is the Anthropic API system messages type, exported for frontdoor use.
-type APISystemMessages = anthropicapi.SystemMessages
-
-// APISystemBlock is the Anthropic API system block type, exported for frontdoor use.
-type APISystemBlock = anthropicapi.SystemBlock
-
-// FormatStreamingError formats an error for SSE streaming.
-func FormatStreamingError(err error) string {
-	return fmt.Sprintf(`{"type":"error","error":{"type":"server_error","message":%q}}`, err.Error())
+	return anthropiccodec.APIRequestToCanonical(apiReq)
 }
