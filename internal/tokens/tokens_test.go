@@ -207,11 +207,17 @@ func TestOpenAICounter_SupportsModel(t *testing.T) {
 		{"gpt-4o", true},
 		{"gpt-4-turbo", true},
 		{"gpt-3.5-turbo", true},
+		{"gpt-5", true},              // Future model
+		{"gpt-5-turbo", true},        // Future model variant
+		{"gpt-6-preview", true},      // Future model
 		{"o1-preview", true},
 		{"o3-mini", true},
+		{"o4-reasoning", true},       // Future reasoning model
 		{"text-embedding-ada-002", true},
+		{"text-embedding-3-large", true},
 		{"claude-3-sonnet", false},
 		{"unknown-model", false},
+		{"llama-3", false},
 	}
 
 	for _, tt := range tests {
@@ -362,6 +368,75 @@ func TestOpenAICounter_DifferentModels(t *testing.T) {
 				t.Errorf("CountText(%q, %q) = %d, want %d", model, text, count, expected)
 			}
 		})
+	}
+}
+
+func TestOpenAICounter_FutureModels(t *testing.T) {
+	c := NewOpenAICounter()
+
+	// Test that future models (gpt-5, gpt-6, etc.) work with fallback encoding
+	futureModels := []string{
+		"gpt-5",
+		"gpt-5-turbo",
+		"gpt-5-turbo-preview",
+		"gpt-6",
+		"gpt-6-mini",
+		"o4-preview",
+		"o4-mini",
+	}
+
+	text := "The quick brown fox jumps over the lazy dog."
+
+	for _, model := range futureModels {
+		t.Run(model, func(t *testing.T) {
+			// Should support the model
+			if !c.SupportsModel(model) {
+				t.Errorf("SupportsModel(%q) = false, want true", model)
+			}
+
+			// Should be able to count tokens using fallback encoding
+			count, err := c.CountText(model, text)
+			if err != nil {
+				t.Fatalf("CountText() error = %v", err)
+			}
+
+			// Should get a reasonable count (cl100k_base encoding)
+			// "The quick brown fox jumps over the lazy dog." = 10 tokens
+			if count < 8 || count > 12 {
+				t.Errorf("CountText(%q, %q) = %d, expected ~10 tokens", model, text, count)
+			}
+		})
+	}
+}
+
+func TestOpenAICounter_CountTokensWithFutureModel(t *testing.T) {
+	c := NewOpenAICounter()
+
+	req := &domain.TokenCountRequest{
+		Model: "gpt-5-turbo",
+		Messages: []domain.Message{
+			{Role: "system", Content: "You are a helpful assistant."},
+			{Role: "user", Content: "Hello!"},
+		},
+	}
+
+	resp, err := c.CountTokens(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CountTokens() error = %v", err)
+	}
+
+	// Should return accurate counts (not estimated)
+	if resp.Estimated {
+		t.Error("expected Estimated to be false for tiktoken-based counter")
+	}
+
+	// Should have reasonable token count
+	if resp.InputTokens < 10 || resp.InputTokens > 25 {
+		t.Errorf("CountTokens() = %d, expected between 10 and 25", resp.InputTokens)
+	}
+
+	if resp.Model != "gpt-5-turbo" {
+		t.Errorf("Model = %q, want %q", resp.Model, "gpt-5-turbo")
 	}
 }
 

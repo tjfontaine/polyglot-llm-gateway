@@ -21,7 +21,9 @@ type OpenAICounter struct {
 func NewOpenAICounter() *OpenAICounter {
 	return &OpenAICounter{
 		matcher: NewModelMatcher(
-			[]string{"gpt-4", "gpt-3.5", "o1", "o3", "text-embedding", "text-davinci"},
+			// Prefixes for OpenAI models (including future gpt-5, gpt-6, etc.)
+			[]string{"gpt-", "o1", "o3", "o4", "text-embedding", "text-davinci"},
+			// Exact matches for legacy models
 			[]string{"davinci", "curie", "babbage", "ada"},
 		),
 		encodingCache: make(map[string]*tiktoken.Tiktoken),
@@ -146,24 +148,36 @@ func (c *OpenAICounter) CountText(model, text string) (int, error) {
 
 // modelToEncoding maps model names to encoding names for tiktoken.
 // This helps handle models that tiktoken doesn't recognize directly.
+// 
+// Encoding reference:
+// - cl100k_base: GPT-4, GPT-3.5-turbo, text-embedding-ada-002, and newer models
+// - p50k_base: text-davinci-003, text-davinci-002
+// - r50k_base: davinci, curie, babbage, ada (legacy)
+// - o200k_base: GPT-4o and potentially future models (if different from cl100k)
 func modelToEncoding(model string) string {
-	// Most modern OpenAI models use cl100k_base
 	switch {
-	case strings.HasPrefix(model, "gpt-4"):
+	// GPT-4o models might use o200k_base (newer encoding)
+	case strings.HasPrefix(model, "gpt-4o"):
+		return "cl100k_base" // tiktoken-go may not have o200k_base yet, fallback to cl100k
+	// Future GPT models (gpt-5, gpt-6, etc.) - assume cl100k_base until tiktoken updates
+	case strings.HasPrefix(model, "gpt-"):
 		return "cl100k_base"
-	case strings.HasPrefix(model, "gpt-3.5"):
+	// Reasoning models (o1, o3, o4, etc.)
+	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
 		return "cl100k_base"
+	// Embedding models
 	case strings.HasPrefix(model, "text-embedding"):
 		return "cl100k_base"
-	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"):
-		return "cl100k_base" // Assume newer models use cl100k_base
-	case strings.HasPrefix(model, "text-davinci-003"):
+	// Legacy text-davinci models
+	case strings.HasPrefix(model, "text-davinci-003"), strings.HasPrefix(model, "text-davinci-002"):
 		return "p50k_base"
 	case strings.HasPrefix(model, "text-davinci"):
 		return "p50k_base"
+	// Legacy completion models
 	case model == "davinci" || model == "curie" || model == "babbage" || model == "ada":
 		return "r50k_base"
 	default:
+		// Default to cl100k_base for unknown/future models
 		return "cl100k_base"
 	}
 }
