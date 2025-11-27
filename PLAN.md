@@ -226,3 +226,43 @@ This plan addresses:
 6. **Frontend Updates**: Control plane UI with unified data explorer and feature indicators
 7. **Codec Parity**: Clean bidirectional mapping between OpenAI and Anthropic formats
 8. **Unified Interactions**: Single view for both conversations and responses with filtering
+
+---
+
+## Phase 8: Bug Fixes & Enhanced Testing ✅ COMPLETED
+
+### 8.1 Missing Endpoint Fixes ✅
+- [x] Added `/v1/messages/count_tokens` endpoint to Anthropic frontdoor
+- [x] Added `CountTokensRequest` and `CountTokensResponse` types in `api/anthropic/types.go`
+- [x] Added `CountTokens` method to Anthropic API client with beta header support
+- [x] Added `CountTokens` method to Anthropic provider
+- [x] Added `CountTokens` delegation to `ModelMappingProvider`
+- [x] Added `CountTokens` delegation to policy `Router`
+- [x] Registered count_tokens route in frontdoor registry
+
+### 8.2 Model Routing Configuration Fix ✅
+- [x] Fixed frontdoor registry to check for `Fallback` in addition to `PrefixProviders` and `Rewrites`
+- [x] Previously, configs with only `Fallback` (no `Rewrites`) would not create `ModelMappingProvider`
+
+### 8.3 Comprehensive Test Coverage ✅
+- [x] Added VCR-based tests for Anthropic `CountTokens` endpoint
+- [x] Added mock server tests for `CountTokens` with header verification
+- [x] Added integration tests for full routing chain (`ModelMappingProvider` -> `Router` -> `Provider`)
+- [x] Added tests for fallback-only configuration
+- [x] Added tests for multiple prefix rules with different providers
+- [x] Added tests for exact match precedence over prefix match
+- [x] Added tests for response model rewriting
+- [x] Added tests for `CountTokens` delegation through `ModelMappingProvider`
+- [x] Added tests for slash-prefixed routing (e.g., `openai/gpt-4o`)
+- [x] Added tests for combined config (rewrites + prefix providers + fallback)
+- [x] Added policy router tests for `CountTokens` delegation
+- [x] Added frontdoor registry tests for all handler types
+- [x] Added integration test with model rewriting through full request flow
+
+### Test Files Added/Modified
+- `internal/provider/anthropic/provider_test.go` - Added VCR and mock tests for CountTokens
+- `internal/provider/anthropic/testdata/fixtures/anthropic_count_tokens.yaml` - VCR cassette
+- `internal/provider/model_mapping_test.go` - Extended with comprehensive rewrite tests
+- `internal/provider/integration_test.go` - New file with full routing chain tests
+- `internal/policy/router_test.go` - Added CountTokens and APIType tests
+- `internal/frontdoor/registry_test.go` - New file with registry and integration tests
