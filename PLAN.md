@@ -189,11 +189,40 @@ This plan addresses:
 
 ---
 
+## Phase 7: Control Plane Reorganization ✅ COMPLETED
+
+### 7.1 Backend API Improvements ✅
+- [x] Added `ListResponses` method to `ResponseStore` interface
+- [x] Implemented `ListResponses` in SQLite store
+- [x] Implemented `ListResponses` in Memory store
+- [x] Created unified `/api/interactions` endpoint merging conversations and responses
+- [x] Created `/api/interactions/{id}` detail endpoint
+- [x] Interactions sorted by `updated_at` descending with optional type filtering
+
+### 7.2 Frontend Reorganization ✅
+- [x] Restructured frontend into components, pages, hooks, and types directories
+- [x] Created shared Layout component with navigation
+- [x] Created reusable UI components (Pill, InfoCard, StatusBadge, etc.)
+- [x] Created Dashboard page with overview cards linking to detail pages
+- [x] Created Topology page for apps & providers configuration
+- [x] Created Routing page for routing rules & tenant configuration
+- [x] Created unified Data page for all interactions (conversations + responses)
+- [x] Removed separate Conversations and Responses pages in favor of unified view
+- [x] Updated navigation to reflect new page structure
+
+### 7.3 Documentation Updates ✅
+- [x] Updated AGENTS.md with control plane architecture documentation
+- [x] Documented unified interactions model and design principles
+- [x] Documented frontend structure and page responsibilities
+
+---
+
 ### Key Features Implemented
 1. **Responses API**: Full OpenAI Responses API with streaming, response storage, and conversation continuation
 2. **Pass-Through Mode**: Bypass canonical conversion when frontdoor matches provider API type
 3. **Rich Content**: Support for multimodal content (images, tool calls, etc.)
 4. **Enhanced Events**: Comprehensive streaming event types for all APIs
 5. **Anthropic Updates**: Extended thinking, computer use tools, beta features support
-6. **Frontend Updates**: Control plane UI with Responses API explorer and feature indicators
+6. **Frontend Updates**: Control plane UI with unified data explorer and feature indicators
 7. **Codec Parity**: Clean bidirectional mapping between OpenAI and Anthropic formats
+8. **Unified Interactions**: Single view for both conversations and responses with filtering

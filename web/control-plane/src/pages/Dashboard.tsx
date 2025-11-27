@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   Bot,
   Compass,
+  Database,
   MessageSquare,
   Route,
   Signal,
@@ -14,7 +15,7 @@ import { useApi, formatShortDate } from '../hooks/useApi';
 import { Pill, StatusBadge } from '../components/ui';
 
 export function Dashboard() {
-  const { overview, threads, responses, loadingThreads, loadingResponses } = useApi();
+  const { overview, interactions, interactionsTotal, loadingInteractions } = useApi();
 
   const appEntries = overview?.apps?.length
     ? overview.apps
@@ -26,8 +27,9 @@ export function Dashboard() {
         default_model: fd.default_model,
       })) ?? [];
 
-  const recentThreads = threads.slice(0, 3);
-  const recentResponses = responses.slice(0, 3);
+  const recentInteractions = interactions.slice(0, 4);
+  const conversationCount = interactions.filter(i => i.type === 'conversation').length;
+  const responseCount = interactions.filter(i => i.type === 'response').length;
 
   return (
     <div className="space-y-6">
@@ -35,13 +37,13 @@ export function Dashboard() {
       <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/90 to-slate-950/90 p-6">
         <h1 className="text-2xl font-bold text-white mb-2">Welcome to Control Plane</h1>
         <p className="text-slate-400 max-w-2xl">
-          Monitor your gateway configuration, routing rules, and explore stored conversations and API responses.
+          Monitor your gateway configuration, routing rules, and explore stored interactions.
           All data is read-only and refreshes automatically.
         </p>
       </div>
 
       {/* Overview Cards Grid */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Topology Card */}
         <Link
           to="/admin/topology"
@@ -55,7 +57,7 @@ export function Dashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Topology</h3>
-                <p className="text-xs text-slate-400">Apps & providers configuration</p>
+                <p className="text-xs text-slate-400">Apps & providers</p>
               </div>
             </div>
 
@@ -84,7 +86,7 @@ export function Dashboard() {
                 </div>
               ))}
               {appEntries.length > 2 && (
-                <div className="text-xs text-slate-500">+{appEntries.length - 2} more apps</div>
+                <div className="text-xs text-slate-500">+{appEntries.length - 2} more</div>
               )}
             </div>
 
@@ -108,7 +110,7 @@ export function Dashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Routing</h3>
-                <p className="text-xs text-slate-400">Rules & tenants configuration</p>
+                <p className="text-xs text-slate-400">Rules & tenants</p>
               </div>
             </div>
 
@@ -120,12 +122,6 @@ export function Dashboard() {
               <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500">Tenants</div>
                 <div className="text-xl font-semibold text-white">{overview?.tenants.length ?? 0}</div>
-              </div>
-              <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Default</div>
-                <div className="text-sm font-semibold text-white truncate max-w-[100px]">
-                  {overview?.routing.default_provider || '—'}
-                </div>
               </div>
             </div>
 
@@ -143,7 +139,7 @@ export function Dashboard() {
                 </div>
               ))}
               {(overview?.routing.rules.length ?? 0) > 2 && (
-                <div className="text-xs text-slate-500">+{(overview?.routing.rules.length ?? 0) - 2} more rules</div>
+                <div className="text-xs text-slate-500">+{(overview?.routing.rules.length ?? 0) - 2} more</div>
               )}
             </div>
 
@@ -154,124 +150,80 @@ export function Dashboard() {
           </div>
         </Link>
 
-        {/* Conversations Card */}
+        {/* Data Card - Unified Interactions */}
         <Link
-          to="/admin/conversations"
-          className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-sky-400/30 hover:shadow-[0_24px_50px_rgba(14,165,233,0.1)]"
+          to="/admin/data"
+          className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-violet-400/30 hover:shadow-[0_24px_50px_rgba(139,92,246,0.1)]"
         >
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-sky-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-violet-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
             <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-xl bg-sky-500/10 p-3 text-sky-300 border border-sky-500/20">
-                <MessageSquare size={24} />
+              <div className="rounded-xl bg-violet-500/10 p-3 text-violet-300 border border-violet-500/20">
+                <Database size={24} />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-white">Conversations</h3>
-                <p className="text-xs text-slate-400">Chat threads & messages</p>
+                <h3 className="text-lg font-semibold text-white">Data</h3>
+                <p className="text-xs text-slate-400">Interactions & responses</p>
               </div>
             </div>
 
             <div className="mb-4 flex flex-wrap gap-3">
               <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Threads</div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
                 <div className="text-xl font-semibold text-white">
-                  {loadingThreads ? '...' : threads.length}
+                  {loadingInteractions ? '...' : interactionsTotal}
                 </div>
               </div>
-              {!overview?.storage.enabled && (
-                <Pill icon={Zap} label="Storage disabled" tone="amber" />
-              )}
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 px-3 py-2 flex items-center gap-2">
+                <MessageSquare size={14} className="text-sky-300" />
+                <span className="text-sm font-medium text-white">{conversationCount}</span>
+              </div>
+              <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2 flex items-center gap-2">
+                <Bot size={14} className="text-rose-300" />
+                <span className="text-sm font-medium text-white">{responseCount}</span>
+              </div>
             </div>
 
-            {overview?.storage.enabled && (
+            {overview?.storage.enabled ? (
               <div className="space-y-2">
-                {recentThreads.map((thread) => (
+                {recentInteractions.map((interaction) => (
                   <div
-                    key={thread.id}
+                    key={interaction.id}
                     className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <Users size={14} className="text-sky-300 flex-shrink-0" />
+                      {interaction.type === 'conversation' ? (
+                        <MessageSquare size={14} className="text-sky-300 flex-shrink-0" />
+                      ) : (
+                        <Bot size={14} className="text-rose-300 flex-shrink-0" />
+                      )}
                       <span className="text-sm font-medium text-white truncate">
-                        {thread.metadata?.title || thread.id.slice(0, 12)}
+                        {interaction.type === 'conversation'
+                          ? interaction.metadata?.title || interaction.id.slice(0, 12)
+                          : interaction.id.slice(0, 16)}
                       </span>
                     </div>
-                    <span className="text-xs text-slate-400 flex-shrink-0 ml-2">
-                      {thread.message_count} msg
-                    </span>
+                    {interaction.type === 'response' && interaction.status && (
+                      <StatusBadge status={interaction.status} />
+                    )}
+                    {interaction.type === 'conversation' && interaction.message_count && (
+                      <span className="text-xs text-slate-400">{interaction.message_count} msg</span>
+                    )}
                   </div>
                 ))}
-                {threads.length === 0 && !loadingThreads && (
-                  <div className="text-sm text-slate-500">No conversations yet</div>
+                {interactions.length === 0 && !loadingInteractions && (
+                  <div className="text-sm text-slate-500">No interactions yet</div>
                 )}
-                {threads.length > 3 && (
-                  <div className="text-xs text-slate-500">+{threads.length - 3} more threads</div>
-                )}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+                <Zap size={12} className="inline mr-1" />
+                Storage disabled
               </div>
             )}
 
-            <div className="mt-4 flex items-center justify-end text-sm text-slate-400 group-hover:text-sky-200 transition-colors">
-              <span>View conversations</span>
-              <ArrowRight size={16} className="ml-1 transition-transform group-hover:translate-x-1" />
-            </div>
-          </div>
-        </Link>
-
-        {/* Responses Card */}
-        <Link
-          to="/admin/responses"
-          className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-rose-400/30 hover:shadow-[0_24px_50px_rgba(244,63,94,0.1)]"
-        >
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-rose-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-          <div className="relative">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-xl bg-rose-500/10 p-3 text-rose-300 border border-rose-500/20">
-                <Bot size={24} />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-white">Responses API</h3>
-                <p className="text-xs text-slate-400">OpenAI Responses records</p>
-              </div>
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-3">
-              <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">Records</div>
-                <div className="text-xl font-semibold text-white">
-                  {loadingResponses ? '...' : responses.length}
-                </div>
-              </div>
-              {(overview?.apps ?? []).some((app) => app?.enable_responses) && (
-                <Pill icon={BadgeCheck} label="API enabled" tone="emerald" />
-              )}
-            </div>
-
-            {overview?.storage.enabled && (
-              <div className="space-y-2">
-                {recentResponses.map((response) => (
-                  <div
-                    key={response.id}
-                    className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-medium text-white truncate">
-                        {response.id.slice(0, 16)}...
-                      </span>
-                    </div>
-                    <StatusBadge status={response.status} />
-                  </div>
-                ))}
-                {responses.length === 0 && !loadingResponses && (
-                  <div className="text-sm text-slate-500">No responses yet</div>
-                )}
-                {responses.length > 3 && (
-                  <div className="text-xs text-slate-500">+{responses.length - 3} more responses</div>
-                )}
-              </div>
-            )}
-
-            <div className="mt-4 flex items-center justify-end text-sm text-slate-400 group-hover:text-rose-200 transition-colors">
-              <span>View responses</span>
+            <div className="mt-4 flex items-center justify-end text-sm text-slate-400 group-hover:text-violet-200 transition-colors">
+              <span>Explore data</span>
               <ArrowRight size={16} className="ml-1 transition-transform group-hover:translate-x-1" />
             </div>
           </div>
@@ -304,6 +256,9 @@ export function Dashboard() {
                 label={`${(overview.providers ?? []).filter((p) => p.enable_passthrough).length} passthrough provider(s)`}
                 tone="amber"
               />
+            )}
+            {(overview.apps ?? []).some((app) => app?.enable_responses) && (
+              <Pill icon={Bot} label="Responses API enabled" tone="emerald" />
             )}
           </div>
         </div>
