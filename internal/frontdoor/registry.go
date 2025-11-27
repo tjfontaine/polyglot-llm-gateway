@@ -48,7 +48,7 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 			p = provider.NewModelOverrideProvider(p, cfg.DefaultModel)
 		}
 
-		if len(cfg.ModelRouting.PrefixProviders) > 0 || len(cfg.ModelRouting.Rewrites) > 0 {
+		if len(cfg.ModelRouting.PrefixProviders) > 0 || len(cfg.ModelRouting.Rewrites) > 0 || cfg.ModelRouting.Fallback != nil {
 			mapper, err := provider.NewModelMappingProvider(p, providers, cfg.ModelRouting)
 			if err != nil {
 				return nil, err
@@ -67,6 +67,7 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 			handler := anthropic_frontdoor.NewHandler(p, store, cfg.Name, cfg.Models)
 			registrations = append(registrations,
 				HandlerRegistration{Path: cfg.Path + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
+				HandlerRegistration{Path: cfg.Path + "/v1/messages/count_tokens", Method: http.MethodPost, Handler: handler.HandleCountTokens},
 				HandlerRegistration{Path: cfg.Path + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
 			)
 		default:

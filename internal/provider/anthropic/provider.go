@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -195,4 +196,20 @@ func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {
 // Exposed for use by frontdoor handlers via the codec.
 func ToCanonicalRequest(apiReq *anthropicapi.MessagesRequest) (*domain.CanonicalRequest, error) {
 	return anthropiccodec.APIRequestToCanonical(apiReq)
+}
+
+// CountTokens passes through a count_tokens request to the Anthropic API.
+// This method accepts raw JSON bytes and returns raw JSON bytes.
+func (p *Provider) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
+	var req anthropicapi.CountTokensRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal count_tokens request: %w", err)
+	}
+
+	resp, err := p.client.CountTokens(ctx, &req, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(resp)
 }

@@ -102,3 +102,28 @@ func (r *Router) Route(req *domain.CanonicalRequest) (domain.Provider, error) {
 
 	return nil, fmt.Errorf("no provider configured for model: %s", req.Model)
 }
+
+// CountTokens delegates to the default provider if it supports the CountTokens interface.
+func (r *Router) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
+	type countTokensProvider interface {
+		CountTokens(ctx context.Context, body []byte) ([]byte, error)
+	}
+
+	// Try default provider first
+	if r.defaultProvider != "" {
+		if p, ok := r.providers[r.defaultProvider]; ok {
+			if ctp, ok := p.(countTokensProvider); ok {
+				return ctp.CountTokens(ctx, body)
+			}
+		}
+	}
+
+	// Try any provider that supports CountTokens
+	for _, p := range r.providers {
+		if ctp, ok := p.(countTokensProvider); ok {
+			return ctp.CountTokens(ctx, body)
+		}
+	}
+
+	return nil, fmt.Errorf("no provider supports count_tokens")
+}

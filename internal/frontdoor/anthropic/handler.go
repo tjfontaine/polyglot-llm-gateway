@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -172,6 +173,60 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(list)
+}
+
+// HandleCountTokens handles the /v1/messages/count_tokens endpoint.
+// This endpoint is Anthropic-specific and is passed through to the underlying provider
+// if it supports the CountTokens interface.
+func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+
+	server.AddLogField(r.Context(), "frontdoor", "anthropic")
+	server.AddLogField(r.Context(), "app", h.appName)
+	server.AddLogField(r.Context(), "provider", h.provider.Name())
+
+	// Check if provider supports CountTokens
+	type countTokensProvider interface {
+		CountTokens(ctx context.Context, body []byte) ([]byte, error)
+	}
+
+	ctp, ok := h.provider.(countTokensProvider)
+	if !ok {
+		logger.Warn("count_tokens not supported by provider",
+			slog.String("request_id", requestID),
+			slog.String("provider", h.provider.Name()),
+		)
+		http.Error(w, "count_tokens not supported by this provider", http.StatusNotImplemented)
+		return
+	}
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error("failed to read request body",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		server.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Pass through to provider
+	respBody, err := ctp.CountTokens(r.Context(), body)
+	if err != nil {
+		logger.Error("count_tokens failed",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		server.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBody)
 }
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {

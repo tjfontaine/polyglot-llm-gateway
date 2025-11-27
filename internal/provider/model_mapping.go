@@ -205,3 +205,16 @@ func (p *ModelMappingProvider) rewriteModelID(id string) string {
 
 	return id
 }
+
+// CountTokens delegates to the default provider if it supports the CountTokens interface.
+func (p *ModelMappingProvider) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
+	type countTokensProvider interface {
+		CountTokens(ctx context.Context, body []byte) ([]byte, error)
+	}
+
+	if ctp, ok := p.defaultProvider.(countTokensProvider); ok {
+		return ctp.CountTokens(ctx, body)
+	}
+
+	return nil, fmt.Errorf("count_tokens not supported by underlying provider")
+}
