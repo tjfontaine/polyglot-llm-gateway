@@ -1,18 +1,17 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Activity,
-  Bot,
   Compass,
   Database,
   GitBranch,
   LayoutDashboard,
-  MessageSquare,
   Route,
   ServerCog,
   Shield,
   Sparkles,
   Zap,
   Clock4,
+  Bot,
 } from 'lucide-react';
 import { useApi, formatBytesToMB, friendlyDuration } from '../hooks/useApi';
 import { Pill, InfoCard } from './ui';
@@ -22,8 +21,7 @@ const navItems = [
   { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { to: '/admin/topology', icon: Compass, label: 'Topology' },
   { to: '/admin/routing', icon: Route, label: 'Routing' },
-  { to: '/admin/conversations', icon: MessageSquare, label: 'Conversations' },
-  { to: '/admin/responses', icon: Bot, label: 'Responses' },
+  { to: '/admin/data', icon: Database, label: 'Data' },
 ];
 
 export function Layout() {

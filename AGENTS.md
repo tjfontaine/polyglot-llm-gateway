@@ -12,7 +12,59 @@ This file applies to the entire repository unless a more specific `AGENTS.md` is
   - `internal/storage/*` persist conversation data when Responses APIs are enabled (SQLite or in-memory).
   - `internal/auth` and `internal/tenant` enable multi-tenant mode with bearer key hashing.
   - `internal/server` wires chi middleware, auth, and OpenTelemetry instrumentation.
+  - `internal/controlplane` serves the admin API and React UI for observing gateway state.
 - **Control plane:** `web/control-plane` is a React 19 + Vite app whose built assets are copied into `internal/controlplane/dist` by the `Makefile`.
+
+## Control Plane Architecture
+
+### Backend API (`internal/controlplane`)
+The control plane server exposes read-only admin APIs under `/admin/api/`:
+- `GET /api/stats` — Runtime statistics (uptime, goroutines, memory)
+- `GET /api/overview` — Gateway configuration summary (apps, providers, routing, tenants)
+- `GET /api/interactions` — Unified list of all stored data (conversations + responses)
+- `GET /api/interactions/{id}` — Detail view for any interaction
+- `GET /api/threads` — Legacy: list conversations only
+- `GET /api/responses` — Legacy: list responses only
+
+### Unified Interactions Model
+Conversations (from chat APIs) and Responses (from the Responses API) are unified into a single "Interaction" concept:
+- Both share common fields: `id`, `type`, `model`, `metadata`, `created_at`, `updated_at`
+- Conversations have `messages[]` and `message_count`
+- Responses have `request`, `response`, `status`, and `previous_response_id`
+- The `/api/interactions` endpoint merges both, sorted by `updated_at` descending
+- Filter by type using `?type=conversation` or `?type=response`
+
+### Frontend Structure (`web/control-plane/src`)
+```
+src/
+├── components/
+│   ├── Layout.tsx      # Main layout with header, nav, stats bar
+│   ├── ui/index.tsx    # Reusable UI components (Pill, InfoCard, etc.)
+│   └── index.ts
+├── hooks/
+│   └── useApi.ts       # React context for API data fetching
+├── pages/
+│   ├── Dashboard.tsx   # Landing page with overview cards
+│   ├── Topology.tsx    # Apps & providers configuration
+│   ├── Routing.tsx     # Routing rules & tenants
+│   ├── Data.tsx        # Unified data explorer (interactions)
+│   └── index.ts
+├── types/
+│   └── index.ts        # TypeScript interfaces
+├── App.tsx             # Router setup
+└── main.tsx            # Entry point
+```
+
+### Page Responsibilities
+- **Dashboard**: Quick overview with stats and cards linking to detailed pages
+- **Topology**: Detailed view of configured apps and providers
+- **Routing**: Model routing rules and tenant configuration
+- **Data**: Unified explorer for all recorded interactions (conversations + responses)
+
+### Design Principles
+- **Unified experience**: Don't separate conversations and responses into different pages; they represent the same concept (LLM interactions) viewed through different API lenses
+- **Read-only**: The control plane never modifies gateway state; it's purely observational
+- **Filter, don't fragment**: Use filters within a single view rather than creating multiple similar pages
 
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
