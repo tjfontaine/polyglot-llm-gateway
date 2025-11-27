@@ -38,21 +38,32 @@ Conversations (from chat APIs) and Responses (from the Responses API) are unifie
 ```
 src/
 ├── components/
-│   ├── Layout.tsx      # Main layout with header, nav, stats bar
-│   ├── ui/index.tsx    # Reusable UI components (Pill, InfoCard, etc.)
+│   ├── Layout.tsx          # Main layout with header, nav, stats bar
+│   ├── Layout.test.tsx     # Layout component tests
+│   ├── ui/
+│   │   ├── index.tsx       # Reusable UI components (Pill, InfoCard, etc.)
+│   │   └── ui.test.tsx     # UI component tests
 │   └── index.ts
 ├── hooks/
-│   └── useApi.ts       # React context for API data fetching
+│   ├── useApi.tsx          # React context for API data fetching
+│   └── useApi.test.tsx     # API hook tests
 ├── pages/
-│   ├── Dashboard.tsx   # Landing page with overview cards
-│   ├── Topology.tsx    # Apps & providers configuration
-│   ├── Routing.tsx     # Routing rules & tenants
-│   ├── Data.tsx        # Unified data explorer (interactions)
+│   ├── Dashboard.tsx       # Landing page with overview cards
+│   ├── Dashboard.test.tsx  # Dashboard tests
+│   ├── Topology.tsx        # Apps & providers configuration
+│   ├── Topology.test.tsx   # Topology tests
+│   ├── Routing.tsx         # Routing rules & tenants
+│   ├── Routing.test.tsx    # Routing tests
+│   ├── Data.tsx            # Unified data explorer (interactions)
 │   └── index.ts
+├── test/
+│   ├── setup.ts            # Vitest setup (jest-dom, mocks)
+│   ├── mocks.ts            # Mock data for tests
+│   └── test-utils.tsx      # Custom render with providers
 ├── types/
-│   └── index.ts        # TypeScript interfaces
-├── App.tsx             # Router setup
-└── main.tsx            # Entry point
+│   └── index.ts            # TypeScript interfaces
+├── App.tsx                 # Router setup
+└── main.tsx                # Entry point
 ```
 
 ### Page Responsibilities
@@ -66,6 +77,21 @@ src/
 - **Read-only**: The control plane never modifies gateway state; it's purely observational
 - **Filter, don't fragment**: Use filters within a single view rather than creating multiple similar pages
 
+### Frontend Null Safety
+The Go backend may return `null` for empty slices (e.g., `routing.rules`, `tenants`, `providers`). Always use optional chaining when accessing nested properties from API responses:
+
+```typescript
+// ✅ Correct - handles null arrays
+overview?.routing?.rules?.length ?? 0
+(overview?.providers ?? []).map(...)
+
+// ❌ Incorrect - will throw if routing or rules is null
+overview?.routing.rules.length
+overview.providers.map(...)
+```
+
+Tests in `src/test/mocks.ts` include `mockNullArraysOverview` to verify null-safety. When adding new components that consume API data, include a test case with null arrays.
+
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
 - **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` instead of hardcoding wiring.
@@ -77,7 +103,15 @@ src/
 
 ## Testing Expectations
 - **Go:** Run `go test ./...` from the repo root. Provider tests will skip recording if the relevant API key is missing and `VCR_MODE=record` is set; in replay mode they work offline.
-- **Frontend:** From `web/control-plane`, run `npm install` once, then `npm run lint` and `npm run build` for UI changes. The `Makefile` target `build` will bundle both frontend and backend if needed.
+- **Frontend:** From `web/control-plane`:
+  - `npm install` — Install dependencies (once)
+  - `npm run lint` — Run ESLint
+  - `npm run test` — Run Vitest tests
+  - `npm run test:watch` — Run tests in watch mode
+  - `npm run test:coverage` — Run tests with coverage report
+  - `npm run build` — Production build
+- **Frontend testing stack:** Vitest + React Testing Library + jsdom. Tests are co-located with components (e.g., `Component.test.tsx`).
+- The `Makefile` target `build` will bundle both frontend and backend if needed.
 
 ## Dependency & Build Notes
 - **Go version:** Module targets Go 1.25.3; ensure toolchain compatibility.

@@ -163,7 +163,7 @@ export function Topology() {
               <p className="text-xs text-slate-400">Connected LLM backends</p>
             </div>
             <div className="ml-auto">
-              <Pill icon={BadgeCheck} label={`${overview?.providers.length ?? 0} provider(s)`} />
+              <Pill icon={BadgeCheck} label={`${overview?.providers?.length ?? 0} provider(s)`} />
             </div>
           </div>
 
@@ -236,7 +236,7 @@ export function Topology() {
             <div className="text-xs text-slate-400 mt-1">Applications</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
-            <div className="text-2xl font-bold text-white">{overview?.providers.length ?? 0}</div>
+            <div className="text-2xl font-bold text-white">{overview?.providers?.length ?? 0}</div>
             <div className="text-xs text-slate-400 mt-1">Providers</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">

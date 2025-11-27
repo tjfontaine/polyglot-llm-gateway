@@ -39,7 +39,7 @@ export function Routing() {
           <div>
             <div className="text-sm text-slate-400">Default Provider</div>
             <div className="text-xl font-bold text-white">
-              {overview?.routing.default_provider || 'Not configured'}
+              {overview?.routing?.default_provider || 'Not configured'}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Requests that don't match any routing rule will be sent to this provider
@@ -58,12 +58,12 @@ export function Routing() {
               <p className="text-xs text-slate-400">Model-to-provider mappings</p>
             </div>
             <div className="ml-auto">
-              <Pill icon={GitBranch} label={`${overview?.routing.rules.length ?? 0} rule(s)`} />
+              <Pill icon={GitBranch} label={`${overview?.routing?.rules?.length ?? 0} rule(s)`} />
             </div>
           </div>
 
           <div className="space-y-3">
-            {(overview?.routing.rules ?? []).map((rule, idx) => (
+            {(overview?.routing?.rules ?? []).map((rule, idx) => (
               <div
                 key={idx}
                 className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 transition-colors hover:border-white/20"
@@ -99,7 +99,7 @@ export function Routing() {
                       Provider
                     </div>
                     <div className="text-sm font-semibold text-white">
-                      {rule.provider || overview?.routing.default_provider || 'default'}
+                      {rule.provider || overview?.routing?.default_provider || 'default'}
                     </div>
                   </div>
                 </div>
@@ -158,7 +158,7 @@ export function Routing() {
             <div className="ml-auto">
               <Pill
                 icon={Users}
-                label={overview?.mode === 'multi-tenant' ? `${overview.tenants.length} tenant(s)` : 'Single tenant'}
+                label={overview?.mode === 'multi-tenant' ? `${overview?.tenants?.length ?? 0} tenant(s)` : 'Single tenant'}
                 tone={overview?.mode === 'multi-tenant' ? 'sky' : 'slate'}
               />
             </div>
@@ -243,22 +243,22 @@ export function Routing() {
         <h2 className="text-sm font-semibold text-white mb-4">Routing Summary</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
-            <div className="text-2xl font-bold text-white">{overview?.routing.rules.length ?? 0}</div>
+            <div className="text-2xl font-bold text-white">{overview?.routing?.rules?.length ?? 0}</div>
             <div className="text-xs text-slate-400 mt-1">Routing Rules</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
-            <div className="text-2xl font-bold text-white">{overview?.tenants.length ?? 0}</div>
+            <div className="text-2xl font-bold text-white">{overview?.tenants?.length ?? 0}</div>
             <div className="text-xs text-slate-400 mt-1">Tenants</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {(overview?.routing.rules ?? []).filter((r) => r.model_prefix).length}
+              {(overview?.routing?.rules ?? []).filter((r) => r.model_prefix).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Prefix Rules</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {(overview?.routing.rules ?? []).filter((r) => r.model_exact).length}
+              {(overview?.routing?.rules ?? []).filter((r) => r.model_exact).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Exact Rules</div>
           </div>
