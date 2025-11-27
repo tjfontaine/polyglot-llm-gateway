@@ -128,7 +128,7 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 					{Role: "user", Content: "Hello, how are you today?"},
 				},
 			},
-			minTokens: 8,
+			minTokens: 10,
 			maxTokens: 20,
 		},
 		{
@@ -139,7 +139,7 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 					{Role: "user", Content: "def hello(): print('Hello, World!')"},
 				},
 			},
-			minTokens: 10,
+			minTokens: 15,
 			maxTokens: 30,
 		},
 		{
@@ -150,7 +150,7 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 					{Role: "user", Content: "The quick brown fox jumps over the lazy dog."},
 				},
 			},
-			minTokens: 12,
+			minTokens: 15,
 			maxTokens: 25,
 		},
 		{
@@ -161,8 +161,8 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 					{Role: "user", Content: "123456789 and 987654321"},
 				},
 			},
-			minTokens: 8,
-			maxTokens: 20,
+			minTokens: 10,
+			maxTokens: 25,
 		},
 		{
 			name: "camelCase words",
@@ -172,8 +172,8 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 					{Role: "user", Content: "getCustomerById calculateTotalPrice"},
 				},
 			},
-			minTokens: 8,
-			maxTokens: 20,
+			minTokens: 10,
+			maxTokens: 25,
 		},
 	}
 
@@ -184,8 +184,9 @@ func TestOpenAICounter_CountTokens(t *testing.T) {
 				t.Fatalf("CountTokens() error = %v", err)
 			}
 
-			if !resp.Estimated {
-				t.Error("expected Estimated to be true for OpenAI counter")
+			// tiktoken provides accurate counts, not estimates
+			if resp.Estimated {
+				t.Error("expected Estimated to be false for tiktoken-based counter")
 			}
 
 			if resp.InputTokens < tt.minTokens || resp.InputTokens > tt.maxTokens {
@@ -309,7 +310,7 @@ func TestModelMatcher(t *testing.T) {
 	}
 }
 
-func TestOpenAICounter_estimateTokens(t *testing.T) {
+func TestOpenAICounter_CountText(t *testing.T) {
 	c := NewOpenAICounter()
 
 	tests := []struct {
@@ -318,20 +319,47 @@ func TestOpenAICounter_estimateTokens(t *testing.T) {
 		maxTokens int
 	}{
 		{"", 0, 0},
-		{"hello", 1, 2},
-		{"Hello, World!", 3, 6},
-		{"The quick brown fox", 4, 8},
-		{"supercalifragilisticexpialidocious", 3, 10},
-		{"12345", 1, 3},
-		{"getUserById", 2, 5}, // camelCase
+		{"hello", 1, 1},
+		{"Hello, World!", 3, 5},
+		{"The quick brown fox", 4, 5},
+		{"supercalifragilisticexpialidocious", 7, 12},
+		{"12345", 2, 3},
+		{"getUserById", 4, 6}, // camelCase splits into subwords
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
-			got := c.estimateTokens(tt.text)
+			got, err := c.CountText("gpt-4o", tt.text)
+			if err != nil {
+				t.Fatalf("CountText() error = %v", err)
+			}
 			if got < tt.minTokens || got > tt.maxTokens {
-				t.Errorf("estimateTokens(%q) = %d, want between %d and %d",
+				t.Errorf("CountText(%q) = %d, want between %d and %d",
 					tt.text, got, tt.minTokens, tt.maxTokens)
+			}
+		})
+	}
+}
+
+func TestOpenAICounter_DifferentModels(t *testing.T) {
+	c := NewOpenAICounter()
+
+	models := []string{"gpt-4o", "gpt-3.5-turbo", "gpt-4-turbo"}
+	text := "Hello, how are you?"
+
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			count, err := c.CountText(model, text)
+			if err != nil {
+				t.Fatalf("CountText() error = %v", err)
+			}
+			if count <= 0 {
+				t.Error("expected positive token count")
+			}
+			// All these models use cl100k_base, so counts should be the same
+			expected := 6 // "Hello, how are you?" = 6 tokens in cl100k_base
+			if count != expected {
+				t.Errorf("CountText(%q, %q) = %d, want %d", model, text, count, expected)
 			}
 		})
 	}

@@ -287,9 +287,10 @@ This plan addresses:
   - Supports claude-* model prefixes
   - Provides exact token counts (not estimated)
 - [x] Created `OpenAICounter` in `internal/tokens/openai.go`
-  - Uses tiktoken-style cl100k_base encoding estimation
+  - Uses `github.com/pkoukk/tiktoken-go` for accurate token counting
   - Supports gpt-*, o1, o3, text-embedding-*, davinci/curie/babbage/ada models
-  - Implements sophisticated word/subword tokenization estimation
+  - Provides exact token counts using cl100k_base encoding
+  - Includes encoding caching for performance
 
 ### 9.4 Frontdoor Integration ✅
 - [x] Updated Anthropic frontdoor `HandleCountTokens` to:
