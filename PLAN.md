@@ -287,9 +287,15 @@ This plan addresses:
   - Supports claude-* model prefixes
   - Provides exact token counts (not estimated)
 - [x] Created `OpenAICounter` in `internal/tokens/openai.go`
-  - Uses `github.com/pkoukk/tiktoken-go` for accurate token counting
-  - Supports gpt-*, o1, o3, text-embedding-*, davinci/curie/babbage/ada models
-  - Provides exact token counts using cl100k_base encoding
+  - Uses `github.com/tiktoken-go/tokenizer` for accurate token counting
+  - Library has native support for GPT-5, GPT-5-Mini, GPT-5-Nano, GPT-4.1, O1, O3, O4-Mini
+  - Supports gpt-*, o1-o6, text-embedding-*, davinci/curie/babbage/ada models
+  - Supports future models: GPT-5.1+, GPT-6+, O5+, etc. via o200k_base fallback
+  - Provides exact token counts using appropriate encodings:
+    - o200k_base: GPT-5+, GPT-4.1, GPT-4o, O-series models
+    - cl100k_base: GPT-4, GPT-3.5, text-embedding
+    - p50k_base: text-davinci-002/003
+    - r50k_base: legacy completion models
   - Includes encoding caching for performance
 
 ### 9.4 Frontdoor Integration ✅

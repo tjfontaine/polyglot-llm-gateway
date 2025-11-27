@@ -5,55 +5,204 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
-	"github.com/pkoukk/tiktoken-go"
+	"github.com/tiktoken-go/tokenizer"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // OpenAICounter provides accurate token counts for OpenAI models using tiktoken.
 type OpenAICounter struct {
 	matcher *ModelMatcher
-	// encodingCache caches tiktoken encodings by model
-	encodingCache map[string]*tiktoken.Tiktoken
+	// codecCache caches tokenizer codecs by encoding name
+	codecCache map[tokenizer.Encoding]tokenizer.Codec
+	cacheMu    sync.RWMutex
 }
 
 // NewOpenAICounter creates a new OpenAI token counter.
 func NewOpenAICounter() *OpenAICounter {
 	return &OpenAICounter{
 		matcher: NewModelMatcher(
-			// Prefixes for OpenAI models (including future gpt-5, gpt-6, etc.)
-			[]string{"gpt-", "o1", "o3", "o4", "text-embedding", "text-davinci"},
+			// Prefixes for OpenAI models (including future gpt-5.x, gpt-6, etc.)
+			// Note: "o" prefix matches o1, o3, o4, o5, etc. reasoning models
+			[]string{"gpt-", "o1", "o2", "o3", "o4", "o5", "o6", "text-embedding", "text-davinci"},
 			// Exact matches for legacy models
 			[]string{"davinci", "curie", "babbage", "ada"},
 		),
-		encodingCache: make(map[string]*tiktoken.Tiktoken),
+		codecCache: make(map[tokenizer.Encoding]tokenizer.Codec),
 	}
 }
 
-// getEncoding returns the tiktoken encoding for a model.
-func (c *OpenAICounter) getEncoding(model string) (*tiktoken.Tiktoken, error) {
-	// Check cache first
-	if enc, ok := c.encodingCache[model]; ok {
-		return enc, nil
+// getCodec returns the tokenizer codec for a model.
+func (c *OpenAICounter) getCodec(model string) (tokenizer.Codec, error) {
+	// Map model name to tokenizer.Model
+	tmodel := mapModelName(model)
+
+	// Try to get codec for the specific model
+	codec, err := tokenizer.ForModel(tmodel)
+	if err == nil {
+		return codec, nil
 	}
 
-	// Try to get encoding for the specific model
-	enc, err := tiktoken.EncodingForModel(model)
+	// Fall back to encoding based on model prefix
+	encoding := modelToEncoding(model)
+
+	// Check cache
+	c.cacheMu.RLock()
+	if cached, ok := c.codecCache[encoding]; ok {
+		c.cacheMu.RUnlock()
+		return cached, nil
+	}
+	c.cacheMu.RUnlock()
+
+	// Get encoding
+	codec, err = tokenizer.Get(encoding)
 	if err != nil {
-		// Fall back to cl100k_base for newer models not yet in tiktoken
-		enc, err = tiktoken.GetEncoding("cl100k_base")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tiktoken encoding: %w", err)
-		}
+		return nil, fmt.Errorf("failed to get tokenizer encoding: %w", err)
 	}
 
-	c.encodingCache[model] = enc
-	return enc, nil
+	// Cache it
+	c.cacheMu.Lock()
+	c.codecCache[encoding] = codec
+	c.cacheMu.Unlock()
+
+	return codec, nil
+}
+
+// mapModelName maps a model string to tokenizer.Model
+func mapModelName(model string) tokenizer.Model {
+	// Normalize model name
+	model = strings.ToLower(model)
+
+	// Direct mappings for known models
+	switch {
+	// GPT-5 family (exact matches for known variants)
+	case model == "gpt-5":
+		return tokenizer.GPT5
+	case model == "gpt-5-mini" || strings.HasPrefix(model, "gpt-5-mini-"):
+		return tokenizer.GPT5Mini
+	case model == "gpt-5-nano" || strings.HasPrefix(model, "gpt-5-nano-"):
+		return tokenizer.GPT5Nano
+	// GPT-5.x and other gpt-5 variants (gpt-5-turbo, gpt-5.1, etc.) use GPT5 encoding
+	case strings.HasPrefix(model, "gpt-5"):
+		return tokenizer.GPT5
+
+	// GPT-4.1 family
+	case strings.HasPrefix(model, "gpt-4.1") || strings.HasPrefix(model, "gpt-41"):
+		return tokenizer.GPT41
+
+	// GPT-4o family
+	case strings.HasPrefix(model, "gpt-4o"):
+		return tokenizer.GPT4o
+
+	// O-series reasoning models
+	case model == "o1" || model == "o1-preview" || strings.HasPrefix(model, "o1-"):
+		if strings.Contains(model, "mini") {
+			return tokenizer.O1Mini
+		}
+		if strings.Contains(model, "preview") {
+			return tokenizer.O1Preview
+		}
+		return tokenizer.O1
+	case model == "o3" || strings.HasPrefix(model, "o3-"):
+		if strings.Contains(model, "mini") {
+			return tokenizer.O3Mini
+		}
+		return tokenizer.O3
+	case model == "o4-mini" || strings.HasPrefix(model, "o4-mini"):
+		return tokenizer.O4Mini
+	// Future O-series models (o4, o5, o6, etc.) - use O4Mini as closest match
+	case strings.HasPrefix(model, "o4"), strings.HasPrefix(model, "o5"), strings.HasPrefix(model, "o6"):
+		return tokenizer.O4Mini
+
+	// GPT-4 family
+	case strings.HasPrefix(model, "gpt-4"):
+		return tokenizer.GPT4
+
+	// GPT-3.5 family
+	case strings.HasPrefix(model, "gpt-3.5"):
+		return tokenizer.GPT35Turbo
+
+	// Future GPT models (gpt-6+) - use GPT5 encoding (o200k_base)
+	case strings.HasPrefix(model, "gpt-6"), strings.HasPrefix(model, "gpt-7"):
+		return tokenizer.GPT5
+
+	// Text embedding
+	case strings.HasPrefix(model, "text-embedding"):
+		return tokenizer.TextEmbeddingAda002
+
+	// Legacy models
+	case strings.HasPrefix(model, "text-davinci-003"):
+		return tokenizer.TextDavinci003
+	case strings.HasPrefix(model, "text-davinci-002"):
+		return tokenizer.TextDavinci002
+	case strings.HasPrefix(model, "text-davinci"):
+		return tokenizer.TextDavinci001
+	case model == "davinci":
+		return tokenizer.Davinci
+	case model == "curie":
+		return tokenizer.Curie
+	case model == "babbage":
+		return tokenizer.Babbage
+	case model == "ada":
+		return tokenizer.Ada
+
+	default:
+		// Return as Model type - tokenizer.ForModel will handle unknown models
+		return tokenizer.Model(model)
+	}
+}
+
+// modelToEncoding maps model names to encoding names for fallback.
+//
+// Encoding reference:
+// - O200kBase: GPT-5, GPT-4.1, GPT-4o, O1, O3, O4-mini and newer models
+// - Cl100kBase: GPT-4, GPT-3.5-turbo, text-embedding-ada-002
+// - P50kBase: text-davinci-003, text-davinci-002
+// - R50kBase: davinci, curie, babbage, ada (legacy)
+func modelToEncoding(model string) tokenizer.Encoding {
+	model = strings.ToLower(model)
+
+	switch {
+	// Newer models use O200k_base
+	case strings.HasPrefix(model, "gpt-5"):
+		return tokenizer.O200kBase
+	case strings.HasPrefix(model, "gpt-4.1"), strings.HasPrefix(model, "gpt-41"):
+		return tokenizer.O200kBase
+	case strings.HasPrefix(model, "gpt-4o"):
+		return tokenizer.O200kBase
+	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
+		return tokenizer.O200kBase
+
+	// GPT-4 and GPT-3.5 use cl100k_base
+	case strings.HasPrefix(model, "gpt-4"):
+		return tokenizer.Cl100kBase
+	case strings.HasPrefix(model, "gpt-3.5"):
+		return tokenizer.Cl100kBase
+
+	// Embedding models
+	case strings.HasPrefix(model, "text-embedding"):
+		return tokenizer.Cl100kBase
+
+	// Legacy text-davinci models
+	case strings.HasPrefix(model, "text-davinci-003"), strings.HasPrefix(model, "text-davinci-002"):
+		return tokenizer.P50kBase
+	case strings.HasPrefix(model, "text-davinci"):
+		return tokenizer.P50kBase
+
+	// Legacy completion models
+	case model == "davinci" || model == "curie" || model == "babbage" || model == "ada":
+		return tokenizer.R50kBase
+
+	default:
+		// Default to O200k_base for unknown/future models (most likely encoding)
+		return tokenizer.O200kBase
+	}
 }
 
 // CountTokens counts tokens for OpenAI models using tiktoken.
 func (c *OpenAICounter) CountTokens(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
-	enc, err := c.getEncoding(req.Model)
+	codec, err := c.getCodec(req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +220,8 @@ func (c *OpenAICounter) CountTokens(ctx context.Context, req *domain.TokenCountR
 	if req.System != "" {
 		totalTokens += tokensPerMessage
 		totalTokens += tokensPerRole
-		totalTokens += len(enc.Encode(req.System, nil, nil))
+		ids, _, _ := codec.Encode(req.System)
+		totalTokens += len(ids)
 	}
 
 	// Count all messages
@@ -86,38 +236,48 @@ func (c *OpenAICounter) CountTokens(ctx context.Context, req *domain.TokenCountR
 			for _, part := range msg.RichContent.Parts {
 				switch part.Type {
 				case domain.ContentTypeText:
-					totalTokens += len(enc.Encode(part.Text, nil, nil))
+					ids, _, _ := codec.Encode(part.Text)
+					totalTokens += len(ids)
 				case domain.ContentTypeToolUse:
-					totalTokens += len(enc.Encode(part.Name, nil, nil))
+					ids, _, _ := codec.Encode(part.Name)
+					totalTokens += len(ids)
 					if part.Input != nil {
 						argBytes, _ := json.Marshal(part.Input)
-						totalTokens += len(enc.Encode(string(argBytes), nil, nil))
+						ids, _, _ := codec.Encode(string(argBytes))
+						totalTokens += len(ids)
 					}
 					totalTokens += 3 // overhead for tool call structure
 				case domain.ContentTypeToolResult:
-					totalTokens += len(enc.Encode(part.Text, nil, nil))
+					ids, _, _ := codec.Encode(part.Text)
+					totalTokens += len(ids)
 					totalTokens += 2 // overhead for tool result
 				}
 			}
 		} else {
-			totalTokens += len(enc.Encode(msg.Content, nil, nil))
+			ids, _, _ := codec.Encode(msg.Content)
+			totalTokens += len(ids)
 		}
 
 		// Count tool calls if present
 		for _, tc := range msg.ToolCalls {
-			totalTokens += len(enc.Encode(tc.Function.Name, nil, nil))
-			totalTokens += len(enc.Encode(tc.Function.Arguments, nil, nil))
+			ids, _, _ := codec.Encode(tc.Function.Name)
+			totalTokens += len(ids)
+			ids, _, _ = codec.Encode(tc.Function.Arguments)
+			totalTokens += len(ids)
 			totalTokens += 3 // overhead per tool call
 		}
 	}
 
 	// Count tools/functions
 	for _, tool := range req.Tools {
-		totalTokens += len(enc.Encode(tool.Name, nil, nil))
-		totalTokens += len(enc.Encode(tool.Description, nil, nil))
+		ids, _, _ := codec.Encode(tool.Name)
+		totalTokens += len(ids)
+		ids, _, _ = codec.Encode(tool.Description)
+		totalTokens += len(ids)
 		if tool.Parameters != nil {
 			paramBytes, _ := json.Marshal(tool.Parameters)
-			totalTokens += len(enc.Encode(string(paramBytes), nil, nil))
+			ids, _, _ := codec.Encode(string(paramBytes))
+			totalTokens += len(ids)
 		}
 		totalTokens += 7 // overhead per tool definition
 	}
@@ -139,45 +299,13 @@ func (c *OpenAICounter) SupportsModel(model string) bool {
 
 // CountText counts tokens for a plain text string.
 func (c *OpenAICounter) CountText(model, text string) (int, error) {
-	enc, err := c.getEncoding(model)
+	codec, err := c.getCodec(model)
 	if err != nil {
 		return 0, err
 	}
-	return len(enc.Encode(text, nil, nil)), nil
-}
-
-// modelToEncoding maps model names to encoding names for tiktoken.
-// This helps handle models that tiktoken doesn't recognize directly.
-// 
-// Encoding reference:
-// - cl100k_base: GPT-4, GPT-3.5-turbo, text-embedding-ada-002, and newer models
-// - p50k_base: text-davinci-003, text-davinci-002
-// - r50k_base: davinci, curie, babbage, ada (legacy)
-// - o200k_base: GPT-4o and potentially future models (if different from cl100k)
-func modelToEncoding(model string) string {
-	switch {
-	// GPT-4o models might use o200k_base (newer encoding)
-	case strings.HasPrefix(model, "gpt-4o"):
-		return "cl100k_base" // tiktoken-go may not have o200k_base yet, fallback to cl100k
-	// Future GPT models (gpt-5, gpt-6, etc.) - assume cl100k_base until tiktoken updates
-	case strings.HasPrefix(model, "gpt-"):
-		return "cl100k_base"
-	// Reasoning models (o1, o3, o4, etc.)
-	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
-		return "cl100k_base"
-	// Embedding models
-	case strings.HasPrefix(model, "text-embedding"):
-		return "cl100k_base"
-	// Legacy text-davinci models
-	case strings.HasPrefix(model, "text-davinci-003"), strings.HasPrefix(model, "text-davinci-002"):
-		return "p50k_base"
-	case strings.HasPrefix(model, "text-davinci"):
-		return "p50k_base"
-	// Legacy completion models
-	case model == "davinci" || model == "curie" || model == "babbage" || model == "ada":
-		return "r50k_base"
-	default:
-		// Default to cl100k_base for unknown/future models
-		return "cl100k_base"
+	ids, _, err := codec.Encode(text)
+	if err != nil {
+		return 0, err
 	}
+	return len(ids), nil
 }

@@ -204,20 +204,49 @@ func TestOpenAICounter_SupportsModel(t *testing.T) {
 		model    string
 		expected bool
 	}{
+		// Current models
 		{"gpt-4o", true},
 		{"gpt-4-turbo", true},
 		{"gpt-3.5-turbo", true},
-		{"gpt-5", true},              // Future model
-		{"gpt-5-turbo", true},        // Future model variant
-		{"gpt-6-preview", true},      // Future model
+		{"gpt-4.1", true},
+		{"gpt-4.1-mini", true},
+		// GPT-5 family
+		{"gpt-5", true},
+		{"gpt-5-mini", true},
+		{"gpt-5-nano", true},
+		{"gpt-5-turbo", true},
+		// GPT-5.1+ (newer point releases)
+		{"gpt-5.1", true},
+		{"gpt-5.1-mini", true},
+		{"gpt-5.1-turbo", true},
+		{"gpt-5.2-preview", true},
+		// Future GPT models
+		{"gpt-6", true},
+		{"gpt-6-preview", true},
+		{"gpt-6-mini", true},
+		// O-series reasoning models
+		{"o1", true},
 		{"o1-preview", true},
+		{"o1-mini", true},
+		{"o3", true},
 		{"o3-mini", true},
-		{"o4-reasoning", true},       // Future reasoning model
+		{"o4-mini", true},
+		{"o4-reasoning", true},
+		{"o5-preview", true},
+		// Embedding models
 		{"text-embedding-ada-002", true},
 		{"text-embedding-3-large", true},
+		// Legacy models
+		{"text-davinci-003", true},
+		{"davinci", true},
+		{"curie", true},
+		{"babbage", true},
+		{"ada", true},
+		// Non-OpenAI models (should not match)
 		{"claude-3-sonnet", false},
 		{"unknown-model", false},
 		{"llama-3", false},
+		{"gemini-pro", false},
 	}
 
 	for _, tt := range tests {
@@ -350,22 +379,32 @@ func TestOpenAICounter_CountText(t *testing.T) {
 func TestOpenAICounter_DifferentModels(t *testing.T) {
 	c := NewOpenAICounter()
 
-	models := []string{"gpt-4o", "gpt-3.5-turbo", "gpt-4-turbo"}
 	text := "Hello, how are you?"
 
-	for _, model := range models {
-		t.Run(model, func(t *testing.T) {
-			count, err := c.CountText(model, text)
+	tests := []struct {
+		model    string
+		encoding string // for reference
+	}{
+		{"gpt-4o", "o200k_base"},
+		{"gpt-3.5-turbo", "cl100k_base"},
+		{"gpt-4-turbo", "cl100k_base"},
+		{"gpt-5", "o200k_base"},
+		{"o1-preview", "o200k_base"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			count, err := c.CountText(tt.model, text)
 			if err != nil {
 				t.Fatalf("CountText() error = %v", err)
 			}
 			if count <= 0 {
 				t.Error("expected positive token count")
 			}
-			// All these models use cl100k_base, so counts should be the same
-			expected := 6 // "Hello, how are you?" = 6 tokens in cl100k_base
-			if count != expected {
-				t.Errorf("CountText(%q, %q) = %d, want %d", model, text, count, expected)
+			// Different encodings produce slightly different token counts
+			// o200k_base and cl100k_base both produce ~6 tokens for this text
+			if count < 5 || count > 7 {
+				t.Errorf("CountText(%q, %q) = %d, want between 5 and 7", tt.model, text, count)
 			}
 		})
 	}
@@ -374,15 +413,27 @@ func TestOpenAICounter_DifferentModels(t *testing.T) {
 func TestOpenAICounter_FutureModels(t *testing.T) {
 	c := NewOpenAICounter()
 
-	// Test that future models (gpt-5, gpt-6, etc.) work with fallback encoding
+	// Test that future models (gpt-5, gpt-5.1, gpt-6, etc.) work with correct encoding
 	futureModels := []string{
+		// GPT-5 family (explicitly supported in tiktoken-go/tokenizer)
 		"gpt-5",
+		"gpt-5-mini",
+		"gpt-5-nano",
 		"gpt-5-turbo",
 		"gpt-5-turbo-preview",
+		// GPT-5.1+ (should use o200k_base fallback)
+		"gpt-5.1",
+		"gpt-5.1-mini",
+		"gpt-5.1-turbo",
+		"gpt-5.2-preview",
+		// GPT-6 and beyond (future-proofing)
 		"gpt-6",
 		"gpt-6-mini",
+		"gpt-6-turbo",
+		// O-series reasoning models
 		"o4-preview",
 		"o4-mini",
+		"o5-reasoning",
 	}
 
 	text := "The quick brown fox jumps over the lazy dog."
@@ -394,14 +445,14 @@ func TestOpenAICounter_FutureModels(t *testing.T) {
 				t.Errorf("SupportsModel(%q) = false, want true", model)
 			}
 
-			// Should be able to count tokens using fallback encoding
+			// Should be able to count tokens using appropriate encoding
 			count, err := c.CountText(model, text)
 			if err != nil {
 				t.Fatalf("CountText() error = %v", err)
 			}
 
-			// Should get a reasonable count (cl100k_base encoding)
-			// "The quick brown fox jumps over the lazy dog." = 10 tokens
+			// Should get a reasonable count (o200k_base encoding for newer models)
+			// "The quick brown fox jumps over the lazy dog." = ~10 tokens
 			if count < 8 || count > 12 {
 				t.Errorf("CountText(%q, %q) = %d, expected ~10 tokens", model, text, count)
 			}
@@ -437,6 +488,65 @@ func TestOpenAICounter_CountTokensWithFutureModel(t *testing.T) {
 
 	if resp.Model != "gpt-5-turbo" {
 		t.Errorf("Model = %q, want %q", resp.Model, "gpt-5-turbo")
+	}
+}
+
+func TestOpenAICounter_GPT51Models(t *testing.T) {
+	c := NewOpenAICounter()
+
+	// Specifically test GPT-5.1 and its variants
+	tests := []struct {
+		model string
+	}{
+		{"gpt-5.1"},
+		{"gpt-5.1-mini"},
+		{"gpt-5.1-turbo"},
+		{"gpt-5.1-turbo-preview"},
+		{"gpt-5.1-0125"},  // Date-stamped variant
+		{"gpt-5.2"},
+		{"gpt-5.2-mini"},
+		{"gpt-5.3-preview"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			// Should support the model
+			if !c.SupportsModel(tt.model) {
+				t.Errorf("SupportsModel(%q) = false, want true", tt.model)
+			}
+
+			// Count tokens for a known text
+			req := &domain.TokenCountRequest{
+				Model: tt.model,
+				Messages: []domain.Message{
+					{Role: "user", Content: "What is the meaning of life?"},
+				},
+			}
+
+			resp, err := c.CountTokens(context.Background(), req)
+			if err != nil {
+				t.Fatalf("CountTokens() error = %v", err)
+			}
+
+			// Should not be estimated (tiktoken-go provides accurate counts)
+			if resp.Estimated {
+				t.Error("expected Estimated to be false")
+			}
+
+			// Should have reasonable token count (o200k_base encoding)
+			if resp.InputTokens < 10 || resp.InputTokens > 20 {
+				t.Errorf("CountTokens() = %d, expected between 10 and 20", resp.InputTokens)
+			}
+
+			// CountText should also work
+			count, err := c.CountText(tt.model, "Hello world")
+			if err != nil {
+				t.Fatalf("CountText() error = %v", err)
+			}
+			if count < 1 || count > 3 {
+				t.Errorf("CountText(%q, %q) = %d, expected 1-3", tt.model, "Hello world", count)
+			}
+		})
 	}
 }
 
