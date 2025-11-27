@@ -56,6 +56,8 @@ func (s *Server) routes() {
 	s.router.Get("/api/threads/{thread_id}", s.handleThreadDetail)
 	s.router.Get("/api/responses", s.handleListResponses)
 	s.router.Get("/api/responses/{response_id}", s.handleResponseDetail)
+	s.router.Get("/api/interactions", s.handleListInteractions)
+	s.router.Get("/api/interactions/{interaction_id}", s.handleInteractionDetail)
 
 	s.router.Get("/*", s.handleApp)
 }
@@ -499,11 +501,8 @@ func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get responses - since we don't have a ListResponses method, we'll use GetResponse
-	// This is a placeholder - in a real implementation you'd add a ListResponses method
-	// For now, we'll return the conversations that have responses in their metadata
 	tenantID := tenantIDFromContext(r.Context())
-	conversations, err := s.store.ListConversations(r.Context(), storage.ListOptions{
+	records, err := respStore.ListResponses(r.Context(), storage.ListOptions{
 		TenantID: tenantID,
 		Limit:    limit,
 		Offset:   offset,
@@ -513,28 +512,21 @@ func (s *Server) handleListResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter to only include those with response_id metadata
-	resp := ResponseListResponse{Responses: make([]ResponseSummary, 0)}
-	for _, conv := range conversations {
-		if responseID, ok := conv.Metadata["response_id"]; ok {
-			// Try to get the actual response
-			record, err := respStore.GetResponse(r.Context(), responseID)
-			if err == nil && record != nil {
-				updatedAt := record.UpdatedAt
-				if updatedAt.IsZero() {
-					updatedAt = record.CreatedAt
-				}
-				resp.Responses = append(resp.Responses, ResponseSummary{
-					ID:                 record.ID,
-					Status:             record.Status,
-					Model:              record.Model,
-					PreviousResponseID: record.PreviousResponseID,
-					Metadata:           record.Metadata,
-					CreatedAt:          record.CreatedAt.Unix(),
-					UpdatedAt:          updatedAt.Unix(),
-				})
-			}
+	resp := ResponseListResponse{Responses: make([]ResponseSummary, 0, len(records))}
+	for _, record := range records {
+		updatedAt := record.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = record.CreatedAt
 		}
+		resp.Responses = append(resp.Responses, ResponseSummary{
+			ID:                 record.ID,
+			Status:             record.Status,
+			Model:              record.Model,
+			PreviousResponseID: record.PreviousResponseID,
+			Metadata:           record.Metadata,
+			CreatedAt:          record.CreatedAt.Unix(),
+			UpdatedAt:          updatedAt.Unix(),
+		})
 	}
 
 	writeJSON(w, resp)
@@ -578,4 +570,227 @@ func (s *Server) handleResponseDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, resp)
+}
+
+// InteractionSummary is a unified view of either a conversation or response
+type InteractionSummary struct {
+	ID                 string            `json:"id"`
+	Type               string            `json:"type"` // "conversation" or "response"
+	Status             string            `json:"status,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	MessageCount       int               `json:"message_count,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	CreatedAt          int64             `json:"created_at"`
+	UpdatedAt          int64             `json:"updated_at"`
+}
+
+// InteractionListResponse is the response for listing all interactions
+type InteractionListResponse struct {
+	Interactions []InteractionSummary `json:"interactions"`
+	Total        int                  `json:"total"`
+}
+
+// InteractionDetailView is the full detail view of an interaction
+type InteractionDetailView struct {
+	ID                 string            `json:"id"`
+	Type               string            `json:"type"`
+	Status             string            `json:"status,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	PreviousResponseID string            `json:"previous_response_id,omitempty"`
+	CreatedAt          int64             `json:"created_at"`
+	UpdatedAt          int64             `json:"updated_at"`
+	// For conversations
+	Messages []MessageView `json:"messages,omitempty"`
+	// For responses
+	Request  json.RawMessage `json:"request,omitempty"`
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	limit := 50
+	offset := 0
+	filterType := r.URL.Query().Get("type") // "conversation", "response", or "" for all
+
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+	}
+
+	if q := r.URL.Query().Get("offset"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	tenantID := tenantIDFromContext(r.Context())
+	opts := storage.ListOptions{
+		TenantID: tenantID,
+		Limit:    limit * 2, // Get more to allow merging and sorting
+		Offset:   0,
+	}
+
+	var interactions []InteractionSummary
+
+	// Get conversations if not filtered to responses only
+	if filterType == "" || filterType == "conversation" {
+		conversations, err := s.store.ListConversations(r.Context(), opts)
+		if err == nil {
+			for _, conv := range conversations {
+				updatedAt := conv.UpdatedAt
+				if updatedAt.IsZero() {
+					updatedAt = conv.CreatedAt
+				}
+				interactions = append(interactions, InteractionSummary{
+					ID:           conv.ID,
+					Type:         "conversation",
+					Metadata:     conv.Metadata,
+					MessageCount: len(conv.Messages),
+					Model:        conv.Metadata["served_model"],
+					CreatedAt:    conv.CreatedAt.Unix(),
+					UpdatedAt:    updatedAt.Unix(),
+				})
+			}
+		}
+	}
+
+	// Get responses if not filtered to conversations only
+	if filterType == "" || filterType == "response" {
+		if respStore, ok := s.store.(storage.ResponseStore); ok {
+			records, err := respStore.ListResponses(r.Context(), opts)
+			if err == nil {
+				for _, record := range records {
+					updatedAt := record.UpdatedAt
+					if updatedAt.IsZero() {
+						updatedAt = record.CreatedAt
+					}
+					interactions = append(interactions, InteractionSummary{
+						ID:                 record.ID,
+						Type:               "response",
+						Status:             record.Status,
+						Model:              record.Model,
+						Metadata:           record.Metadata,
+						PreviousResponseID: record.PreviousResponseID,
+						CreatedAt:          record.CreatedAt.Unix(),
+						UpdatedAt:          updatedAt.Unix(),
+					})
+				}
+			}
+		}
+	}
+
+	// Sort by updated_at descending
+	for i := 0; i < len(interactions); i++ {
+		for j := i + 1; j < len(interactions); j++ {
+			if interactions[j].UpdatedAt > interactions[i].UpdatedAt {
+				interactions[i], interactions[j] = interactions[j], interactions[i]
+			}
+		}
+	}
+
+	// Apply pagination
+	total := len(interactions)
+	if offset >= len(interactions) {
+		interactions = []InteractionSummary{}
+	} else {
+		end := offset + limit
+		if end > len(interactions) {
+			end = len(interactions)
+		}
+		interactions = interactions[offset:end]
+	}
+
+	resp := InteractionListResponse{
+		Interactions: interactions,
+		Total:        total,
+	}
+
+	writeJSON(w, resp)
+}
+
+func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	interactionID := chi.URLParam(r, "interaction_id")
+	tenantID := tenantIDFromContext(r.Context())
+
+	// Try to get as conversation first
+	conv, err := s.store.GetConversation(r.Context(), interactionID)
+	if err == nil {
+		if conv.TenantID != "" && tenantID != "" && conv.TenantID != tenantID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		updatedAt := conv.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = conv.CreatedAt
+		}
+
+		resp := InteractionDetailView{
+			ID:        conv.ID,
+			Type:      "conversation",
+			Metadata:  conv.Metadata,
+			Model:     conv.Metadata["served_model"],
+			CreatedAt: conv.CreatedAt.Unix(),
+			UpdatedAt: updatedAt.Unix(),
+			Messages:  make([]MessageView, 0, len(conv.Messages)),
+		}
+
+		for _, msg := range conv.Messages {
+			resp.Messages = append(resp.Messages, MessageView{
+				ID:        msg.ID,
+				Role:      msg.Role,
+				Content:   msg.Content,
+				CreatedAt: msg.CreatedAt.Unix(),
+			})
+		}
+
+		writeJSON(w, resp)
+		return
+	}
+
+	// Try to get as response
+	if respStore, ok := s.store.(storage.ResponseStore); ok {
+		record, err := respStore.GetResponse(r.Context(), interactionID)
+		if err == nil {
+			if record.TenantID != "" && tenantID != "" && record.TenantID != tenantID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+
+			updatedAt := record.UpdatedAt
+			if updatedAt.IsZero() {
+				updatedAt = record.CreatedAt
+			}
+
+			resp := InteractionDetailView{
+				ID:                 record.ID,
+				Type:               "response",
+				Status:             record.Status,
+				Model:              record.Model,
+				Metadata:           record.Metadata,
+				PreviousResponseID: record.PreviousResponseID,
+				CreatedAt:          record.CreatedAt.Unix(),
+				UpdatedAt:          updatedAt.Unix(),
+				Request:            record.Request,
+				Response:           record.Response,
+			}
+
+			writeJSON(w, resp)
+			return
+		}
+	}
+
+	http.Error(w, "interaction not found", http.StatusNotFound)
 }

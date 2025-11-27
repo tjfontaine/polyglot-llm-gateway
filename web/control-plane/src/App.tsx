@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ApiProvider } from './hooks/useApi';
 import { Layout } from './components/Layout';
-import { Dashboard, Topology, Routing, Conversations, Responses } from './pages';
+import { Dashboard, Topology, Routing, Data } from './pages';
 import './App.css';
 
 function App() {
@@ -13,8 +13,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="topology" element={<Topology />} />
             <Route path="routing" element={<Routing />} />
-            <Route path="conversations" element={<Conversations />} />
-            <Route path="responses" element={<Responses />} />
+            <Route path="data" element={<Data />} />
           </Route>
           {/* Redirect root to admin */}
           <Route path="/" element={<Navigate to="/admin" replace />} />

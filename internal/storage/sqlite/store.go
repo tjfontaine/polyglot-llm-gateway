@@ -381,3 +381,52 @@ func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string)
 
 	return responses, rows.Err()
 }
+
+func (s *Store) ListResponses(ctx context.Context, opts storage.ListOptions) ([]*storage.ResponseRecord, error) {
+	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	          FROM responses WHERE tenant_id = ?
+	          ORDER BY updated_at DESC
+	          LIMIT ? OFFSET ?`
+
+	limit := opts.Limit
+	if limit == 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, opts.TenantID, limit, opts.Offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query responses: %w", err)
+	}
+	defer rows.Close()
+
+	var responses []*storage.ResponseRecord
+	for rows.Next() {
+		var resp storage.ResponseRecord
+		var requestStr, responseStr, metadataStr, prevID sql.NullString
+
+		if err := rows.Scan(&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
+			&requestStr, &responseStr, &metadataStr, &prevID,
+			&resp.CreatedAt, &resp.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan response: %w", err)
+		}
+
+		if requestStr.Valid {
+			resp.Request = json.RawMessage(requestStr.String)
+		}
+		if responseStr.Valid {
+			resp.Response = json.RawMessage(responseStr.String)
+		}
+		if metadataStr.Valid && metadataStr.String != "" {
+			if err := json.Unmarshal([]byte(metadataStr.String), &resp.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+		if prevID.Valid {
+			resp.PreviousResponseID = prevID.String
+		}
+
+		responses = append(responses, &resp)
+	}
+
+	return responses, rows.Err()
+}

@@ -162,3 +162,29 @@ func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string)
 	}
 	return result, nil
 }
+
+func (s *Store) ListResponses(ctx context.Context, opts storage.ListOptions) ([]*storage.ResponseRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*storage.ResponseRecord
+	for _, resp := range s.responses {
+		if opts.TenantID != "" && resp.TenantID != opts.TenantID {
+			continue
+		}
+		result = append(result, resp)
+	}
+
+	// Simple pagination
+	start := opts.Offset
+	if start >= len(result) {
+		return []*storage.ResponseRecord{}, nil
+	}
+
+	end := start + opts.Limit
+	if opts.Limit == 0 || end > len(result) {
+		end = len(result)
+	}
+
+	return result[start:end], nil
+}
