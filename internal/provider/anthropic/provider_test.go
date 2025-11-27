@@ -2,13 +2,17 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
 	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/testutil"
 )
 
 func TestListModels(t *testing.T) {
@@ -276,5 +280,154 @@ func TestCodecEncodeResponse(t *testing.T) {
 	}
 	if decoded.Model != canonResp.Model {
 		t.Errorf("Model mismatch: got %s, want %s", decoded.Model, canonResp.Model)
+	}
+}
+
+// VCR-based integration tests
+
+func TestProvider_Complete_VCR(t *testing.T) {
+	// Skip if no API key and in record mode
+	if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("VCR_MODE") == "record" {
+		t.Skip("Skipping test: ANTHROPIC_API_KEY not set")
+	}
+
+	// Initialize VCR
+	recorder, cleanup := testutil.NewVCRRecorder(t, "anthropic_complete")
+	defer cleanup()
+
+	// Create provider with VCR client
+	client := testutil.VCRHTTPClient(recorder)
+
+	// Use a dummy key for replay mode if not set
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = "test-key"
+	}
+
+	p := New(apiKey, WithHTTPClient(client))
+
+	req := &domain.CanonicalRequest{
+		Model: "claude-3-opus-20240229",
+		Messages: []domain.Message{
+			{Role: "user", Content: "Hello"},
+		},
+		MaxTokens: 1024,
+		UserAgent: "test-agent/1.0",
+	}
+
+	resp, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		t.Error("Expected at least one choice")
+	}
+	if resp.Choices[0].Message.Content == "" {
+		t.Error("Expected content in response")
+	}
+	if resp.Model == "" {
+		t.Error("Expected model in response")
+	}
+}
+
+func TestProvider_CountTokens_VCR(t *testing.T) {
+	// Skip if no API key and in record mode
+	if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("VCR_MODE") == "record" {
+		t.Skip("Skipping test: ANTHROPIC_API_KEY not set")
+	}
+
+	// Initialize VCR
+	recorder, cleanup := testutil.NewVCRRecorder(t, "anthropic_count_tokens")
+	defer cleanup()
+
+	// Create provider with VCR client
+	client := testutil.VCRHTTPClient(recorder)
+
+	// Use a dummy key for replay mode if not set
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = "test-key"
+	}
+
+	p := New(apiKey, WithHTTPClient(client))
+
+	// Create count_tokens request body
+	reqBody := anthropicapi.CountTokensRequest{
+		Model: "claude-3-haiku-20240307",
+		Messages: []anthropicapi.Message{
+			{
+				Role:    "user",
+				Content: []anthropicapi.ContentPart{{Type: "text", Text: "Hello, how are you?"}},
+			},
+		},
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
+
+	respBody, err := p.CountTokens(context.Background(), body)
+	if err != nil {
+		t.Fatalf("CountTokens() error = %v", err)
+	}
+
+	var resp anthropicapi.CountTokensResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.InputTokens == 0 {
+		t.Error("Expected non-zero input_tokens")
+	}
+}
+
+func TestCountTokens_MockServer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/count_tokens" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		// Verify headers
+		if r.Header.Get("x-api-key") != "test-key" {
+			t.Errorf("expected x-api-key header to be 'test-key', got %q", r.Header.Get("x-api-key"))
+		}
+		if r.Header.Get("anthropic-beta") != "token-counting-2024-11-01" {
+			t.Errorf("expected anthropic-beta header to be 'token-counting-2024-11-01', got %q", r.Header.Get("anthropic-beta"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"input_tokens": 25}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL))
+
+	reqBody := anthropicapi.CountTokensRequest{
+		Model: "claude-3-haiku-20240307",
+		Messages: []anthropicapi.Message{
+			{
+				Role:    "user",
+				Content: []anthropicapi.ContentPart{{Type: "text", Text: "Test message"}},
+			},
+		},
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
+
+	respBody, err := p.CountTokens(context.Background(), body)
+	if err != nil {
+		t.Fatalf("CountTokens() error = %v", err)
+	}
+
+	var resp anthropicapi.CountTokensResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp.InputTokens != 25 {
+		t.Errorf("expected 25 input_tokens, got %d", resp.InputTokens)
 	}
 }

@@ -306,3 +306,18 @@ func ParseErrorResponse(data []byte) (*APIError, error) {
 	}
 	return errResp.Error, nil
 }
+
+// CountTokensRequest represents a request to count tokens.
+type CountTokensRequest struct {
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	System        SystemMessages `json:"system,omitempty"`
+	Tools         []Tool         `json:"tools,omitempty"`
+	ToolChoice    *ToolChoice    `json:"tool_choice,omitempty"`
+	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// CountTokensResponse represents the response from counting tokens.
+type CountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
+}

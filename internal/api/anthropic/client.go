@@ -291,6 +291,49 @@ func (c *Client) ListModels(ctx context.Context, opts *RequestOptions) (*ModelLi
 	return &result, nil
 }
 
+// CountTokens counts tokens for a messages request.
+func (c *Client) CountTokens(ctx context.Context, req *CountTokensRequest, opts *RequestOptions) (*CountTokensResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages/count_tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(httpReq, opts)
+
+	// Count tokens requires beta header
+	httpReq.Header.Set("anthropic-beta", "token-counting-2024-11-01")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
+			return nil, apiErr
+		}
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result CountTokensResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
 func (c *Client) setHeaders(req *http.Request, opts *RequestOptions) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)

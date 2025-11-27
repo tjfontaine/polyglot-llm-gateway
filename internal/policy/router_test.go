@@ -51,6 +51,16 @@ func (m *mockProvider) ListModels(context.Context) (*domain.ModelList, error) {
 	return &domain.ModelList{Object: "list"}, nil
 }
 
+// mockCountableProvider also implements CountTokens
+type mockCountableProvider struct {
+	mockProvider
+	countResult []byte
+}
+
+func (m *mockCountableProvider) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
+	return m.countResult, nil
+}
+
 func TestRouter_Route(t *testing.T) {
 	// Create mock providers
 	openaiProvider := &mockProvider{name: "openai"}
@@ -235,5 +245,127 @@ func TestRouter_Stream(t *testing.T) {
 
 	if eventCount == 0 {
 		t.Error("Stream() returned no events")
+	}
+}
+
+func TestRouter_CountTokens(t *testing.T) {
+	countableProvider := &mockCountableProvider{
+		mockProvider: mockProvider{name: "anthropic"},
+		countResult:  []byte(`{"input_tokens": 42}`),
+	}
+	nonCountableProvider := &mockProvider{name: "openai"}
+
+	tests := []struct {
+		name           string
+		providers      map[string]domain.Provider
+		defaultProv    string
+		wantResult     string
+		wantError      bool
+	}{
+		{
+			name: "uses default provider with count_tokens support",
+			providers: map[string]domain.Provider{
+				"anthropic": countableProvider,
+				"openai":    nonCountableProvider,
+			},
+			defaultProv: "anthropic",
+			wantResult:  `{"input_tokens": 42}`,
+			wantError:   false,
+		},
+		{
+			name: "falls back to any provider with count_tokens support",
+			providers: map[string]domain.Provider{
+				"anthropic": countableProvider,
+				"openai":    nonCountableProvider,
+			},
+			defaultProv: "openai", // openai doesn't support count_tokens
+			wantResult:  `{"input_tokens": 42}`,
+			wantError:   false,
+		},
+		{
+			name: "returns error when no provider supports count_tokens",
+			providers: map[string]domain.Provider{
+				"openai": nonCountableProvider,
+			},
+			defaultProv: "openai",
+			wantError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewRouter(tt.providers, config.RoutingConfig{
+				DefaultProvider: tt.defaultProv,
+			})
+
+			result, err := router.CountTokens(context.Background(), []byte(`{"model":"test"}`))
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("CountTokens() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("CountTokens() unexpected error: %v", err)
+				return
+			}
+
+			if string(result) != tt.wantResult {
+				t.Errorf("CountTokens() = %s, want %s", string(result), tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestRouter_APIType(t *testing.T) {
+	openaiProvider := &mockProvider{name: "openai"}
+	anthropicProvider := &mockProvider{name: "anthropic"}
+
+	providers := map[string]domain.Provider{
+		"openai":    openaiProvider,
+		"anthropic": anthropicProvider,
+	}
+
+	router := NewRouter(providers, config.RoutingConfig{
+		DefaultProvider: "openai",
+	})
+
+	// Should return the API type of the default provider
+	if router.APIType() != domain.APITypeOpenAI {
+		t.Errorf("APIType() = %v, want %v", router.APIType(), domain.APITypeOpenAI)
+	}
+}
+
+func TestRouter_NoDefaultProvider(t *testing.T) {
+	// Test router with no default provider still works
+	openaiProvider := &mockProvider{name: "openai"}
+
+	providers := map[string]domain.Provider{
+		"openai": openaiProvider,
+	}
+
+	router := NewRouter(providers, config.RoutingConfig{
+		Rules: []config.RoutingRule{
+			{ModelPrefix: "gpt", Provider: "openai"},
+		},
+		// No DefaultProvider set
+	})
+
+	req := &domain.CanonicalRequest{Model: "gpt-4"}
+	provider, err := router.Route(req)
+	if err != nil {
+		t.Errorf("Route() unexpected error: %v", err)
+	}
+	if provider.Name() != "openai" {
+		t.Errorf("Route() = %v, want openai", provider.Name())
+	}
+
+	// Unknown model should fail without default provider
+	req = &domain.CanonicalRequest{Model: "unknown-model"}
+	_, err = router.Route(req)
+	if err == nil {
+		t.Error("Route() expected error for unknown model without default provider")
 	}
 }

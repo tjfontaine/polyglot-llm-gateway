@@ -226,3 +226,94 @@ This plan addresses:
 6. **Frontend Updates**: Control plane UI with unified data explorer and feature indicators
 7. **Codec Parity**: Clean bidirectional mapping between OpenAI and Anthropic formats
 8. **Unified Interactions**: Single view for both conversations and responses with filtering
+
+---
+
+## Phase 8: Bug Fixes & Enhanced Testing ✅ COMPLETED
+
+### 8.1 Missing Endpoint Fixes ✅
+- [x] Added `/v1/messages/count_tokens` endpoint to Anthropic frontdoor
+- [x] Added `CountTokensRequest` and `CountTokensResponse` types in `api/anthropic/types.go`
+- [x] Added `CountTokens` method to Anthropic API client with beta header support
+- [x] Added `CountTokens` method to Anthropic provider
+- [x] Added `CountTokens` delegation to `ModelMappingProvider`
+- [x] Added `CountTokens` delegation to policy `Router`
+- [x] Registered count_tokens route in frontdoor registry
+
+### 8.2 Model Routing Configuration Fix ✅
+- [x] Fixed frontdoor registry to check for `Fallback` in addition to `PrefixProviders` and `Rewrites`
+- [x] Previously, configs with only `Fallback` (no `Rewrites`) would not create `ModelMappingProvider`
+
+### 8.3 Comprehensive Test Coverage ✅
+- [x] Added VCR-based tests for Anthropic `CountTokens` endpoint
+- [x] Added mock server tests for `CountTokens` with header verification
+- [x] Added integration tests for full routing chain (`ModelMappingProvider` -> `Router` -> `Provider`)
+- [x] Added tests for fallback-only configuration
+- [x] Added tests for multiple prefix rules with different providers
+- [x] Added tests for exact match precedence over prefix match
+- [x] Added tests for response model rewriting
+- [x] Added tests for `CountTokens` delegation through `ModelMappingProvider`
+- [x] Added tests for slash-prefixed routing (e.g., `openai/gpt-4o`)
+- [x] Added tests for combined config (rewrites + prefix providers + fallback)
+- [x] Added policy router tests for `CountTokens` delegation
+- [x] Added frontdoor registry tests for all handler types
+- [x] Added integration test with model rewriting through full request flow
+
+### Test Files Added/Modified
+- `internal/provider/anthropic/provider_test.go` - Added VCR and mock tests for CountTokens
+- `internal/provider/anthropic/testdata/fixtures/anthropic_count_tokens.yaml` - VCR cassette
+- `internal/provider/model_mapping_test.go` - Extended with comprehensive rewrite tests
+- `internal/provider/integration_test.go` - New file with full routing chain tests
+- `internal/policy/router_test.go` - Added CountTokens and APIType tests
+- `internal/frontdoor/registry_test.go` - New file with registry and integration tests
+
+---
+
+## Phase 9: Cross-Provider Token Counting ✅ COMPLETED
+
+### 9.1 Token Counter Interface ✅
+- [x] Created `TokenCountRequest` and `TokenCountResponse` types in `domain/tokens.go`
+- [x] Created `TokenCounter` interface for provider-agnostic token counting
+- [x] Created `TokenCountTool` type for tool definitions in token counting
+
+### 9.2 Token Counter Registry ✅
+- [x] Created `internal/tokens/registry.go` with registry pattern
+- [x] Implemented `Estimator` as fallback for unsupported models
+- [x] Implemented `ModelMatcher` for provider-based model matching
+
+### 9.3 Provider-Specific Adapters ✅
+- [x] Created `AnthropicCounter` in `internal/tokens/anthropic.go`
+  - Uses native Anthropic `count_tokens` API
+  - Supports claude-* model prefixes
+  - Provides exact token counts (not estimated)
+- [x] Created `OpenAICounter` in `internal/tokens/openai.go`
+  - Uses `github.com/tiktoken-go/tokenizer` for accurate token counting
+  - Library has native support for GPT-5, GPT-5-Mini, GPT-5-Nano, GPT-4.1, O1, O3, O4-Mini
+  - Supports gpt-*, o1-o6, text-embedding-*, davinci/curie/babbage/ada models
+  - Supports future models: GPT-5.1+, GPT-6+, O5+, etc. via o200k_base fallback
+  - Provides exact token counts using appropriate encodings:
+    - o200k_base: GPT-5+, GPT-4.1, GPT-4o, O-series models
+    - cl100k_base: GPT-4, GPT-3.5, text-embedding
+    - p50k_base: text-davinci-002/003
+    - r50k_base: legacy completion models
+  - Includes encoding caching for performance
+
+### 9.4 Frontdoor Integration ✅
+- [x] Updated Anthropic frontdoor `HandleCountTokens` to:
+  - Use native provider when available (pass-through)
+  - Fall back to estimation for other providers
+  - Return Anthropic-compatible JSON response format
+
+### 9.5 Test Coverage ✅
+- [x] Added comprehensive tests for `Estimator`
+- [x] Added comprehensive tests for `OpenAICounter`
+- [x] Added tests for `Registry` with multiple counters
+- [x] Added tests for `ModelMatcher`
+- [x] Added benchmarks for token estimation performance
+
+### New Files Created
+- `internal/domain/tokens.go` - Token counting types and interface
+- `internal/tokens/registry.go` - Registry and Estimator
+- `internal/tokens/anthropic.go` - Anthropic native counter
+- `internal/tokens/openai.go` - OpenAI tiktoken-style estimator
+- `internal/tokens/tokens_test.go` - Comprehensive tests
