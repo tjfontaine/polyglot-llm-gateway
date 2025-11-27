@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -103,27 +104,33 @@ func (r *Router) Route(req *domain.CanonicalRequest) (domain.Provider, error) {
 	return nil, fmt.Errorf("no provider configured for model: %s", req.Model)
 }
 
-// CountTokens delegates to the default provider if it supports the CountTokens interface.
+// CountTokens routes to the appropriate provider based on the model in the request,
+// then delegates if that provider supports the CountTokens interface.
 func (r *Router) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
 	type countTokensProvider interface {
 		CountTokens(ctx context.Context, body []byte) ([]byte, error)
 	}
 
-	// Try default provider first
-	if r.defaultProvider != "" {
-		if p, ok := r.providers[r.defaultProvider]; ok {
-			if ctp, ok := p.(countTokensProvider); ok {
-				return ctp.CountTokens(ctx, body)
-			}
-		}
+	// Parse the model from the request body to determine routing
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to parse count_tokens request: %w", err)
 	}
 
-	// Try any provider that supports CountTokens
-	for _, p := range r.providers {
-		if ctp, ok := p.(countTokensProvider); ok {
-			return ctp.CountTokens(ctx, body)
-		}
+	// Use the same routing logic as Complete
+	canonReq := &domain.CanonicalRequest{Model: req.Model}
+	provider, err := r.Route(canonReq)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("no provider supports count_tokens")
+	// Check if the routed provider supports CountTokens
+	if ctp, ok := provider.(countTokensProvider); ok {
+		return ctp.CountTokens(ctx, body)
+	}
+
+	// Return error so caller can fall back to estimation
+	return nil, fmt.Errorf("count_tokens not supported by provider for model %s", req.Model)
 }

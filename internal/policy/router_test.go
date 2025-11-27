@@ -256,31 +256,40 @@ func TestRouter_CountTokens(t *testing.T) {
 	nonCountableProvider := &mockProvider{name: "openai"}
 
 	tests := []struct {
-		name           string
-		providers      map[string]domain.Provider
-		defaultProv    string
-		wantResult     string
-		wantError      bool
+		name        string
+		providers   map[string]domain.Provider
+		rules       []config.RoutingRule
+		defaultProv string
+		model       string
+		wantResult  string
+		wantError   bool
 	}{
 		{
-			name: "uses default provider with count_tokens support",
+			name: "routes to provider with count_tokens support",
 			providers: map[string]domain.Provider{
 				"anthropic": countableProvider,
 				"openai":    nonCountableProvider,
 			},
-			defaultProv: "anthropic",
+			rules: []config.RoutingRule{
+				{ModelPrefix: "claude", Provider: "anthropic"},
+			},
+			defaultProv: "openai",
+			model:       "claude-3",
 			wantResult:  `{"input_tokens": 42}`,
 			wantError:   false,
 		},
 		{
-			name: "falls back to any provider with count_tokens support",
+			name: "returns error when routed provider does not support count_tokens",
 			providers: map[string]domain.Provider{
 				"anthropic": countableProvider,
 				"openai":    nonCountableProvider,
 			},
-			defaultProv: "openai", // openai doesn't support count_tokens
-			wantResult:  `{"input_tokens": 42}`,
-			wantError:   false,
+			rules: []config.RoutingRule{
+				{ModelPrefix: "gpt", Provider: "openai"},
+			},
+			defaultProv: "openai",
+			model:       "gpt-4",
+			wantError:   true, // OpenAI doesn't support count_tokens
 		},
 		{
 			name: "returns error when no provider supports count_tokens",
@@ -288,6 +297,7 @@ func TestRouter_CountTokens(t *testing.T) {
 				"openai": nonCountableProvider,
 			},
 			defaultProv: "openai",
+			model:       "test",
 			wantError:   true,
 		},
 	}
@@ -295,10 +305,12 @@ func TestRouter_CountTokens(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := NewRouter(tt.providers, config.RoutingConfig{
+				Rules:           tt.rules,
 				DefaultProvider: tt.defaultProv,
 			})
 
-			result, err := router.CountTokens(context.Background(), []byte(`{"model":"test"}`))
+			body := []byte(`{"model":"` + tt.model + `"}`)
+			result, err := router.CountTokens(context.Background(), body)
 
 			if tt.wantError {
 				if err == nil {
