@@ -42,6 +42,22 @@ type ResponseStore interface {
 
 	// GetResponsesByPreviousID retrieves responses that continue from a given response
 	GetResponsesByPreviousID(ctx context.Context, previousID string) ([]*ResponseRecord, error)
+
+	// ListResponses lists responses with pagination
+	ListResponses(ctx context.Context, opts ListOptions) ([]*ResponseRecord, error)
+}
+
+// Interaction represents a unified view of either a conversation or a response
+type Interaction struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"` // "conversation" or "response"
+	TenantID     string            `json:"tenant_id"`
+	Status       string            `json:"status,omitempty"` // For responses: in_progress, completed, failed, cancelled
+	Model        string            `json:"model,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	MessageCount int               `json:"message_count,omitempty"` // For conversations
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // Conversation represents a conversation thread

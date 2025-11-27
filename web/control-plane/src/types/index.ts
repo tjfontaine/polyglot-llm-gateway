@@ -108,3 +108,32 @@ export interface ThreadDetail {
   metadata?: Record<string, string>;
   messages: ThreadMessage[];
 }
+
+// Unified interaction types
+export interface InteractionSummary {
+  id: string;
+  type: 'conversation' | 'response';
+  status?: string;
+  model?: string;
+  metadata?: Record<string, string>;
+  message_count?: number;
+  previous_response_id?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface InteractionDetail {
+  id: string;
+  type: 'conversation' | 'response';
+  status?: string;
+  model?: string;
+  metadata?: Record<string, string>;
+  previous_response_id?: string;
+  created_at: number;
+  updated_at: number;
+  // For conversations
+  messages?: ThreadMessage[];
+  // For responses
+  request?: unknown;
+  response?: unknown;
+}

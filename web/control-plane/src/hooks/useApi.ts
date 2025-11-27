@@ -1,23 +1,19 @@
 import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from 'react';
-import type { Stats, Overview, ThreadSummary, ThreadDetail, ResponseSummary, ResponseDetail } from '../types';
+import type { Stats, Overview, InteractionSummary, InteractionDetail } from '../types';
 
 const API_BASE = '/admin/api';
 
 interface ApiContextValue {
   stats: Stats | null;
   overview: Overview | null;
-  threads: ThreadSummary[];
-  responses: ResponseSummary[];
-  threadsError: string | null;
-  responsesError: string | null;
-  loadingThreads: boolean;
-  loadingResponses: boolean;
+  interactions: InteractionSummary[];
+  interactionsTotal: number;
+  interactionsError: string | null;
+  loadingInteractions: boolean;
   refreshStats: () => Promise<void>;
   refreshOverview: () => Promise<void>;
-  refreshThreads: () => Promise<void>;
-  refreshResponses: () => Promise<void>;
-  fetchThreadDetail: (id: string) => Promise<ThreadDetail | null>;
-  fetchResponseDetail: (id: string) => Promise<ResponseDetail | null>;
+  refreshInteractions: (filter?: 'conversation' | 'response' | '') => Promise<void>;
+  fetchInteractionDetail: (id: string) => Promise<InteractionDetail | null>;
 }
 
 const ApiContext = createContext<ApiContextValue | null>(null);
@@ -25,12 +21,10 @@ const ApiContext = createContext<ApiContextValue | null>(null);
 export function ApiProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [responses, setResponses] = useState<ResponseSummary[]>([]);
-  const [threadsError, setThreadsError] = useState<string | null>(null);
-  const [responsesError, setResponsesError] = useState<string | null>(null);
-  const [loadingThreads, setLoadingThreads] = useState(false);
-  const [loadingResponses, setLoadingResponses] = useState(false);
+  const [interactions, setInteractions] = useState<InteractionSummary[]>([]);
+  const [interactionsTotal, setInteractionsTotal] = useState(0);
+  const [interactionsError, setInteractionsError] = useState<string | null>(null);
+  const [loadingInteractions, setLoadingInteractions] = useState(false);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -54,63 +48,34 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshThreads = useCallback(async () => {
+  const refreshInteractions = useCallback(async (filter: 'conversation' | 'response' | '' = '') => {
     if (!overview?.storage.enabled) {
-      setThreads([]);
-      setThreadsError('Conversation storage is disabled.');
+      setInteractions([]);
+      setInteractionsTotal(0);
+      setInteractionsError('Storage is disabled.');
       return;
     }
-    setLoadingThreads(true);
-    setThreadsError(null);
+    setLoadingInteractions(true);
+    setInteractionsError(null);
     try {
-      const res = await fetch(`${API_BASE}/threads?limit=100`);
-      if (!res.ok) throw new Error('Failed to load threads');
+      const typeParam = filter ? `&type=${filter}` : '';
+      const res = await fetch(`${API_BASE}/interactions?limit=100${typeParam}`);
+      if (!res.ok) throw new Error('Failed to load interactions');
       const data = await res.json();
-      setThreads(data.threads ?? []);
+      setInteractions(data.interactions ?? []);
+      setInteractionsTotal(data.total ?? 0);
     } catch (err) {
       console.error(err);
-      setThreadsError('Unable to load threads right now.');
+      setInteractionsError('Unable to load interactions right now.');
     } finally {
-      setLoadingThreads(false);
+      setLoadingInteractions(false);
     }
   }, [overview?.storage.enabled]);
 
-  const refreshResponses = useCallback(async () => {
-    if (!overview?.storage.enabled) {
-      setResponses([]);
-      setResponsesError('Conversation storage is disabled.');
-      return;
-    }
-    setLoadingResponses(true);
-    setResponsesError(null);
+  const fetchInteractionDetail = useCallback(async (id: string): Promise<InteractionDetail | null> => {
     try {
-      const res = await fetch(`${API_BASE}/responses?limit=100`);
-      if (!res.ok) throw new Error('Failed to load responses');
-      const data = await res.json();
-      setResponses(data.responses ?? []);
-    } catch (err) {
-      console.error(err);
-      setResponsesError('Unable to load responses right now.');
-    } finally {
-      setLoadingResponses(false);
-    }
-  }, [overview?.storage.enabled]);
-
-  const fetchThreadDetail = useCallback(async (id: string): Promise<ThreadDetail | null> => {
-    try {
-      const res = await fetch(`${API_BASE}/threads/${id}`);
-      if (!res.ok) throw new Error('Failed to load thread');
-      return await res.json();
-    } catch (err) {
-      console.error(err);
-      return null;
-    }
-  }, []);
-
-  const fetchResponseDetail = useCallback(async (id: string): Promise<ResponseDetail | null> => {
-    try {
-      const res = await fetch(`${API_BASE}/responses/${id}`);
-      if (!res.ok) throw new Error('Failed to load response');
+      const res = await fetch(`${API_BASE}/interactions/${id}`);
+      if (!res.ok) throw new Error('Failed to load interaction');
       return await res.json();
     } catch (err) {
       console.error(err);
@@ -126,29 +91,24 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [refreshOverview, refreshStats]);
 
-  // Fetch threads and responses when overview loads
+  // Fetch interactions when overview loads
   useEffect(() => {
     if (overview) {
-      refreshThreads();
-      refreshResponses();
+      refreshInteractions();
     }
-  }, [overview, refreshThreads, refreshResponses]);
+  }, [overview, refreshInteractions]);
 
   const value: ApiContextValue = {
     stats,
     overview,
-    threads,
-    responses,
-    threadsError,
-    responsesError,
-    loadingThreads,
-    loadingResponses,
+    interactions,
+    interactionsTotal,
+    interactionsError,
+    loadingInteractions,
     refreshStats,
     refreshOverview,
-    refreshThreads,
-    refreshResponses,
-    fetchThreadDetail,
-    fetchResponseDetail,
+    refreshInteractions,
+    fetchInteractionDetail,
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;
