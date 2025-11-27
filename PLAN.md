@@ -317,3 +317,39 @@ This plan addresses:
 - `internal/tokens/anthropic.go` - Anthropic native counter
 - `internal/tokens/openai.go` - OpenAI tiktoken-style estimator
 - `internal/tokens/tokens_test.go` - Comprehensive tests
+
+---
+
+## Phase 10: CountTokens Model-Based Routing Fix ✅ COMPLETED
+
+### 10.1 Problem
+The `count_tokens` endpoint was not respecting model routing configuration. When requests came through an Anthropic frontdoor configured to route to OpenAI (e.g., for model rewriting), the `CountTokens` method would incorrectly fall back to any provider that supported the interface, ignoring the routing rules.
+
+Example config that triggered the bug:
+```yaml
+- name: claude
+  frontdoor: anthropic
+  path: /claude
+  model_routing:
+    fallback:
+      provider: openai
+      model: gpt-5-mini
+```
+
+This would cause `count_tokens` requests to use the Anthropic provider directly (because it implements `CountTokens`), bypassing the OpenAI routing entirely.
+
+### 10.2 Fix
+- [x] Updated `ModelMappingProvider.CountTokens` to parse the model from the request body
+- [x] Updated `ModelMappingProvider.CountTokens` to use `selectProvider()` for model-based routing
+- [x] Updated `Router.CountTokens` to parse the model and use `Route()` for routing
+- [x] Both now return an error when the routed provider doesn't support `CountTokens`
+- [x] This allows the frontdoor handler to fall back to token estimation
+
+### 10.3 Behavior Change
+**Before:** `CountTokens` would try default provider first, then fall back to any provider supporting `CountTokens`
+**After:** `CountTokens` routes based on model (same as `Complete`), returns error if routed provider doesn't support it
+
+### 10.4 Test Updates
+- [x] Updated `TestRouter_CountTokens` to test model-based routing
+- [x] Added test cases for routing to provider with `CountTokens` support
+- [x] Added test cases for error when routed provider doesn't support `CountTokens`

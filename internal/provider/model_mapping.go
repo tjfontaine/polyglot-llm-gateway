@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -206,15 +207,33 @@ func (p *ModelMappingProvider) rewriteModelID(id string) string {
 	return id
 }
 
-// CountTokens delegates to the default provider if it supports the CountTokens interface.
+// CountTokens routes to the appropriate provider based on the model in the request,
+// then delegates if that provider supports the CountTokens interface.
 func (p *ModelMappingProvider) CountTokens(ctx context.Context, body []byte) ([]byte, error) {
 	type countTokensProvider interface {
 		CountTokens(ctx context.Context, body []byte) ([]byte, error)
 	}
 
-	if ctp, ok := p.defaultProvider.(countTokensProvider); ok {
+	// Parse the model from the request body to determine routing
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to parse count_tokens request: %w", err)
+	}
+
+	// Use the same routing logic as Complete
+	canonReq := &domain.CanonicalRequest{Model: req.Model}
+	provider, _, _, err := p.selectProvider(canonReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the routed provider supports CountTokens
+	if ctp, ok := provider.(countTokensProvider); ok {
 		return ctp.CountTokens(ctx, body)
 	}
 
-	return nil, fmt.Errorf("count_tokens not supported by underlying provider")
+	// Return error so frontdoor can fall back to estimation
+	return nil, fmt.Errorf("count_tokens not supported by provider for model %s", req.Model)
 }
