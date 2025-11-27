@@ -68,7 +68,7 @@ export function Dashboard() {
               </div>
               <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500">Providers</div>
-                <div className="text-xl font-semibold text-white">{overview?.providers.length ?? 0}</div>
+                <div className="text-xl font-semibold text-white">{overview?.providers?.length ?? 0}</div>
               </div>
             </div>
 
@@ -117,16 +117,16 @@ export function Dashboard() {
             <div className="mb-4 flex flex-wrap gap-3">
               <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500">Rules</div>
-                <div className="text-xl font-semibold text-white">{overview?.routing.rules.length ?? 0}</div>
+                <div className="text-xl font-semibold text-white">{overview?.routing?.rules?.length ?? 0}</div>
               </div>
               <div className="rounded-xl border border-white/5 bg-slate-950/50 px-4 py-2.5">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500">Tenants</div>
-                <div className="text-xl font-semibold text-white">{overview?.tenants.length ?? 0}</div>
+                <div className="text-xl font-semibold text-white">{overview?.tenants?.length ?? 0}</div>
               </div>
             </div>
 
             <div className="space-y-2">
-              {(overview?.routing.rules ?? []).slice(0, 2).map((rule, idx) => (
+              {(overview?.routing?.rules ?? []).slice(0, 2).map((rule, idx) => (
                 <div
                   key={idx}
                   className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
@@ -138,8 +138,8 @@ export function Dashboard() {
                   </div>
                 </div>
               ))}
-              {(overview?.routing.rules.length ?? 0) > 2 && (
-                <div className="text-xs text-slate-500">+{(overview?.routing.rules.length ?? 0) - 2} more</div>
+              {(overview?.routing?.rules?.length ?? 0) > 2 && (
+                <div className="text-xs text-slate-500">+{(overview?.routing?.rules?.length ?? 0) - 2} more</div>
               )}
             </div>
 
@@ -247,17 +247,17 @@ export function Dashboard() {
             )}
             <Pill
               icon={Route}
-              label={`Default provider: ${overview.routing.default_provider || 'none'}`}
+              label={`Default provider: ${overview?.routing?.default_provider || 'none'}`}
               tone="slate"
             />
-            {(overview.providers ?? []).filter((p) => p.enable_passthrough).length > 0 && (
+            {(overview?.providers ?? []).filter((p) => p.enable_passthrough).length > 0 && (
               <Pill
                 icon={Zap}
-                label={`${(overview.providers ?? []).filter((p) => p.enable_passthrough).length} passthrough provider(s)`}
+                label={`${(overview?.providers ?? []).filter((p) => p.enable_passthrough).length} passthrough provider(s)`}
                 tone="amber"
               />
             )}
-            {(overview.apps ?? []).some((app) => app?.enable_responses) && (
+            {(overview?.apps ?? []).some((app) => app?.enable_responses) && (
               <Pill icon={Bot} label="Responses API enabled" tone="emerald" />
             )}
           </div>
