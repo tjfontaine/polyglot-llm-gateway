@@ -3,17 +3,18 @@ package tokens
 import (
 	"context"
 	"encoding/json"
-	"regexp"
+	"fmt"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/pkoukk/tiktoken-go"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
-// OpenAICounter estimates token counts for OpenAI models.
-// Uses tiktoken-style cl100k_base encoding estimation.
+// OpenAICounter provides accurate token counts for OpenAI models using tiktoken.
 type OpenAICounter struct {
 	matcher *ModelMatcher
+	// encodingCache caches tiktoken encodings by model
+	encodingCache map[string]*tiktoken.Tiktoken
 }
 
 // NewOpenAICounter creates a new OpenAI token counter.
@@ -23,232 +24,153 @@ func NewOpenAICounter() *OpenAICounter {
 			[]string{"gpt-4", "gpt-3.5", "o1", "o3", "text-embedding", "text-davinci"},
 			[]string{"davinci", "curie", "babbage", "ada"},
 		),
+		encodingCache: make(map[string]*tiktoken.Tiktoken),
 	}
 }
 
-// CountTokens estimates tokens for OpenAI models using cl100k_base-style tokenization.
+// getEncoding returns the tiktoken encoding for a model, with caching.
+func (c *OpenAICounter) getEncoding(model string) (*tiktoken.Tiktoken, error) {
+	// Check cache first
+	if enc, ok := c.encodingCache[model]; ok {
+		return enc, nil
+	}
+
+	// Try to get encoding for the specific model
+	enc, err := tiktoken.EncodingForModel(model)
+	if err != nil {
+		// Fall back to cl100k_base for newer models not yet in tiktoken
+		enc, err = tiktoken.GetEncoding("cl100k_base")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get tiktoken encoding: %w", err)
+		}
+	}
+
+	c.encodingCache[model] = enc
+	return enc, nil
+}
+
+// CountTokens counts tokens for OpenAI models using tiktoken.
 func (c *OpenAICounter) CountTokens(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
+	enc, err := c.getEncoding(req.Model)
+	if err != nil {
+		return nil, err
+	}
+
 	totalTokens := 0
 
-	// Add base overhead for chat format
-	// Each message has ~4 tokens of overhead: <|start|>{role}<|end|>
-	messageOverhead := 4
+	// Different models have different message overhead
+	// GPT-4 and GPT-3.5-turbo use the chat format
+	tokensPerMessage := 3 // <|start|>{role/name}\n{content}<|end|>\n
+	tokensPerName := 1    // if there's a name, the role is omitted
 
 	// Count system message
 	if req.System != "" {
-		totalTokens += messageOverhead
-		totalTokens += c.estimateTokens(req.System)
+		totalTokens += tokensPerMessage
+		totalTokens += len(enc.Encode(req.System, nil, nil))
+		totalTokens += len(enc.Encode("system", nil, nil))
 	}
 
 	// Count all messages
 	for _, msg := range req.Messages {
-		totalTokens += messageOverhead
+		totalTokens += tokensPerMessage
 
-		// Count role (usually 1 token)
-		totalTokens += 1
+		// Count role
+		totalTokens += len(enc.Encode(msg.Role, nil, nil))
 
 		// Count content
 		if msg.RichContent != nil && len(msg.RichContent.Parts) > 0 {
 			for _, part := range msg.RichContent.Parts {
 				switch part.Type {
 				case domain.ContentTypeText:
-					totalTokens += c.estimateTokens(part.Text)
+					totalTokens += len(enc.Encode(part.Text, nil, nil))
 				case domain.ContentTypeToolUse:
-					// Tool calls add structured overhead
-					totalTokens += c.estimateTokens(part.Name)
+					totalTokens += len(enc.Encode(part.Name, nil, nil))
 					if part.Input != nil {
 						argBytes, _ := json.Marshal(part.Input)
-						totalTokens += c.estimateTokens(string(argBytes))
+						totalTokens += len(enc.Encode(string(argBytes), nil, nil))
 					}
 					totalTokens += 3 // overhead for tool call structure
 				case domain.ContentTypeToolResult:
-					totalTokens += c.estimateTokens(part.Text)
+					totalTokens += len(enc.Encode(part.Text, nil, nil))
 					totalTokens += 2 // overhead for tool result
 				}
 			}
 		} else {
-			totalTokens += c.estimateTokens(msg.Content)
+			totalTokens += len(enc.Encode(msg.Content, nil, nil))
 		}
 
 		// Count tool calls if present
 		for _, tc := range msg.ToolCalls {
-			totalTokens += c.estimateTokens(tc.Function.Name)
-			totalTokens += c.estimateTokens(tc.Function.Arguments)
-			totalTokens += 3 // overhead per tool call
+			totalTokens += len(enc.Encode(tc.Function.Name, nil, nil))
+			totalTokens += len(enc.Encode(tc.Function.Arguments, nil, nil))
+			totalTokens += tokensPerName + 3 // overhead per tool call
 		}
 	}
 
-	// Count tools/functions (using TokenCountTool)
+	// Count tools/functions
 	for _, tool := range req.Tools {
-		totalTokens += c.estimateTokens(tool.Name)
-		totalTokens += c.estimateTokens(tool.Description)
+		// Tool definitions are serialized as JSON in the prompt
+		totalTokens += len(enc.Encode(tool.Name, nil, nil))
+		totalTokens += len(enc.Encode(tool.Description, nil, nil))
 		if tool.Parameters != nil {
 			paramBytes, _ := json.Marshal(tool.Parameters)
-			totalTokens += c.estimateTokens(string(paramBytes))
+			totalTokens += len(enc.Encode(string(paramBytes), nil, nil))
 		}
 		totalTokens += 7 // overhead per tool definition
 	}
 
-	// Add final assistant prompt tokens
+	// Add priming tokens for assistant response
 	totalTokens += 3 // <|start|>assistant<|message|>
 
 	return &domain.TokenCountResponse{
 		InputTokens: totalTokens,
 		Model:       req.Model,
-		Estimated:   true, // We're estimating, not using tiktoken directly
+		Estimated:   false, // tiktoken provides accurate counts
 	}, nil
-}
-
-// estimateTokens estimates the token count for a string using cl100k_base-style rules.
-// This approximates GPT-4/GPT-3.5-turbo tokenization.
-func (c *OpenAICounter) estimateTokens(text string) int {
-	if text == "" {
-		return 0
-	}
-
-	tokens := 0
-
-	// Split by whitespace and common patterns
-	// cl100k_base tends to:
-	// - Keep common words as single tokens
-	// - Split uncommon words into subwords
-	// - Treat punctuation separately in many cases
-	// - Handle numbers digit-by-digit in some cases
-
-	// Basic word splitting with punctuation awareness
-	wordPattern := regexp.MustCompile(`[\w']+|[^\w\s]|\s+`)
-	parts := wordPattern.FindAllString(text, -1)
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		// Whitespace is often merged with the following token
-		if strings.TrimSpace(part) == "" {
-			continue
-		}
-
-		// Single punctuation is usually 1 token
-		if len(part) == 1 && !isAlphanumeric(part[0]) {
-			tokens++
-			continue
-		}
-
-		// Estimate based on word characteristics
-		tokens += c.estimateWordTokens(part)
-	}
-
-	return tokens
-}
-
-// estimateWordTokens estimates tokens for a single word/segment.
-func (c *OpenAICounter) estimateWordTokens(word string) int {
-	if word == "" {
-		return 0
-	}
-
-	// Very short words are usually 1 token
-	runeCount := utf8.RuneCountInString(word)
-	if runeCount <= 3 {
-		return 1
-	}
-
-	// Common English words are often 1 token
-	if c.isCommonWord(strings.ToLower(word)) {
-		return 1
-	}
-
-	// Numbers: roughly 1 token per 2-3 digits
-	if isNumeric(word) {
-		return (len(word) + 2) / 3
-	}
-
-	// For other words, estimate based on character count
-	// cl100k_base averages about 3.5-4 chars per token for English
-	// but varies with word complexity
-
-	// Check for camelCase or mixed case (often split)
-	if hasMixedCase(word) {
-		// Split on case boundaries roughly
-		return (runeCount + 3) / 4
-	}
-
-	// Standard estimation
-	// Short-medium words: 1 token
-	// Longer words: split into subwords
-	if runeCount <= 6 {
-		return 1
-	} else if runeCount <= 10 {
-		return 2
-	} else if runeCount <= 15 {
-		return 3
-	}
-
-	// Very long words: roughly 4 chars per token
-	return (runeCount + 3) / 4
-}
-
-// isCommonWord checks if a word is in a list of common English words
-// that are typically single tokens in cl100k_base.
-func (c *OpenAICounter) isCommonWord(word string) bool {
-	commonWords := map[string]bool{
-		"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
-		"with": true, "by": true, "from": true, "as": true, "is": true, "was": true,
-		"are": true, "were": true, "been": true, "be": true, "have": true, "has": true,
-		"had": true, "do": true, "does": true, "did": true, "will": true, "would": true,
-		"could": true, "should": true, "may": true, "might": true, "must": true,
-		"that": true, "which": true, "who": true, "whom": true, "this": true, "these": true,
-		"those": true, "it": true, "its": true, "they": true, "them": true, "their": true,
-		"he": true, "him": true, "his": true, "she": true, "her": true, "hers": true,
-		"we": true, "us": true, "our": true, "you": true, "your": true, "yours": true,
-		"i": true, "me": true, "my": true, "mine": true, "not": true, "no": true, "yes": true,
-		"can": true, "cannot": true, "if": true, "then": true, "else": true, "when": true,
-		"where": true, "why": true, "how": true, "what": true, "all": true, "each": true,
-		"every": true, "both": true, "few": true, "more": true, "most": true, "other": true,
-		"some": true, "such": true, "only": true, "own": true, "same": true, "so": true,
-		"than": true, "too": true, "very": true, "just": true, "also": true, "now": true,
-		"here": true, "there": true, "about": true, "after": true, "before": true, "between": true,
-		"into": true, "through": true, "during": true, "under": true, "again": true, "further": true,
-		"once": true, "user": true, "assistant": true, "system": true, "function": true,
-		"message": true, "content": true, "role": true, "name": true, "type": true,
-	}
-	return commonWords[word]
-}
-
-func isAlphanumeric(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-}
-
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
-}
-
-func hasMixedCase(s string) bool {
-	hasUpper := false
-	hasLower := false
-	for _, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			hasUpper = true
-		}
-		if r >= 'a' && r <= 'z' {
-			hasLower = true
-		}
-		if hasUpper && hasLower {
-			return true
-		}
-	}
-	return false
 }
 
 // SupportsModel returns true for OpenAI models.
 func (c *OpenAICounter) SupportsModel(model string) bool {
 	return c.matcher.Matches(model)
+}
+
+// CountString counts tokens in a simple string for a given model.
+// Useful for quick token counting without building a full request.
+func (c *OpenAICounter) CountString(model, text string) (int, error) {
+	enc, err := c.getEncoding(model)
+	if err != nil {
+		return 0, err
+	}
+	return len(enc.Encode(text, nil, nil)), nil
+}
+
+// GetModelEncoding returns the encoding name for a model.
+func GetModelEncoding(model string) string {
+	model = strings.ToLower(model)
+
+	// GPT-4 and GPT-3.5-turbo models use cl100k_base
+	if strings.HasPrefix(model, "gpt-4") ||
+		strings.HasPrefix(model, "gpt-3.5") ||
+		strings.HasPrefix(model, "o1") ||
+		strings.HasPrefix(model, "o3") ||
+		strings.HasPrefix(model, "text-embedding-3") ||
+		strings.HasPrefix(model, "text-embedding-ada-002") {
+		return "cl100k_base"
+	}
+
+	// Older models use p50k_base or r50k_base
+	if strings.HasPrefix(model, "text-davinci") ||
+		strings.HasPrefix(model, "code-davinci") {
+		return "p50k_base"
+	}
+
+	if strings.HasPrefix(model, "davinci") ||
+		strings.HasPrefix(model, "curie") ||
+		strings.HasPrefix(model, "babbage") ||
+		strings.HasPrefix(model, "ada") {
+		return "r50k_base"
+	}
+
+	// Default to cl100k_base for unknown models
+	return "cl100k_base"
 }
