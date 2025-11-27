@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { render } from '../test/test-utils';
+import { Routes, Route } from 'react-router-dom';
 import { Layout } from './Layout';
-import { Routes, Route, Outlet } from 'react-router-dom';
 import {
   mockStats,
   mockOverview,
@@ -27,12 +27,7 @@ function LayoutWithRoutes() {
 }
 
 describe('Layout', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -40,7 +35,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -53,7 +48,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -68,7 +63,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -86,7 +81,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -103,7 +98,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -117,7 +112,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockMultiTenantOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -131,7 +126,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -145,6 +140,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockEmptyOverview,
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -158,7 +154,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -172,7 +168,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -186,7 +182,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -201,6 +197,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockNullArraysOverview,
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     // Should not throw error
@@ -218,7 +215,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -230,7 +227,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin', withApi: true });
@@ -242,7 +239,7 @@ describe('Layout', () => {
     global.fetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
 
     render(<LayoutWithRoutes />, { initialRoute: '/admin/topology', withApi: true });

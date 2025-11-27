@@ -1,15 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { useApi, ApiProvider, formatBytesToMB, formatTimestamp, formatShortDate, friendlyDuration } from './useApi';
 import { mockStats, mockOverview, mockInteractions, createMockFetch } from '../test/mocks';
 
 describe('useApi hook', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -39,7 +34,7 @@ describe('useApi hook', () => {
     const mockFetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: mockInteractions, total: 3 },
+      '/interactions': { interactions: mockInteractions, total: 3 },
     }));
     global.fetch = mockFetch;
 
@@ -79,7 +74,7 @@ describe('useApi hook', () => {
     const mockFetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
     global.fetch = mockFetch;
 
@@ -110,7 +105,7 @@ describe('useApi hook', () => {
     const mockFetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
     global.fetch = mockFetch;
 
@@ -142,7 +137,7 @@ describe('useApi hook', () => {
     const mockFetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
       '/interactions/test-123': detail,
     }));
     global.fetch = mockFetch;
@@ -167,7 +162,7 @@ describe('useApi hook', () => {
     const mockFetch = vi.fn(createMockFetch({
       '/stats': mockStats,
       '/overview': mockOverview,
-      '/interactions?limit=100': { interactions: [], total: 0 },
+      '/interactions': { interactions: [], total: 0 },
     }));
     global.fetch = mockFetch;
 
