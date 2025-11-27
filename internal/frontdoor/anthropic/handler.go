@@ -176,8 +176,9 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleCountTokens handles the /v1/messages/count_tokens endpoint.
-// This endpoint is Anthropic-specific and is passed through to the underlying provider
-// if it supports the CountTokens interface.
+// This endpoint supports:
+// 1. Native pass-through for providers that support CountTokens (e.g., Anthropic)
+// 2. Estimation for other providers via the token counter registry
 func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
@@ -185,21 +186,6 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	server.AddLogField(r.Context(), "frontdoor", "anthropic")
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", h.provider.Name())
-
-	// Check if provider supports CountTokens
-	type countTokensProvider interface {
-		CountTokens(ctx context.Context, body []byte) ([]byte, error)
-	}
-
-	ctp, ok := h.provider.(countTokensProvider)
-	if !ok {
-		logger.Warn("count_tokens not supported by provider",
-			slog.String("request_id", requestID),
-			slog.String("provider", h.provider.Name()),
-		)
-		http.Error(w, "count_tokens not supported by this provider", http.StatusNotImplemented)
-		return
-	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -213,20 +199,78 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pass through to provider
-	respBody, err := ctp.CountTokens(r.Context(), body)
+	// Check if provider supports CountTokens natively
+	type countTokensProvider interface {
+		CountTokens(ctx context.Context, body []byte) ([]byte, error)
+	}
+
+	if ctp, ok := h.provider.(countTokensProvider); ok {
+		// Pass through to native provider
+		respBody, err := ctp.CountTokens(r.Context(), body)
+		if err != nil {
+			logger.Error("count_tokens failed",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			server.AddError(r.Context(), err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(respBody)
+		return
+	}
+
+	// Fallback: use estimation via codec
+	canonReq, err := h.codec.DecodeRequest(body)
 	if err != nil {
-		logger.Error("count_tokens failed",
+		logger.Error("failed to decode count_tokens request",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
 		server.AddError(r.Context(), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Use simple estimation based on message content
+	inputTokens := h.estimateTokens(canonReq)
+
+	// Return Anthropic-format response
+	respBody := fmt.Sprintf(`{"input_tokens": %d}`, inputTokens)
+
+	logger.Info("count_tokens estimated",
+		slog.String("request_id", requestID),
+		slog.String("model", canonReq.Model),
+		slog.Int("input_tokens", inputTokens),
+	)
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(respBody)
+	w.Write([]byte(respBody))
+}
+
+// estimateTokens provides a rough token estimate when native counting isn't available.
+func (h *Handler) estimateTokens(req *domain.CanonicalRequest) int {
+	totalChars := 0
+
+	// Count system messages
+	for _, msg := range req.Messages {
+		if msg.Role == "system" {
+			totalChars += len(msg.Content)
+		}
+	}
+
+	// Count all messages
+	for _, msg := range req.Messages {
+		totalChars += len(msg.Role)
+		totalChars += len(msg.Content)
+		// Add overhead for message formatting
+		totalChars += 4
+	}
+
+	// Rough estimate: ~4 characters per token
+	return (totalChars + 3) / 4
 }
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {

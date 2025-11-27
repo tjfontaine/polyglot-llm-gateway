@@ -266,3 +266,47 @@ This plan addresses:
 - `internal/provider/integration_test.go` - New file with full routing chain tests
 - `internal/policy/router_test.go` - Added CountTokens and APIType tests
 - `internal/frontdoor/registry_test.go` - New file with registry and integration tests
+
+---
+
+## Phase 9: Cross-Provider Token Counting ✅ COMPLETED
+
+### 9.1 Token Counter Interface ✅
+- [x] Created `TokenCountRequest` and `TokenCountResponse` types in `domain/tokens.go`
+- [x] Created `TokenCounter` interface for provider-agnostic token counting
+- [x] Created `TokenCountTool` type for tool definitions in token counting
+
+### 9.2 Token Counter Registry ✅
+- [x] Created `internal/tokens/registry.go` with registry pattern
+- [x] Implemented `Estimator` as fallback for unsupported models
+- [x] Implemented `ModelMatcher` for provider-based model matching
+
+### 9.3 Provider-Specific Adapters ✅
+- [x] Created `AnthropicCounter` in `internal/tokens/anthropic.go`
+  - Uses native Anthropic `count_tokens` API
+  - Supports claude-* model prefixes
+  - Provides exact token counts (not estimated)
+- [x] Created `OpenAICounter` in `internal/tokens/openai.go`
+  - Uses tiktoken-style cl100k_base encoding estimation
+  - Supports gpt-*, o1, o3, text-embedding-*, davinci/curie/babbage/ada models
+  - Implements sophisticated word/subword tokenization estimation
+
+### 9.4 Frontdoor Integration ✅
+- [x] Updated Anthropic frontdoor `HandleCountTokens` to:
+  - Use native provider when available (pass-through)
+  - Fall back to estimation for other providers
+  - Return Anthropic-compatible JSON response format
+
+### 9.5 Test Coverage ✅
+- [x] Added comprehensive tests for `Estimator`
+- [x] Added comprehensive tests for `OpenAICounter`
+- [x] Added tests for `Registry` with multiple counters
+- [x] Added tests for `ModelMatcher`
+- [x] Added benchmarks for token estimation performance
+
+### New Files Created
+- `internal/domain/tokens.go` - Token counting types and interface
+- `internal/tokens/registry.go` - Registry and Estimator
+- `internal/tokens/anthropic.go` - Anthropic native counter
+- `internal/tokens/openai.go` - OpenAI tiktoken-style estimator
+- `internal/tokens/tokens_test.go` - Comprehensive tests
