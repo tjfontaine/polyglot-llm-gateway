@@ -94,84 +94,150 @@ Tests in `src/test/mocks.ts` include `mockNullArraysOverview` to verify null-saf
 
 ## Domain Model Architecture
 
-### Request/Response Flow
-The gateway uses a canonical domain model to abstract differences between API providers:
+The gateway's core design principle is **canonicalization through the domain model**. All data flows through canonical types defined in `internal/domain`, enabling seamless translation between different API formats.
+
+### Core Architecture Pattern
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  Client     │────▶│  Frontdoor       │────▶│  Provider        │────▶│  Upstream   │
-│  (Anthropic │     │  (Anthropic)     │     │  (OpenAI)        │     │  API        │
-│   SDK)      │     │                  │     │                  │     │  (OpenAI)   │
-└─────────────┘     └──────────────────┘     └──────────────────┘     └─────────────┘
-                           │                        │
-                           ▼                        ▼
-                    CanonicalRequest          Provider-specific
-                    CanonicalResponse         API Request
-                    domain.APIError           domain.APIError
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              GATEWAY                                             │
+│                                                                                  │
+│  ┌─────────────┐     ┌──────────────────────────────────────┐     ┌───────────┐ │
+│  │  FRONTDOOR  │     │           DOMAIN MODEL               │     │ PROVIDER  │ │
+│  │             │     │                                      │     │           │ │
+│  │  Anthropic ─┼────▶│  CanonicalRequest                   │────▶│  OpenAI   │ │
+│  │  OpenAI     │     │  CanonicalResponse                  │     │  Anthropic│ │
+│  │  Responses  │◀────┼  CanonicalEvent                     │◀────│           │ │
+│  │             │     │  APIError                           │     │           │ │
+│  └─────────────┘     └──────────────────────────────────────┘     └───────────┘ │
+│        ▲                           ▲                                    ▲        │
+│        │                           │                                    │        │
+│     Codec                       Domain                               Codec       │
+│   (decode/encode)               Types                            (decode/encode) │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### The Pattern: Decode → Canonical → Encode
+
+Every data type follows the same pattern:
+
+| Data Type | Frontdoor Decodes | Canonical Type | Provider Encodes |
+|-----------|-------------------|----------------|------------------|
+| Requests | API-specific JSON → | `CanonicalRequest` | → Provider API format |
+| Responses | ← API-specific JSON | `CanonicalResponse` | ← Provider API format |
+| Streaming | ← API-specific SSE | `CanonicalEvent` | ← Provider SSE |
+| Errors | ← API-specific error | `APIError` | ← Provider error |
+| Token Counts | API-specific format → | `TokenCountRequest` | → Estimation/API |
 
 ### Canonical Types (`internal/domain`)
-- **`CanonicalRequest`** - Normalized request with model, messages, parameters
-- **`CanonicalResponse`** - Normalized response with choices, usage, metadata
-- **`CanonicalEvent`** - Streaming event with content deltas and tool calls
-- **`APIError`** - Canonical error type that can be mapped to any API format
 
-### Error Handling Architecture
-
-Errors flow through the domain layer for consistent handling across different API types:
-
-**1. API Clients return canonical errors:**
+**`CanonicalRequest`** - Normalized request format:
 ```go
-// internal/api/openai/client.go
-if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
-    return nil, apiErr.ToCanonical()  // Convert to domain.APIError
+type CanonicalRequest struct {
+    Model         string
+    Messages      []Message
+    MaxTokens     int
+    Temperature   float32
+    Stream        bool
+    Tools         []ToolDefinition
+    SourceAPIType APIType      // Which frontdoor received this
+    RawRequest    []byte       // Original bytes for pass-through
 }
 ```
 
-**2. Domain error types (`internal/domain/errors.go`):**
+**`CanonicalResponse`** - Normalized response format:
 ```go
-type ErrorType string
-const (
-    ErrorTypeInvalidRequest ErrorType = "invalid_request"
-    ErrorTypeAuthentication ErrorType = "authentication"
-    ErrorTypeRateLimit      ErrorType = "rate_limit"
-    ErrorTypeContextLength  ErrorType = "context_length"
-    ErrorTypeMaxTokens      ErrorType = "max_tokens"
-    // ...
-)
+type CanonicalResponse struct {
+    ID            string
+    Model         string
+    Choices       []Choice
+    Usage         Usage
+    SourceAPIType APIType      // Which provider returned this
+    RawResponse   []byte       // Original bytes for pass-through
+}
+```
 
+**`CanonicalEvent`** - Streaming event:
+```go
+type CanonicalEvent struct {
+    Role         string
+    ContentDelta string
+    ToolCall     *ToolCallChunk
+    Usage        *Usage
+    Error        error
+}
+```
+
+**`APIError`** - Canonical error:
+```go
 type APIError struct {
-    Type       ErrorType
-    Code       ErrorCode
+    Type       ErrorType    // invalid_request, rate_limit, etc.
+    Code       ErrorCode    // context_length_exceeded, etc.
     Message    string
     StatusCode int
     SourceAPI  APIType
 }
 ```
 
-**3. Frontdoors format errors for their API type:**
-```go
-// internal/frontdoor/anthropic/handler.go
-codec.WriteError(w, err, domain.APITypeAnthropic)
+### Codec Layer (`internal/codec`)
 
-// internal/frontdoor/openai/handler.go
-codec.WriteError(w, err, domain.APITypeOpenAI)
+Codecs handle bidirectional translation between API-specific formats and canonical types:
+
+```go
+type Codec interface {
+    DecodeRequest(data []byte) (*domain.CanonicalRequest, error)
+    EncodeRequest(req *domain.CanonicalRequest) ([]byte, error)
+    DecodeResponse(data []byte) (*domain.CanonicalResponse, error)
+    EncodeResponse(resp *domain.CanonicalResponse) ([]byte, error)
+    DecodeStreamChunk(data []byte) (*domain.CanonicalEvent, error)
+    EncodeStreamChunk(event *domain.CanonicalEvent, meta *StreamMetadata) ([]byte, error)
+}
 ```
 
-**4. Codec formats errors appropriately (`internal/codec/errors.go`):**
+Each API has its own codec:
+- `internal/codec/anthropic/codec.go` - Anthropic Messages API format
+- `internal/codec/openai/codec.go` - OpenAI Chat Completions format
+
+### Request Flow Example
+
+**Anthropic client → OpenAI provider:**
+
 ```go
-func WriteError(w http.ResponseWriter, err error, apiType domain.APIType) {
-    var formatter ErrorFormatter
-    switch apiType {
-    case domain.APITypeAnthropic:
-        formatter = &AnthropicErrorFormatter{}
-    case domain.APITypeOpenAI:
-        formatter = &OpenAIErrorFormatter{}
-    }
-    resp := formatter.FormatError(err)
-    w.WriteHeader(resp.StatusCode)
-    w.Write(resp.Body)
+// 1. Frontdoor receives Anthropic request
+body, _ := io.ReadAll(r.Body)
+
+// 2. Decode to canonical using Anthropic codec
+canonReq, _ := h.codec.DecodeRequest(body)  // anthropic.Codec
+
+// 3. Provider translates canonical to OpenAI format
+apiReq := openaicodec.CanonicalToAPIRequest(canonReq)
+
+// 4. Send to OpenAI, get response
+apiResp, _ := client.CreateChatCompletion(ctx, apiReq)
+
+// 5. Decode OpenAI response to canonical
+canonResp := openaicodec.APIResponseToCanonical(apiResp)
+
+// 6. Encode canonical to Anthropic format for client
+respBody, _ := h.codec.EncodeResponse(canonResp)  // anthropic.Codec
+w.Write(respBody)
+```
+
+### Error Flow
+
+Errors follow the same canonical pattern:
+
+```go
+// 1. Provider API returns error
+if apiErr, _ := openai.ParseErrorResponse(respBody); apiErr != nil {
+    return nil, apiErr.ToCanonical()  // Convert to domain.APIError
 }
+
+// 2. Frontdoor formats for its API type
+codec.WriteError(w, err, domain.APITypeAnthropic)
+
+// 3. Client receives Anthropic-formatted error
+// {"type": "error", "error": {"type": "rate_limit_error", "message": "..."}}
 ```
 
 ### Error Type Mapping
@@ -188,11 +254,38 @@ func WriteError(w http.ResponseWriter, err error, apiType domain.APIType) {
 | `overloaded` | `overloaded_error` | `service_unavailable` | 503 |
 | `server` | `api_error` | `server_error` | 500 |
 
-### Adding New Error Types
-1. Add the error type constant to `internal/domain/errors.go`
-2. Add mapping in `internal/api/*/types.go` `ToCanonical()` methods
-3. Add formatting in `internal/codec/errors.go` formatters
-4. The frontdoors automatically use the correct format via `codec.WriteError()`
+### Pass-Through Optimization
+
+When frontdoor and provider use the same API type, the gateway can skip canonical conversion:
+
+```go
+// Check if we can pass through directly
+if req.SourceAPIType == provider.APIType() {
+    // Use RawRequest/RawResponse directly
+    resp.RawResponse = upstreamBody
+}
+
+// Frontdoor checks for pass-through
+if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
+    w.Write(resp.RawResponse)  // Direct pass-through
+} else {
+    respBody, _ := h.codec.EncodeResponse(resp)  // Canonical conversion
+    w.Write(respBody)
+}
+```
+
+### Adding New API Support
+
+To add a new API type (e.g., Google Gemini):
+
+1. **Define API types** in `internal/api/gemini/types.go`
+2. **Create codec** in `internal/codec/gemini/codec.go` implementing `Codec` interface
+3. **Create provider** in `internal/provider/gemini/provider.go` implementing `Provider` interface
+4. **Create frontdoor handler** in `internal/frontdoor/gemini/handler.go`
+5. **Add error mapping** - `ToCanonical()` method and formatter in `codec/errors.go`
+6. **Register** in frontdoor and provider registries
+
+The canonical domain model ensures the new API automatically works with all existing frontdoors and providers.
 
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.

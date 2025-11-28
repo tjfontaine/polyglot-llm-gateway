@@ -485,4 +485,16 @@ Provider Error → ToCanonical() → domain.APIError → codec.WriteError() → 
 - `internal/api/openai/client.go` - Return canonical errors
 - `internal/frontdoor/anthropic/handler.go` - Use codec.WriteError()
 - `internal/frontdoor/openai/handler.go` - Use codec.WriteError()
-- `AGENTS.md` - Documented error handling architecture
+- `AGENTS.md` - Documented comprehensive domain model architecture
+
+### 13.10 Documentation Updates
+Updated `AGENTS.md` with comprehensive domain model architecture documentation covering:
+- **Core Architecture Pattern**: Visual diagram showing the Frontdoor → Domain → Provider flow
+- **The Pattern: Decode → Canonical → Encode**: Table showing how all data types (requests, responses, streaming, errors, token counts) follow the same pattern
+- **Canonical Types**: Documented `CanonicalRequest`, `CanonicalResponse`, `CanonicalEvent`, `APIError`
+- **Codec Layer**: Documented the bidirectional translation between API-specific formats and canonical types
+- **Request Flow Example**: Complete code walkthrough of Anthropic client → OpenAI provider
+- **Error Flow**: End-to-end error handling from provider to client
+- **Error Type Mapping**: Table mapping domain errors to Anthropic/OpenAI formats and HTTP status codes
+- **Pass-Through Optimization**: How to bypass canonical conversion when frontdoor matches provider
+- **Adding New API Support**: Step-by-step guide for adding new API types (e.g., Google Gemini)
