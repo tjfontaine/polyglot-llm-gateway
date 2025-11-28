@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	anthropicpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
-	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
@@ -50,7 +50,7 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		store:        store,
 		appName:      appName,
 		models:       exposedModels,
-		codec:        anthropiccodec.New(),
+		codec:        anthropicpkg.NewCodec(),
 		tokenCounter: tokenRegistry,
 	}
 }

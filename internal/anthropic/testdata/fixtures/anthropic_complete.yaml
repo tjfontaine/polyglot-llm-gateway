@@ -1,0 +1,70 @@
+---
+version: 2
+interactions:
+- request:
+    body: |
+      {"max_tokens":1024,"messages":[{"role":"user","content":[{"type":"text","text":"Hello"}]}],"model":"claude-3-opus-20240229"}
+    form: {}
+    headers:
+      Anthropic-Version:
+      - "2023-06-01"
+      Content-Type:
+      - application/json
+      X-Stainless-Arch:
+      - arm64
+      X-Stainless-Async:
+      - "false"
+      X-Stainless-Lang:
+      - go
+      X-Stainless-Os:
+      - macos
+      X-Stainless-Package-Version:
+      - v0.2.0-alpha.4
+      X-Stainless-Runtime:
+      - go
+      X-Stainless-Runtime-Version:
+      - go1.23.3
+      x-api-key:
+      - test-key
+    url: https://api.anthropic.com/v1/messages
+    method: POST
+  response:
+    body: |
+      {
+        "id": "msg_01XyZ...",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-3-opus-20240229",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello! How can I help you today?"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 12
+        }
+      }
+    headers:
+      Cf-Cache-Status:
+      - DYNAMIC
+      Cf-Ray:
+      - 8e6f7a1b2c3d4e5f-SJC
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json
+      Date:
+      - Sat, 23 Nov 2024 04:45:00 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Robots-Tag:
+      - none
+    status: 200 OK
+    code: 200
+    duration: 600ms

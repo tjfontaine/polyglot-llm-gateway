@@ -4,20 +4,20 @@ import (
 	"context"
 	"encoding/json"
 
-	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // AnthropicCounter uses Anthropic's native count_tokens API.
 type AnthropicCounter struct {
-	client  *anthropicapi.Client
+	client  *anthropic.Client
 	matcher *ModelMatcher
 }
 
 // NewAnthropicCounter creates a new Anthropic token counter.
-func NewAnthropicCounter(apiKey string, opts ...anthropicapi.ClientOption) *AnthropicCounter {
+func NewAnthropicCounter(apiKey string, opts ...anthropic.ClientOption) *AnthropicCounter {
 	return &AnthropicCounter{
-		client: anthropicapi.NewClient(apiKey, opts...),
+		client: anthropic.NewClient(apiKey, opts...),
 		matcher: NewModelMatcher(
 			[]string{"claude-"},
 			nil,
@@ -26,7 +26,7 @@ func NewAnthropicCounter(apiKey string, opts ...anthropicapi.ClientOption) *Anth
 }
 
 // NewAnthropicCounterWithClient creates an Anthropic counter with an existing client.
-func NewAnthropicCounterWithClient(client *anthropicapi.Client) *AnthropicCounter {
+func NewAnthropicCounterWithClient(client *anthropic.Client) *AnthropicCounter {
 	return &AnthropicCounter{
 		client: client,
 		matcher: NewModelMatcher(
@@ -39,35 +39,35 @@ func NewAnthropicCounterWithClient(client *anthropicapi.Client) *AnthropicCounte
 // CountTokens counts tokens using Anthropic's API.
 func (c *AnthropicCounter) CountTokens(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
 	// Convert domain request to Anthropic API request
-	apiReq := &anthropicapi.CountTokensRequest{
+	apiReq := &anthropic.CountTokensRequest{
 		Model: req.Model,
 	}
 
 	// Convert messages
 	for _, msg := range req.Messages {
-		apiMsg := anthropicapi.Message{
+		apiMsg := anthropic.Message{
 			Role: msg.Role,
 		}
 
 		// Handle content - check for rich content first
 		if msg.RichContent != nil && len(msg.RichContent.Parts) > 0 {
-			var parts []anthropicapi.ContentPart
+			var parts []anthropic.ContentPart
 			for _, part := range msg.RichContent.Parts {
 				switch part.Type {
 				case domain.ContentTypeText:
-					parts = append(parts, anthropicapi.ContentPart{
+					parts = append(parts, anthropic.ContentPart{
 						Type: "text",
 						Text: part.Text,
 					})
 				case domain.ContentTypeToolUse:
-					parts = append(parts, anthropicapi.ContentPart{
+					parts = append(parts, anthropic.ContentPart{
 						Type:  "tool_use",
 						ID:    part.ID,
 						Name:  part.Name,
 						Input: part.Input,
 					})
 				case domain.ContentTypeToolResult:
-					parts = append(parts, anthropicapi.ContentPart{
+					parts = append(parts, anthropic.ContentPart{
 						Type:      "tool_result",
 						ToolUseID: part.ToolUseID,
 						Content:   part.Text,
@@ -77,7 +77,7 @@ func (c *AnthropicCounter) CountTokens(ctx context.Context, req *domain.TokenCou
 			apiMsg.Content = parts
 		} else {
 			// Simple text content
-			apiMsg.Content = []anthropicapi.ContentPart{{Type: "text", Text: msg.Content}}
+			apiMsg.Content = []anthropic.ContentPart{{Type: "text", Text: msg.Content}}
 		}
 
 		apiReq.Messages = append(apiReq.Messages, apiMsg)
@@ -85,12 +85,12 @@ func (c *AnthropicCounter) CountTokens(ctx context.Context, req *domain.TokenCou
 
 	// Add system message
 	if req.System != "" {
-		apiReq.System = []anthropicapi.SystemBlock{{Type: "text", Text: req.System}}
+		apiReq.System = []anthropic.SystemBlock{{Type: "text", Text: req.System}}
 	}
 
 	// Convert tools
 	for _, tool := range req.Tools {
-		apiTool := anthropicapi.Tool{
+		apiTool := anthropic.Tool{
 			Name:        tool.Name,
 			Description: tool.Description,
 		}
@@ -121,7 +121,7 @@ func (c *AnthropicCounter) SupportsModel(model string) bool {
 // CountTokensRaw counts tokens from raw JSON request body.
 // This is useful for pass-through scenarios.
 func (c *AnthropicCounter) CountTokensRaw(ctx context.Context, body []byte) ([]byte, error) {
-	var req anthropicapi.CountTokensRequest
+	var req anthropic.CountTokensRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}

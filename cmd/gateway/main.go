@@ -17,14 +17,16 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/policy"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
-	anthropic_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
-	openai_provider "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/telemetry"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
+
+	// Import consolidated packages for legacy provider creation
+	anthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	openai "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 func main() {
@@ -114,8 +116,8 @@ func main() {
 		} else {
 			// Fallback to legacy env-based config
 			logger.Info("using legacy env-based provider setup")
-			openaiP := openai_provider.New(cfg.OpenAI.APIKey)
-			anthropicP := anthropic_provider.New(cfg.Anthropic.APIKey)
+			openaiP := openai.NewProvider(cfg.OpenAI.APIKey)
+			anthropicP := anthropic.NewProvider(cfg.Anthropic.APIKey)
 			providers = map[string]domain.Provider{
 				"openai":    openaiP,
 				"anthropic": anthropicP,

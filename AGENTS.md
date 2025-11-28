@@ -194,9 +194,9 @@ type Codec interface {
 }
 ```
 
-Each API has its own codec:
-- `internal/codec/anthropic/codec.go` - Anthropic Messages API format
-- `internal/codec/openai/codec.go` - OpenAI Chat Completions format
+Each API type has its consolidated package containing types, client, codec, and provider:
+- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory)
+- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory)
 
 ### Request Flow Example
 
@@ -276,24 +276,49 @@ if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
 
 ### Adding New API Support
 
-To add a new API type (e.g., Google Gemini), follow these steps:
+To add a new API type (e.g., Google Gemini), create a consolidated package containing all related code:
 
-#### 1. Define API Types
-Create `internal/api/gemini/types.go` with request/response structures for the API.
+#### 1. Create Consolidated Package
+Create `internal/gemini/` with the following files:
 
-#### 2. Create Codec
-Create `internal/codec/gemini/codec.go` implementing the `codec.Codec` interface for bidirectional translation.
+**`types.go`** - API request/response structures:
+```go
+package gemini
 
-#### 3. Create Provider (Backend)
-Create `internal/provider/gemini/` with two files:
+// Request and response types for the Gemini API
+type GenerateContentRequest struct { /* ... */ }
+type GenerateContentResponse struct { /* ... */ }
+// ... etc
+```
 
-**`provider.go`** - Implements `domain.Provider` interface:
+**`client.go`** - HTTP client for API calls:
+```go
+package gemini
+
+type Client struct { /* ... */ }
+func NewClient(apiKey string, opts ...ClientOption) *Client { /* ... */ }
+func (c *Client) GenerateContent(ctx context.Context, req *GenerateContentRequest) (*GenerateContentResponse, error) { /* ... */ }
+```
+
+**`codec.go`** - Codec implementing bidirectional translation:
+```go
+package gemini
+
+type Codec struct{}
+func NewCodec() *Codec { return &Codec{} }
+// Implement codec.Codec interface
+func (c *Codec) DecodeRequest(data []byte) (*domain.CanonicalRequest, error) { /* ... */ }
+func (c *Codec) EncodeResponse(resp *domain.CanonicalResponse) ([]byte, error) { /* ... */ }
+// ... etc
+```
+
+**`provider.go`** - Provider implementation:
 ```go
 package gemini
 
 type Provider struct { /* ... */ }
 
-func New(apiKey string, opts ...ProviderOption) *Provider { /* ... */ }
+func NewProvider(apiKey string, opts ...ProviderOption) *Provider { /* ... */ }
 func (p *Provider) Name() string { return "gemini" }
 func (p *Provider) APIType() domain.APIType { return domain.APITypeGemini }
 func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) { /* ... */ }
@@ -301,38 +326,38 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) { /* ... */ }
 ```
 
-**`factory.go`** - Self-registering factory (all provider code together):
+**`factory.go`** - Self-registering factory:
 ```go
 package gemini
 
 import (
     "github.com/tjfontaine/polyglot-llm-gateway/internal/config"
     "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-    "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
+    providerregistry "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
 )
 
 const ProviderType = "gemini"
 
 // Register this provider at package initialization.
 func init() {
-    registry.RegisterFactory(registry.ProviderFactory{
+    providerregistry.RegisterFactory(providerregistry.ProviderFactory{
         Type:           ProviderType,
         APIType:        domain.APITypeGemini,
         Description:    "Google Gemini API provider",
-        Create:         CreateFromConfig,
-        ValidateConfig: ValidateConfig,
+        Create:         CreateProviderFromConfig,
+        ValidateConfig: ValidateProviderConfig,
     })
 }
 
-func CreateFromConfig(cfg config.ProviderConfig) (domain.Provider, error) {
+func CreateProviderFromConfig(cfg config.ProviderConfig) (domain.Provider, error) {
     var opts []ProviderOption
     if cfg.BaseURL != "" {
-        opts = append(opts, WithBaseURL(cfg.BaseURL))
+        opts = append(opts, WithProviderBaseURL(cfg.BaseURL))
     }
-    return New(cfg.APIKey, opts...), nil
+    return NewProvider(cfg.APIKey, opts...), nil
 }
 
-func ValidateConfig(cfg config.ProviderConfig) error {
+func ValidateProviderConfig(cfg config.ProviderConfig) error {
     if cfg.APIKey == "" {
         return fmt.Errorf("api_key is required")
     }
@@ -340,29 +365,44 @@ func ValidateConfig(cfg config.ProviderConfig) error {
 }
 ```
 
-#### 4. Register Provider Import
+#### 2. Register Package Import
 Add a blank import in `internal/provider/registry.go` to trigger init():
 ```go
 import (
     // ... existing imports ...
-    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/gemini"
+    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
 )
 ```
 
-#### 5. Create Frontdoor Handler (If exposing a new API format)
-Create `internal/frontdoor/gemini/` with two files:
+#### 3. Create Frontdoor Handler (If exposing a new API format)
+Due to import cycle constraints, frontdoor handlers must be in a separate package. Create `internal/frontdoor/gemini/`:
 
 **`handler.go`** - HTTP handlers for the API format:
 ```go
 package gemini
 
-type Handler struct { /* ... */ }
+import (
+    geminipkg "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
+    // ... other imports
+)
 
-func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler { /* ... */ }
+type Handler struct {
+    provider domain.Provider
+    codec    codec.Codec  // Uses geminipkg.NewCodec()
+    // ...
+}
+
+func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
+    return &Handler{
+        provider: provider,
+        codec:    geminipkg.NewCodec(),
+        // ...
+    }
+}
 func (h *Handler) HandleGenerateContent(w http.ResponseWriter, r *http.Request) { /* ... */ }
 ```
 
-**`factory.go`** - Self-registering factory (all frontdoor code together):
+**`factory.go`** - Self-registering frontdoor factory:
 ```go
 package gemini
 
@@ -374,13 +414,11 @@ import (
 
 const FrontdoorType = "gemini"
 
-func APIType() domain.APIType { return domain.APITypeGemini }
-
 // Register this frontdoor at package initialization.
 func init() {
     registry.RegisterFactory(registry.FrontdoorFactory{
         Type:           FrontdoorType,
-        APIType:        APIType(),
+        APIType:        domain.APITypeGemini,
         Description:    "Google Gemini API format",
         CreateHandlers: createHandlers,
     })
@@ -394,7 +432,7 @@ func createHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
 }
 ```
 
-#### 6. Register Frontdoor Import
+#### 4. Register Frontdoor Import
 Add a blank import in `internal/frontdoor/registry.go` to trigger init():
 ```go
 import (
@@ -403,7 +441,7 @@ import (
 )
 ```
 
-#### 7. Add Error Mapping
+#### 5. Add Error Mapping
 Add `ToCanonical()` method for provider errors and update `codec/errors.go` formatter.
 
 ### Verification

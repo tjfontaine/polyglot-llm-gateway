@@ -13,10 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
-	openaicodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	openaipkg "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
@@ -45,7 +45,7 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		store:    store,
 		appName:  appName,
 		models:   exposedModels,
-		codec:    openaicodec.New(),
+		codec:    openaipkg.NewCodec(),
 	}
 }
 
