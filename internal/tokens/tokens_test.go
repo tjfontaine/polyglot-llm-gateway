@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
@@ -616,7 +617,12 @@ func (m *mockTokenCountProvider) CountTokensCanonical(ctx context.Context, req *
 
 func (m *mockTokenCountProvider) SupportsTokenCounting(model string) bool {
 	for _, supported := range m.supportedModels {
-		if model == supported || (len(supported) > 0 && supported[len(supported)-1] == '-' && len(model) >= len(supported) && model[:len(supported)] == supported) {
+		// Check if supported is a prefix pattern (ends with "-") or exact match
+		if strings.HasSuffix(supported, "-") {
+			if strings.HasPrefix(model, supported) {
+				return true
+			}
+		} else if model == supported {
 			return true
 		}
 	}

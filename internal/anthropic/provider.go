@@ -413,6 +413,10 @@ func (p *Provider) CountTokens(ctx context.Context, body []byte) ([]byte, error)
 
 // CountTokensCanonical counts tokens using Anthropic's native API.
 // This implements the domain.TokenCountProvider interface.
+//
+// Note: This conversion logic is intentionally separate from the codec's
+// CanonicalToAPIRequest because token counting has simpler requirements
+// and doesn't need image fetching or all the edge cases handled by the codec.
 func (p *Provider) CountTokensCanonical(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
 	// Convert domain request to Anthropic API request
 	apiReq := &CountTokensRequest{
