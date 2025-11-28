@@ -89,12 +89,12 @@ func NewFrontdoorHandler(provider domain.Provider, store storage.ConversationSto
 		})
 	}
 
-	// Set up token counter registry for fallback estimation.
-	// Uses OpenAI tiktoken for estimation when the underlying provider doesn't
-	// support native token counting (e.g., when routing Anthropic API requests
-	// to an OpenAI-compatible provider). Native Anthropic counting is handled
-	// via provider.CountTokens() pass-through in HandleCountTokens.
+	// Set up token counter registry with:
+	// 1. Provider (checked first if it implements TokenCountProvider)
+	// 2. OpenAI tiktoken counter for GPT models
+	// 3. Fallback estimator for unknown models
 	tokenRegistry := tokens.NewRegistry()
+	tokenRegistry.SetProvider(provider)
 	tokenRegistry.Register(tokens.NewOpenAICounter())
 
 	return &FrontdoorHandler{

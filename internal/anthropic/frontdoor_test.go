@@ -157,3 +157,36 @@ func TestHandleListModelsFallsBackToProvider(t *testing.T) {
 		t.Fatalf("unexpected provider list response: %+v", list)
 	}
 }
+
+func TestAnthropicProvider_SupportsTokenCounting(t *testing.T) {
+	// Test that the Anthropic provider properly reports token counting support
+	provider := NewProvider("test-key")
+
+	tests := []struct {
+		model    string
+		expected bool
+	}{
+		{"claude-3-opus", true},
+		{"claude-3-sonnet", true},
+		{"claude-3-haiku-20240307", true},
+		{"claude-2", true},
+		{"gpt-4o", false},
+		{"unknown-model", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := provider.SupportsTokenCounting(tt.model); got != tt.expected {
+				t.Errorf("SupportsTokenCounting(%q) = %v, want %v", tt.model, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAnthropicProvider_ImplementsTokenCountProvider(t *testing.T) {
+	// Verify the provider implements the TokenCountProvider interface
+	provider := NewProvider("test-key")
+
+	// Check that provider implements the interface
+	var _ domain.TokenCountProvider = provider
+}
