@@ -5,6 +5,9 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	domainerrors "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // MessagesRequest represents an Anthropic Messages API request.
@@ -293,6 +296,52 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
+}
+
+// ToCanonical converts the Anthropic API error to a canonical domain error.
+func (e *APIError) ToCanonical() *domainerrors.APIError {
+	errType, code := mapAnthropicErrorType(e.Type, e.Message)
+	return &domainerrors.APIError{
+		Type:      errType,
+		Code:      code,
+		Message:   e.Message,
+		SourceAPI: domainerrors.APITypeAnthropic,
+	}
+}
+
+// mapAnthropicErrorType maps Anthropic error types to domain error types.
+func mapAnthropicErrorType(errType, message string) (domainerrors.ErrorType, domainerrors.ErrorCode) {
+	// First check message for specific error patterns
+	msgLower := strings.ToLower(message)
+	if strings.Contains(msgLower, "context") && strings.Contains(msgLower, "length") {
+		return domainerrors.ErrorTypeContextLength, domainerrors.ErrorCodeContextLengthExceeded
+	}
+	if strings.Contains(msgLower, "max_tokens") || strings.Contains(msgLower, "output limit") {
+		if strings.Contains(msgLower, "truncated") || strings.Contains(msgLower, "could not finish") {
+			return domainerrors.ErrorTypeMaxTokens, domainerrors.ErrorCodeOutputTruncated
+		}
+		return domainerrors.ErrorTypeMaxTokens, domainerrors.ErrorCodeMaxTokensExceeded
+	}
+
+	// Map by error type
+	switch errType {
+	case "invalid_request_error":
+		return domainerrors.ErrorTypeInvalidRequest, ""
+	case "authentication_error":
+		return domainerrors.ErrorTypeAuthentication, domainerrors.ErrorCodeInvalidAPIKey
+	case "permission_error":
+		return domainerrors.ErrorTypePermission, ""
+	case "not_found_error":
+		return domainerrors.ErrorTypeNotFound, domainerrors.ErrorCodeModelNotFound
+	case "rate_limit_error":
+		return domainerrors.ErrorTypeRateLimit, domainerrors.ErrorCodeRateLimitExceeded
+	case "overloaded_error":
+		return domainerrors.ErrorTypeOverloaded, ""
+	case "api_error":
+		return domainerrors.ErrorTypeServer, ""
+	default:
+		return domainerrors.ErrorTypeServer, ""
+	}
 }
 
 // ParseErrorResponse attempts to parse an error response from JSON.

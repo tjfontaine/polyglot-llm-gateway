@@ -353,3 +353,148 @@ This would cause `count_tokens` requests to use the Anthropic provider directly 
 - [x] Updated `TestRouter_CountTokens` to test model-based routing
 - [x] Added test cases for routing to provider with `CountTokens` support
 - [x] Added test cases for error when routed provider doesn't support `CountTokens`
+
+---
+
+## Phase 11: CountTokens Fallback & Error Handling Improvements ✅ COMPLETED
+
+### 11.1 Problem
+When requests are routed through `ModelMappingProvider` to a provider that doesn't support native `CountTokens` (e.g., OpenAI), the handler was:
+1. Returning HTTP 500 instead of falling back to token estimation
+2. Returning HTTP 500 for all API errors instead of appropriate status codes (400, 401, 429, etc.)
+
+### 11.2 CountTokens Fallback Fix
+- [x] Updated `HandleCountTokens` to detect "count_tokens not supported" errors and fall back to token estimation
+- [x] Added `tokenCounter` field to Handler struct with `tokens.Registry`
+- [x] Integrated `OpenAICounter` (tiktoken-based) for accurate OpenAI model token counting
+- [x] Added `canonicalToTokenRequest` helper for converting canonical requests to token count requests
+- [x] Fallback now uses proper tiktoken for OpenAI models, estimation for others
+
+### 11.3 Error Status Code Fix
+- [x] Added `writeAPIError` function to map Anthropic API errors to HTTP status codes
+- [x] Maps error types to appropriate status codes:
+  - `invalid_request_error` → 400 Bad Request
+  - `authentication_error` → 401 Unauthorized
+  - `permission_error` → 403 Forbidden
+  - `not_found_error` → 404 Not Found
+  - `rate_limit_error` → 429 Too Many Requests
+  - `overloaded_error` → 503 Service Unavailable
+  - `api_error` → 500 Internal Server Error
+- [x] Updated `HandleMessages`, `handleStream`, and `HandleCountTokens` to use `writeAPIError`
+- [x] Error responses now include proper Anthropic JSON format with type and message
+
+### 11.4 Files Modified
+- `internal/frontdoor/anthropic/handler.go` - Added token counter, improved error handling
+
+---
+
+## Phase 12: Cross-API Error Translation ✅ COMPLETED
+
+### 12.1 Problem
+When requests are routed between different API types (e.g., Anthropic frontdoor → OpenAI provider, or vice versa), error responses were not being translated to the expected format for clients. This caused confusion as clients would receive error formats from a different API than they were using.
+
+### 12.2 Anthropic Frontdoor Improvements
+- [x] Added `translateOpenAIError()` to convert OpenAI errors to Anthropic format
+- [x] Added `translateErrorMessage()` for OpenAI→Anthropic message translation
+- [x] Maps OpenAI error types to Anthropic equivalents:
+  - `invalid_request_error` → `invalid_request_error`
+  - `authentication_error` → `authentication_error`
+  - `permission_denied` → `permission_error`
+  - `not_found` → `not_found_error`
+  - `rate_limit_error` → `rate_limit_error`
+  - `server_error` → `api_error`
+- [x] Translates common error messages (max_tokens, context length, rate limit)
+
+### 12.3 OpenAI Frontdoor Improvements
+- [x] Added `writeAPIError()` function with proper error translation
+- [x] Added `translateAnthropicError()` to convert Anthropic errors to OpenAI format
+- [x] Maps Anthropic error types to OpenAI equivalents:
+  - `invalid_request_error` → `invalid_request_error`
+  - `authentication_error` → `authentication_error` (code: `invalid_api_key`)
+  - `permission_error` → `permission_denied`
+  - `not_found_error` → `not_found` (code: `model_not_found`)
+  - `rate_limit_error` → `rate_limit_error` (code: `rate_limit_exceeded`)
+  - `overloaded_error` → `service_unavailable`
+  - `api_error` → `server_error`
+- [x] Returns proper OpenAI JSON error format: `{"error": {"message": "...", "type": "...", "code": "..."}}`
+
+### 12.4 Natural Error Responses
+Error messages are now translated to feel native to each API:
+
+**For Anthropic clients:**
+- "Could not finish the message because max_tokens..." → "The response was truncated because max_tokens was reached. Please increase max_tokens for longer responses."
+- Context length errors get Anthropic-style messaging
+
+**For OpenAI clients:**
+- Anthropic errors get OpenAI-style messaging and proper error codes
+- Status codes are properly mapped (400, 401, 403, 404, 429, 503, 500)
+
+### 12.5 Files Modified
+- `internal/frontdoor/anthropic/handler.go` - OpenAI→Anthropic error translation
+- `internal/frontdoor/openai/handler.go` - Anthropic→OpenAI error translation
+
+---
+
+## Phase 13: Domain Error Abstraction ✅ COMPLETED
+
+### 13.1 Problem
+Error handling was duplicated across frontdoors with inline translation logic. This made it difficult to maintain consistency and add new error types.
+
+### 13.2 Solution: Canonical Error Types
+Created a domain-level error abstraction that:
+- Defines canonical error types that are API-agnostic
+- Provides conversion from API-specific errors to canonical errors
+- Provides formatting from canonical errors to API-specific responses
+
+### 13.3 New Domain Types (`internal/domain/errors.go`)
+- `ErrorType` - Canonical error categories (invalid_request, authentication, rate_limit, etc.)
+- `ErrorCode` - Specific error codes (context_length_exceeded, rate_limit_exceeded, etc.)
+- `APIError` - Canonical error struct with type, code, message, and source API
+- Convenience constructors: `ErrInvalidRequest()`, `ErrRateLimit()`, `ErrContextLength()`, etc.
+
+### 13.4 API Client Updates
+- Added `ToCanonical()` method to `internal/api/anthropic/types.go` `APIError`
+- Added `ToCanonical()` method to `internal/api/openai/types.go` `APIError`
+- Both methods map provider-specific error types/codes to domain error types
+- API clients now return `domain.APIError` instead of provider-specific errors
+
+### 13.5 Codec Error Formatting (`internal/codec/errors.go`)
+- `ErrorFormatter` interface for API-specific error formatting
+- `OpenAIErrorFormatter` - Formats errors as OpenAI JSON
+- `AnthropicErrorFormatter` - Formats errors as Anthropic JSON
+- `WriteError(w, err, apiType)` - Central function for writing error responses
+
+### 13.6 Frontdoor Simplification
+- Removed all inline error translation functions from frontdoors
+- Both handlers now use simple `codec.WriteError(w, err, domain.APIType*)`
+- Error formatting is fully delegated to the codec layer
+
+### 13.7 Architecture Flow
+```
+Provider Error → ToCanonical() → domain.APIError → codec.WriteError() → API Response
+```
+
+### 13.8 Files Created
+- `internal/domain/errors.go` - Canonical error types and constructors
+- `internal/codec/errors.go` - Error formatters and WriteError function
+
+### 13.9 Files Modified
+- `internal/api/anthropic/types.go` - Added ToCanonical() method
+- `internal/api/anthropic/client.go` - Return canonical errors
+- `internal/api/openai/types.go` - Added ToCanonical() method  
+- `internal/api/openai/client.go` - Return canonical errors
+- `internal/frontdoor/anthropic/handler.go` - Use codec.WriteError()
+- `internal/frontdoor/openai/handler.go` - Use codec.WriteError()
+- `AGENTS.md` - Documented comprehensive domain model architecture
+
+### 13.10 Documentation Updates
+Updated `AGENTS.md` with comprehensive domain model architecture documentation covering:
+- **Core Architecture Pattern**: Visual diagram showing the Frontdoor → Domain → Provider flow
+- **The Pattern: Decode → Canonical → Encode**: Table showing how all data types (requests, responses, streaming, errors, token counts) follow the same pattern
+- **Canonical Types**: Documented `CanonicalRequest`, `CanonicalResponse`, `CanonicalEvent`, `APIError`
+- **Codec Layer**: Documented the bidirectional translation between API-specific formats and canonical types
+- **Request Flow Example**: Complete code walkthrough of Anthropic client → OpenAI provider
+- **Error Flow**: End-to-end error handling from provider to client
+- **Error Type Mapping**: Table mapping domain errors to Anthropic/OpenAI formats and HTTP status codes
+- **Pass-Through Optimization**: How to bypass canonical conversion when frontdoor matches provider
+- **Adding New API Support**: Step-by-step guide for adding new API types (e.g., Google Gemini)

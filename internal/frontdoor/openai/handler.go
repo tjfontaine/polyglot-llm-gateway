@@ -101,7 +101,7 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			slog.String("provider", h.provider.Name()),
 		)
 		server.AddError(r.Context(), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("provider", h.provider.Name()),
 		)
 		server.AddError(r.Context(), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
 

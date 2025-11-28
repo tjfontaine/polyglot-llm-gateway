@@ -87,7 +87,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req *ChatCompletionRe
 
 	if resp.StatusCode != http.StatusOK {
 		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
-			return nil, apiErr
+			return nil, apiErr.ToCanonical()
 		}
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
@@ -128,7 +128,7 @@ func (c *Client) StreamChatCompletion(ctx context.Context, req *ChatCompletionRe
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
-			return nil, apiErr
+			return nil, apiErr.ToCanonical()
 		}
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
@@ -209,7 +209,7 @@ func (c *Client) ListModels(ctx context.Context, opts *RequestOptions) (*ModelLi
 
 	if resp.StatusCode != http.StatusOK {
 		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
-			return nil, apiErr
+			return nil, apiErr.ToCanonical()
 		}
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}

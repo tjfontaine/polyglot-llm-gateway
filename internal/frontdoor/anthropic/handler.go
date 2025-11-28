@@ -16,14 +16,16 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tokens"
 )
 
 type Handler struct {
-	provider domain.Provider
-	store    storage.ConversationStore
-	appName  string
-	models   []domain.Model
-	codec    codec.Codec
+	provider     domain.Provider
+	store        storage.ConversationStore
+	appName      string
+	models       []domain.Model
+	codec        codec.Codec
+	tokenCounter *tokens.Registry
 }
 
 func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
@@ -37,12 +39,17 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		})
 	}
 
+	// Set up token counter registry with OpenAI tiktoken support
+	tokenRegistry := tokens.NewRegistry()
+	tokenRegistry.Register(tokens.NewOpenAICounter())
+
 	return &Handler{
-		provider: provider,
-		store:    store,
-		appName:  appName,
-		models:   exposedModels,
-		codec:    anthropiccodec.New(),
+		provider:     provider,
+		store:        store,
+		appName:      appName,
+		models:       exposedModels,
+		codec:        anthropiccodec.New(),
+		tokenCounter: tokenRegistry,
 	}
 }
 
@@ -101,7 +108,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}
 
@@ -208,21 +215,30 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		// Pass through to native provider
 		respBody, err := ctp.CountTokens(r.Context(), body)
 		if err != nil {
-			logger.Error("count_tokens failed",
-				slog.String("request_id", requestID),
-				slog.String("error", err.Error()),
-			)
-			server.AddError(r.Context(), err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Check if this is a "not supported" error - if so, fall back to estimation
+			if strings.Contains(err.Error(), "count_tokens not supported") {
+				logger.Debug("count_tokens not supported by provider, falling back to estimation",
+					slog.String("request_id", requestID),
+				)
+				// Fall through to estimation below
+			} else {
+				// Real error from provider
+				logger.Error("count_tokens failed",
+					slog.String("request_id", requestID),
+					slog.String("error", err.Error()),
+				)
+				server.AddError(r.Context(), err)
+				codec.WriteError(w, err, domain.APITypeAnthropic)
+				return
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(respBody)
 			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(respBody)
-		return
 	}
 
-	// Fallback: use estimation via codec
+	// Fallback: use token counter registry (with tiktoken for OpenAI models)
 	canonReq, err := h.codec.DecodeRequest(body)
 	if err != nil {
 		logger.Error("failed to decode count_tokens request",
@@ -234,43 +250,55 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use simple estimation based on message content
-	inputTokens := h.estimateTokens(canonReq)
+	// Convert to token count request
+	tokenReq := h.canonicalToTokenRequest(canonReq)
+
+	// Use token counter registry (will use tiktoken for OpenAI models, estimation for others)
+	tokenResp, err := h.tokenCounter.CountTokens(r.Context(), tokenReq)
+	if err != nil {
+		logger.Error("token counting failed",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		server.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Return Anthropic-format response
-	respBody := fmt.Sprintf(`{"input_tokens": %d}`, inputTokens)
+	respBody := fmt.Sprintf(`{"input_tokens": %d}`, tokenResp.InputTokens)
 
-	logger.Info("count_tokens estimated",
+	logMethod := "count_tokens"
+	if tokenResp.Estimated {
+		logMethod = "count_tokens (estimated)"
+	}
+	logger.Info(logMethod,
 		slog.String("request_id", requestID),
 		slog.String("model", canonReq.Model),
-		slog.Int("input_tokens", inputTokens),
+		slog.Int("input_tokens", tokenResp.InputTokens),
+		slog.Bool("estimated", tokenResp.Estimated),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(respBody))
 }
 
-// estimateTokens provides a rough token estimate when native counting isn't available.
-func (h *Handler) estimateTokens(req *domain.CanonicalRequest) int {
-	totalChars := 0
+// canonicalToTokenRequest converts a canonical request to a token count request.
+func (h *Handler) canonicalToTokenRequest(req *domain.CanonicalRequest) *domain.TokenCountRequest {
+	tokenReq := &domain.TokenCountRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+	}
 
-	// Count system messages
+	// Extract system message if present
 	for _, msg := range req.Messages {
 		if msg.Role == "system" {
-			totalChars += len(msg.Content)
+			tokenReq.System = msg.Content
+			break
 		}
 	}
 
-	// Count all messages
-	for _, msg := range req.Messages {
-		totalChars += len(msg.Role)
-		totalChars += len(msg.Content)
-		// Add overhead for message formatting
-		totalChars += 4
-	}
-
-	// Rough estimate: ~4 characters per token
-	return (totalChars + 3) / 4
+	return tokenReq
 }
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {
@@ -287,7 +315,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}
 
