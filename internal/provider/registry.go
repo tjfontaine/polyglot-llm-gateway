@@ -6,10 +6,10 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 
-	// Import provider packages to trigger their init() registration.
-	// New providers should be added here.
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
+	// Import consolidated packages to trigger their init() registration.
+	// All related code (types, client, codec, provider, frontdoor) is in one package.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // Registry creates providers from configuration.

@@ -11,7 +11,6 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 
 	// Import frontdoor packages to trigger their init() registration.
-	// New frontdoors should be added here.
 	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
 	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
 )
