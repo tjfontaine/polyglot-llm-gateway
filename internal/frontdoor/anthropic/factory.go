@@ -14,18 +14,17 @@ func APIType() domain.APIType {
 	return domain.APITypeAnthropic
 }
 
-// CreateHandlerRegistrations creates the HTTP handler registrations for Anthropic frontdoor.
-// This function is called by the frontdoor registry factory.
-func CreateHandlerRegistrations(handler *Handler, basePath string) []struct {
+// Route defines an HTTP route registration.
+type Route struct {
 	Path    string
 	Method  string
 	Handler func(http.ResponseWriter, *http.Request)
-} {
-	return []struct {
-		Path    string
-		Method  string
-		Handler func(http.ResponseWriter, *http.Request)
-	}{
+}
+
+// CreateHandlerRegistrations creates the HTTP handler registrations for Anthropic frontdoor.
+// This function is called by the frontdoor registry factory.
+func CreateHandlerRegistrations(handler *Handler, basePath string) []Route {
+	return []Route{
 		{Path: basePath + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
 		{Path: basePath + "/v1/messages/count_tokens", Method: http.MethodPost, Handler: handler.HandleCountTokens},
 		{Path: basePath + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
