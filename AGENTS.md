@@ -454,6 +454,67 @@ After adding a new provider/frontdoor:
 
 The factory pattern ensures compile-time validation and makes the required components explicit.
 
+## Server Layer & Middleware (`internal/server`)
+
+The server package provides the HTTP infrastructure for the gateway, including middleware components that form the request processing pipeline.
+
+### Package Structure
+
+```
+internal/server/
+├── server.go         # Server setup and middleware chain configuration
+├── doc.go            # Package documentation
+├── requestid.go      # Request ID generation middleware
+├── logging.go        # Structured logging middleware
+├── authmiddleware.go # API key authentication middleware
+├── timeout.go        # Request timeout middleware
+├── ratelimit.go      # Rate limit header normalization
+└── middleware_test.go # Comprehensive middleware tests
+```
+
+### Middleware Components
+
+| Middleware | File | Purpose |
+|------------|------|---------|
+| `RequestIDMiddleware` | `requestid.go` | Generates UUID for each request, adds to context and X-Request-ID header |
+| `LoggingMiddleware` | `logging.go` | Logs request start/completion with structured fields |
+| `AuthMiddleware` | `authmiddleware.go` | Validates Bearer tokens, injects tenant into context |
+| `TimeoutMiddleware` | `timeout.go` | Enforces request deadline via context cancellation |
+| `RateLimitNormalizingMiddleware` | `ratelimit.go` | Writes standardized x-ratelimit-* headers |
+
+### Middleware Chain Order
+
+The server applies middleware in this order:
+1. **RequestIDMiddleware** - First, to enable request tracing
+2. **LoggingMiddleware** - Captures all requests for observability
+3. **AuthMiddleware** - Validates API keys (if multi-tenant mode enabled)
+4. **TimeoutMiddleware** - Enforces request timeouts
+5. **Recoverer** - Catches panics (from chi/middleware)
+6. **otelhttp** - OpenTelemetry instrumentation
+
+### Context Utilities
+
+The package provides utilities for request-scoped data:
+
+```go
+// In request handlers:
+requestID := server.GetRequestID(r.Context())
+server.AddLogField(r.Context(), "model", modelName)
+server.AddError(r.Context(), err)
+
+// For rate limits:
+ctx := server.SetRateLimits(r.Context(), &server.RateLimitInfo{...})
+```
+
+### Adding New Middleware
+
+When adding new middleware:
+1. Create a new file (e.g., `newmiddleware.go`) following the existing pattern
+2. Use the standard `func(http.Handler) http.Handler` signature
+3. Add tests in `middleware_test.go`
+4. Update `server.go` to include in the chain if it should apply to all routes
+5. Update this documentation
+
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
 - **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` using the factory pattern instead of hardcoding wiring.
