@@ -101,3 +101,20 @@ type CapableProvider interface {
 	// Capabilities returns the provider's capabilities.
 	Capabilities() ProviderCapabilities
 }
+
+// TokenCountProvider extends Provider with native token counting capabilities.
+// Providers implementing this interface can provide accurate token counts
+// for their specific models. If a provider does not implement this interface,
+// the system falls back to tiktoken-based estimation.
+type TokenCountProvider interface {
+	Provider
+
+	// CountTokensCanonical counts the tokens in the given request using the provider's
+	// native token counting API. Returns the count response or an error.
+	// This method uses the canonical domain types for portability across providers.
+	CountTokensCanonical(ctx context.Context, req *TokenCountRequest) (*TokenCountResponse, error)
+
+	// SupportsTokenCounting returns true if this provider supports token counting
+	// for the given model.
+	SupportsTokenCounting(model string) bool
+}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
@@ -408,4 +409,88 @@ func (p *Provider) CountTokens(ctx context.Context, body []byte) ([]byte, error)
 	}
 
 	return json.Marshal(resp)
+}
+
+// CountTokensCanonical counts tokens using Anthropic's native API.
+// This implements the domain.TokenCountProvider interface.
+func (p *Provider) CountTokensCanonical(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
+	// Convert domain request to Anthropic API request
+	apiReq := &CountTokensRequest{
+		Model: req.Model,
+	}
+
+	// Convert messages
+	for _, msg := range req.Messages {
+		apiMsg := Message{
+			Role: msg.Role,
+		}
+
+		// Handle content - check for rich content first
+		if msg.RichContent != nil && len(msg.RichContent.Parts) > 0 {
+			var parts []ContentPart
+			for _, part := range msg.RichContent.Parts {
+				switch part.Type {
+				case domain.ContentTypeText:
+					parts = append(parts, ContentPart{
+						Type: "text",
+						Text: part.Text,
+					})
+				case domain.ContentTypeToolUse:
+					parts = append(parts, ContentPart{
+						Type:  "tool_use",
+						ID:    part.ID,
+						Name:  part.Name,
+						Input: part.Input,
+					})
+				case domain.ContentTypeToolResult:
+					parts = append(parts, ContentPart{
+						Type:      "tool_result",
+						ToolUseID: part.ToolUseID,
+						Content:   part.Text,
+					})
+				}
+			}
+			apiMsg.Content = parts
+		} else {
+			// Simple text content
+			apiMsg.Content = []ContentPart{{Type: "text", Text: msg.Content}}
+		}
+
+		apiReq.Messages = append(apiReq.Messages, apiMsg)
+	}
+
+	// Add system message
+	if req.System != "" {
+		apiReq.System = []SystemBlock{{Type: "text", Text: req.System}}
+	}
+
+	// Convert tools
+	for _, tool := range req.Tools {
+		apiTool := Tool{
+			Name:        tool.Name,
+			Description: tool.Description,
+		}
+		if tool.Parameters != nil {
+			apiTool.InputSchema = tool.Parameters
+		}
+		apiReq.Tools = append(apiReq.Tools, apiTool)
+	}
+
+	// Call API
+	resp, err := p.client.CountTokens(ctx, apiReq, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.TokenCountResponse{
+		InputTokens: resp.InputTokens,
+		Model:       req.Model,
+		Estimated:   false, // Anthropic provides exact counts
+	}, nil
+}
+
+// SupportsTokenCounting returns true for Claude models.
+// This implements part of the domain.TokenCountProvider interface.
+func (p *Provider) SupportsTokenCounting(model string) bool {
+	return strings.HasPrefix(model, "claude-")
 }

@@ -10,9 +10,14 @@ import (
 )
 
 // Registry manages token counters for different providers/models.
+// It supports:
+// 1. Providers that implement domain.TokenCountProvider for native token counting
+// 2. Registered domain.TokenCounter implementations (like tiktoken for OpenAI)
+// 3. A fallback estimator for unknown models
 type Registry struct {
 	counters []domain.TokenCounter
 	fallback domain.TokenCounter
+	provider domain.Provider // Optional provider to check for TokenCountProvider interface
 }
 
 // NewRegistry creates a new token counter registry.
@@ -32,9 +37,29 @@ func (r *Registry) SetFallback(counter domain.TokenCounter) {
 	r.fallback = counter
 }
 
+// SetProvider sets a provider that may implement TokenCountProvider.
+// If the provider implements the interface and supports the model,
+// it will be used instead of the registered counters.
+func (r *Registry) SetProvider(provider domain.Provider) {
+	r.provider = provider
+}
+
 // CountTokens counts tokens using the appropriate counter for the model.
+// Priority order:
+// 1. If a provider is set and implements TokenCountProvider, use it if it supports the model
+// 2. Use registered counters that support the model
+// 3. Use the fallback estimator
 func (r *Registry) CountTokens(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
-	// Find a counter that supports this model
+	// Check if the provider implements TokenCountProvider
+	if r.provider != nil {
+		if tcp, ok := r.provider.(domain.TokenCountProvider); ok {
+			if tcp.SupportsTokenCounting(req.Model) {
+				return tcp.CountTokensCanonical(ctx, req)
+			}
+		}
+	}
+
+	// Find a registered counter that supports this model
 	for _, counter := range r.counters {
 		if counter.SupportsModel(req.Model) {
 			return counter.CountTokens(ctx, req)

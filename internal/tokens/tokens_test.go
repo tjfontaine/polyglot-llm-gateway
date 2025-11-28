@@ -582,3 +582,139 @@ func BenchmarkEstimator_CountTokens(b *testing.B) {
 		e.CountTokens(context.Background(), req)
 	}
 }
+
+// mockTokenCountProvider is a mock provider that implements TokenCountProvider
+type mockTokenCountProvider struct {
+	countCalled     bool
+	supportedModels []string
+	returnTokens    int
+}
+
+func (m *mockTokenCountProvider) Name() string            { return "mock" }
+func (m *mockTokenCountProvider) APIType() domain.APIType { return domain.APITypeAnthropic }
+
+func (m *mockTokenCountProvider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
+	return nil, nil
+}
+
+func (m *mockTokenCountProvider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
+	return nil, nil
+}
+
+func (m *mockTokenCountProvider) ListModels(ctx context.Context) (*domain.ModelList, error) {
+	return nil, nil
+}
+
+func (m *mockTokenCountProvider) CountTokensCanonical(ctx context.Context, req *domain.TokenCountRequest) (*domain.TokenCountResponse, error) {
+	m.countCalled = true
+	return &domain.TokenCountResponse{
+		InputTokens: m.returnTokens,
+		Model:       req.Model,
+		Estimated:   false,
+	}, nil
+}
+
+func (m *mockTokenCountProvider) SupportsTokenCounting(model string) bool {
+	for _, supported := range m.supportedModels {
+		if model == supported || (len(supported) > 0 && supported[len(supported)-1] == '-' && len(model) >= len(supported) && model[:len(supported)] == supported) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRegistry_TokenCountProvider(t *testing.T) {
+	// Create a mock provider that implements TokenCountProvider
+	mockProvider := &mockTokenCountProvider{
+		supportedModels: []string{"claude-"},
+		returnTokens:    42,
+	}
+
+	registry := NewRegistry()
+	registry.SetProvider(mockProvider)
+	registry.Register(NewOpenAICounter())
+
+	tests := []struct {
+		name           string
+		model          string
+		expectProvider bool // true if we expect the provider to be used
+		expectTokens   int  // expected token count if provider is used
+	}{
+		{
+			name:           "claude model uses provider",
+			model:          "claude-3-opus",
+			expectProvider: true,
+			expectTokens:   42,
+		},
+		{
+			name:           "gpt model uses OpenAI counter",
+			model:          "gpt-4o",
+			expectProvider: false,
+		},
+		{
+			name:           "unknown model uses fallback",
+			model:          "unknown-model",
+			expectProvider: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockProvider.countCalled = false
+
+			req := &domain.TokenCountRequest{
+				Model: tt.model,
+				Messages: []domain.Message{
+					{Role: "user", Content: "Hello"},
+				},
+			}
+
+			resp, err := registry.CountTokens(context.Background(), req)
+			if err != nil {
+				t.Fatalf("CountTokens() error = %v", err)
+			}
+
+			if tt.expectProvider {
+				if !mockProvider.countCalled {
+					t.Error("expected provider CountTokensCanonical to be called")
+				}
+				if resp.InputTokens != tt.expectTokens {
+					t.Errorf("expected %d tokens, got %d", tt.expectTokens, resp.InputTokens)
+				}
+				if resp.Estimated {
+					t.Error("expected Estimated to be false when provider is used")
+				}
+			} else {
+				if mockProvider.countCalled {
+					t.Error("expected provider CountTokensCanonical NOT to be called")
+				}
+			}
+
+			if resp.InputTokens <= 0 {
+				t.Error("expected positive token count")
+			}
+		})
+	}
+}
+
+func TestRegistry_WithoutProvider(t *testing.T) {
+	// Verify registry works correctly without a provider set
+	registry := NewRegistry()
+	registry.Register(NewOpenAICounter())
+
+	req := &domain.TokenCountRequest{
+		Model: "gpt-4o",
+		Messages: []domain.Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	resp, err := registry.CountTokens(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CountTokens() error = %v", err)
+	}
+
+	if resp.InputTokens <= 0 {
+		t.Error("expected positive token count")
+	}
+}
