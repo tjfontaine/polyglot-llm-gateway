@@ -12,13 +12,13 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
-// Store is a SQLite implementation of ConversationStore and ResponseStore
+// Store is a SQLite implementation of ConversationStore, ResponseStore, and InteractionStore
 type Store struct {
 	db *sql.DB
 }
 
-// Ensure Store implements ResponseStore
-var _ storage.ResponseStore = (*Store)(nil)
+// Ensure Store implements InteractionStore (which extends ConversationStore)
+var _ storage.InteractionStore = (*Store)(nil)
 
 // New creates a new SQLite store
 func New(dbPath string) (*Store, error) {
@@ -67,10 +67,44 @@ func (s *Store) initSchema() error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS interactions (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL,
+			frontdoor TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			app_name TEXT,
+			requested_model TEXT NOT NULL,
+			served_model TEXT,
+			provider_model TEXT,
+			streaming INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL,
+			duration_ns INTEGER,
+			request_raw TEXT,
+			request_canonical TEXT,
+			request_unmapped_fields TEXT,
+			request_provider TEXT,
+			response_raw TEXT,
+			response_canonical TEXT,
+			response_unmapped_fields TEXT,
+			response_client TEXT,
+			response_finish_reason TEXT,
+			response_usage TEXT,
+			error_type TEXT,
+			error_code TEXT,
+			error_message TEXT,
+			metadata TEXT,
+			request_headers TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_previous ON responses(previous_response_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_tenant ON interactions(tenant_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_frontdoor ON interactions(frontdoor)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_provider ON interactions(provider)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status)`,
 	}
 
 	for _, stmt := range statements {

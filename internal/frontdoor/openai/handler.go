@@ -50,8 +50,10 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 }
 
 func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+	providerName := h.provider.Name()
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -86,11 +88,11 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	server.AddLogField(r.Context(), "frontdoor", "openai")
 	server.AddLogField(r.Context(), "app", h.appName)
-	server.AddLogField(r.Context(), "provider", h.provider.Name())
+	server.AddLogField(r.Context(), "provider", providerName)
 	server.AddLogField(r.Context(), "requested_model", req.Model)
 
 	if req.Stream {
-		h.handleStream(w, r, req)
+		h.handleStream(w, r, req, body, startTime)
 		return
 	}
 
@@ -100,9 +102,23 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 			slog.String("requested_model", req.Model),
-			slog.String("provider", h.provider.Name()),
+			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
+
+		// Record failed interaction
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:          h.store,
+			RawRequest:     body,
+			CanonicalReq:   req,
+			RequestHeaders: r.Header,
+			Frontdoor:      domain.APITypeOpenAI,
+			Provider:       providerName,
+			AppName:        h.appName,
+			Error:          err,
+			Duration:       time.Since(startTime),
+		})
+
 		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
@@ -114,7 +130,7 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	logFields := []any{
 		slog.String("frontdoor", "openai"),
 		slog.String("app", h.appName),
-		slog.String("provider", h.provider.Name()),
+		slog.String("provider", providerName),
 		slog.String("requested_model", requestedModel),
 		slog.String("served_model", servedModel),
 	}
@@ -127,13 +143,6 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	if resp.ProviderModel != "" {
 		server.AddLogField(r.Context(), "provider_model", resp.ProviderModel)
 	}
-
-	metadata := map[string]string{
-		"frontdoor": "openai",
-		"app":       h.appName,
-		"provider":  h.provider.Name(),
-	}
-	conversation.Record(r.Context(), h.store, resp.ID, req, resp, metadata)
 
 	// Use raw response if available (pass-through mode), otherwise encode
 	var respBody []byte
@@ -155,6 +164,21 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// Record successful interaction with full bidirectional visibility
+	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+		Store:          h.store,
+		RawRequest:     body,
+		CanonicalReq:   req,
+		RawResponse:    resp.RawResponse,
+		CanonicalResp:  resp,
+		ClientResponse: respBody,
+		RequestHeaders: r.Header,
+		Frontdoor:      domain.APITypeOpenAI,
+		Provider:       providerName,
+		AppName:        h.appName,
+		Duration:       time.Since(startTime),
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respBody)
@@ -186,9 +210,10 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest) {
+func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
+	providerName := h.provider.Name()
 
 	events, err := h.provider.Stream(r.Context(), req)
 	if err != nil {
@@ -196,9 +221,24 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 			slog.String("requested_model", req.Model),
-			slog.String("provider", h.provider.Name()),
+			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
+
+		// Record failed streaming interaction
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:          h.store,
+			RawRequest:     rawRequest,
+			CanonicalReq:   req,
+			RequestHeaders: r.Header,
+			Frontdoor:      domain.APITypeOpenAI,
+			Provider:       providerName,
+			AppName:        h.appName,
+			Streaming:      true,
+			Error:          err,
+			Duration:       time.Since(startTime),
+		})
+
 		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
@@ -216,11 +256,14 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	var builder strings.Builder
 	var servedModel string
 	var providerModel string
+	var finishReason string
+	var usage *domain.Usage
+	var streamErr error
 	streamID := "chatcmpl-" + uuid.New().String()
 	created := time.Now().Unix()
 
 	// Stream metadata for encoding chunks
-	metadata := &codec.StreamMetadata{
+	streamMeta := &codec.StreamMetadata{
 		ID:      streamID,
 		Model:   req.Model,
 		Created: created,
@@ -239,6 +282,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 					slog.String("error", event.Error.Error()),
 				)
 				server.AddError(r.Context(), event.Error)
+				streamErr = event.Error
 			}
 			break
 		}
@@ -251,11 +295,18 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		if event.ProviderModel != "" {
 			providerModel = event.ProviderModel
 		}
+		// Capture finish reason and usage
+		if event.FinishReason != "" {
+			finishReason = event.FinishReason
+		}
+		if event.Usage != nil {
+			usage = event.Usage
+		}
 
 		builder.WriteString(event.ContentDelta)
 
 		// Use codec to encode stream chunk
-		data, err := h.codec.EncodeStreamChunk(&event, metadata)
+		data, err := h.codec.EncodeStreamChunk(&event, streamMeta)
 		if err != nil {
 			logger.Error("failed to encode stream chunk",
 				slog.String("request_id", requestID),
@@ -276,16 +327,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		servedModel = req.Model
 	}
 
-	recordMetadata := map[string]string{
-		"frontdoor": "openai",
-		"app":       h.appName,
-		"provider":  h.provider.Name(),
-		"stream":    "true",
-	}
-
-	conversation.Record(r.Context(), h.store, streamID, req, &domain.CanonicalResponse{
-		ID:    streamID,
-		Model: servedModel,
+	// Build the canonical response for recording
+	recordResp := &domain.CanonicalResponse{
+		ID:            streamID,
+		Model:         servedModel,
+		ProviderModel: providerModel,
 		Choices: []domain.Choice{
 			{
 				Index: 0,
@@ -293,20 +339,40 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 					Role:    "assistant",
 					Content: builder.String(),
 				},
+				FinishReason: finishReason,
 			},
 		},
-	}, recordMetadata)
+	}
+	if usage != nil {
+		recordResp.Usage = *usage
+	}
 
 	server.AddLogField(r.Context(), "served_model", servedModel)
 	if providerModel != "" {
 		server.AddLogField(r.Context(), "provider_model", providerModel)
 	}
 
+	// Record streaming interaction
+	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+		Store:          h.store,
+		RawRequest:     rawRequest,
+		CanonicalReq:   req,
+		CanonicalResp:  recordResp,
+		RequestHeaders: r.Header,
+		Frontdoor:      domain.APITypeOpenAI,
+		Provider:       providerName,
+		AppName:        h.appName,
+		Streaming:      true,
+		Error:          streamErr,
+		Duration:       time.Since(startTime),
+		FinishReason:   finishReason,
+	})
+
 	// Build log fields
 	logFields := []any{
 		slog.String("frontdoor", "openai"),
 		slog.String("app", h.appName),
-		slog.String("provider", h.provider.Name()),
+		slog.String("provider", providerName),
 		slog.String("requested_model", req.Model),
 		slog.String("served_model", servedModel),
 	}
