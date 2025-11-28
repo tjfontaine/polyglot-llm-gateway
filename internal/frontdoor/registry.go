@@ -6,55 +6,15 @@ import (
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	anthropic_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
-	openai_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
 	responses_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/responses"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+
+	// Import frontdoor packages to trigger their init() registration.
+	// New frontdoors should be added here.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
 )
-
-// Register built-in frontdoors at package initialization.
-// New frontdoors should add their registration here.
-func init() {
-	// Register OpenAI frontdoor
-	RegisterFactory(FrontdoorFactory{
-		Type:        openai_frontdoor.FrontdoorType,
-		APIType:     openai_frontdoor.APIType(),
-		Description: "OpenAI Chat Completions API format",
-		CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
-			handler := openai_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
-			regs := openai_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
-			result := make([]HandlerRegistration, len(regs))
-			for i, r := range regs {
-				result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
-			}
-			return result
-		},
-	})
-
-	// Register Anthropic frontdoor
-	RegisterFactory(FrontdoorFactory{
-		Type:        anthropic_frontdoor.FrontdoorType,
-		APIType:     anthropic_frontdoor.APIType(),
-		Description: "Anthropic Messages API format",
-		CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
-			handler := anthropic_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
-			regs := anthropic_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
-			result := make([]HandlerRegistration, len(regs))
-			for i, r := range regs {
-				result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
-			}
-			return result
-		},
-	})
-}
-
-// HandlerRegistration represents a registered handler
-type HandlerRegistration struct {
-	Path    string
-	Method  string
-	Handler func(http.ResponseWriter, *http.Request)
-}
 
 // Registry creates and registers frontdoor handlers.
 // Frontdoors are created using registered FrontdoorFactory instances.

@@ -301,11 +301,28 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) { /* ... */ }
 ```
 
-**`factory.go`** - Factory registration helpers:
+**`factory.go`** - Self-registering factory (all provider code together):
 ```go
 package gemini
 
+import (
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
+)
+
 const ProviderType = "gemini"
+
+// Register this provider at package initialization.
+func init() {
+    registry.RegisterFactory(registry.ProviderFactory{
+        Type:           ProviderType,
+        APIType:        domain.APITypeGemini,
+        Description:    "Google Gemini API provider",
+        Create:         CreateFromConfig,
+        ValidateConfig: ValidateConfig,
+    })
+}
 
 func CreateFromConfig(cfg config.ProviderConfig) (domain.Provider, error) {
     var opts []ProviderOption
@@ -323,20 +340,13 @@ func ValidateConfig(cfg config.ProviderConfig) error {
 }
 ```
 
-#### 4. Register Provider Factory
-Add registration in `internal/provider/registry.go` init():
+#### 4. Register Provider Import
+Add a blank import in `internal/provider/registry.go` to trigger init():
 ```go
-func init() {
-    // ... existing registrations ...
-    
-    RegisterFactory(ProviderFactory{
-        Type:           gemini.ProviderType,
-        APIType:        domain.APITypeGemini,
-        Description:    "Google Gemini API provider",
-        Create:         gemini.CreateFromConfig,
-        ValidateConfig: gemini.ValidateConfig,
-    })
-}
+import (
+    // ... existing imports ...
+    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/gemini"
+)
 ```
 
 #### 5. Create Frontdoor Handler (If exposing a new API format)
@@ -352,46 +362,45 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 func (h *Handler) HandleGenerateContent(w http.ResponseWriter, r *http.Request) { /* ... */ }
 ```
 
-**`factory.go`** - Handler registration helpers:
+**`factory.go`** - Self-registering factory (all frontdoor code together):
 ```go
 package gemini
+
+import (
+    "net/http"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
+)
 
 const FrontdoorType = "gemini"
 
 func APIType() domain.APIType { return domain.APITypeGemini }
 
-func CreateHandlerRegistrations(handler *Handler, basePath string) []struct {
-    Path    string
-    Method  string
-    Handler func(http.ResponseWriter, *http.Request)
-} {
-    return []struct{...}{
-        {Path: basePath + "/v1:generateContent", Method: http.MethodPost, Handler: handler.HandleGenerateContent},
+// Register this frontdoor at package initialization.
+func init() {
+    registry.RegisterFactory(registry.FrontdoorFactory{
+        Type:           FrontdoorType,
+        APIType:        APIType(),
+        Description:    "Google Gemini API format",
+        CreateHandlers: createHandlers,
+    })
+}
+
+func createHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+    handler := NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+    return []registry.HandlerRegistration{
+        {Path: cfg.BasePath + "/v1:generateContent", Method: http.MethodPost, Handler: handler.HandleGenerateContent},
     }
 }
 ```
 
-#### 6. Register Frontdoor Factory
-Add registration in `internal/frontdoor/registry.go` init():
+#### 6. Register Frontdoor Import
+Add a blank import in `internal/frontdoor/registry.go` to trigger init():
 ```go
-func init() {
-    // ... existing registrations ...
-    
-    RegisterFactory(FrontdoorFactory{
-        Type:        gemini_frontdoor.FrontdoorType,
-        APIType:     gemini_frontdoor.APIType(),
-        Description: "Google Gemini API format",
-        CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
-            handler := gemini_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
-            regs := gemini_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
-            result := make([]HandlerRegistration, len(regs))
-            for i, r := range regs {
-                result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
-            }
-            return result
-        },
-    })
-}
+import (
+    // ... existing imports ...
+    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/gemini"
+)
 ```
 
 #### 7. Add Error Mapping

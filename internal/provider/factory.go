@@ -14,169 +14,56 @@
 //  3. Provider: Create `internal/provider/<provider>/provider.go` implementing
 //     the `domain.Provider` interface (and optionally `domain.CapableProvider`).
 //
-//  4. Factory Registration: Add a ProviderFactory to this package's init() or
-//     create a self-registering init() in your provider package.
+//  4. Factory: Create `internal/provider/<provider>/factory.go` with:
+//     - Self-registration in init() using registry.RegisterFactory
+//     - CreateFromConfig and ValidateConfig functions
 //
-// Example factory registration:
+//  5. Import: Add a blank import in this package's imports.go to trigger init()
+//
+// Example factory.go in provider package:
 //
 //	func init() {
-//	    provider.RegisterFactory(provider.ProviderFactory{
-//	        Type:        "gemini",
-//	        APIType:     domain.APITypeGemini,
-//	        Description: "Google Gemini API provider",
-//	        Create: func(cfg config.ProviderConfig) (domain.Provider, error) {
-//	            var opts []gemini.ProviderOption
-//	            if cfg.BaseURL != "" {
-//	                opts = append(opts, gemini.WithBaseURL(cfg.BaseURL))
-//	            }
-//	            return gemini.New(cfg.APIKey, opts...), nil
-//	        },
-//	        ValidateConfig: func(cfg config.ProviderConfig) error {
-//	            if cfg.APIKey == "" {
-//	                return fmt.Errorf("api_key is required for gemini provider")
-//	            }
-//	            return nil
-//	        },
+//	    registry.RegisterFactory(registry.ProviderFactory{
+//	        Type:           ProviderType,
+//	        APIType:        domain.APITypeGemini,
+//	        Description:    "Google Gemini API provider",
+//	        Create:         CreateFromConfig,
+//	        ValidateConfig: ValidateConfig,
 //	    })
 //	}
 package provider
 
 import (
-	"fmt"
-	"sort"
-	"sync"
-
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
 )
 
-// ProviderFactory defines how to create a provider of a specific type.
-// Each provider type (openai, anthropic, etc.) registers a factory that
-// knows how to create instances from configuration.
-type ProviderFactory struct {
-	// Type is the provider type identifier used in configuration
-	// (e.g., "openai", "anthropic", "openai-compatible")
-	Type string
+// Re-export types from registry for convenience
+type ProviderFactory = registry.ProviderFactory
 
-	// APIType is the canonical API type this provider implements
-	APIType domain.APIType
+// RegisterFactory registers a provider factory (delegated to registry).
+var RegisterFactory = registry.RegisterFactory
 
-	// Description provides a human-readable description of the provider
-	Description string
+// GetFactory returns the factory for a provider type (delegated to registry).
+var GetFactory = registry.GetFactory
 
-	// Create instantiates a new provider from configuration.
-	// This is called by the registry to create provider instances.
-	Create func(cfg config.ProviderConfig) (domain.Provider, error)
+// ListFactories returns all registered provider factories (delegated to registry).
+var ListFactories = registry.ListFactories
 
-	// ValidateConfig performs provider-specific configuration validation.
-	// Optional: if nil, no additional validation is performed.
-	ValidateConfig func(cfg config.ProviderConfig) error
-}
+// ListProviderTypes returns all registered provider type names (delegated to registry).
+var ListProviderTypes = registry.ListProviderTypes
 
-// factoryRegistry holds registered provider factories
-var (
-	factoryMu   sync.RWMutex
-	factoryMap  = make(map[string]ProviderFactory)
-	factoryList []ProviderFactory
-)
+// IsRegistered returns true if a provider type is registered (delegated to registry).
+var IsRegistered = registry.IsRegistered
 
-// RegisterFactory registers a provider factory for a specific type.
-// This should be called from init() in each provider package.
-// Panics if a factory with the same type is already registered.
-func RegisterFactory(f ProviderFactory) {
-	factoryMu.Lock()
-	defer factoryMu.Unlock()
-
-	if f.Type == "" {
-		panic("provider factory type cannot be empty")
-	}
-	if f.Create == nil {
-		panic(fmt.Sprintf("provider factory %q must have a Create function", f.Type))
-	}
-
-	if _, exists := factoryMap[f.Type]; exists {
-		panic(fmt.Sprintf("provider factory %q already registered", f.Type))
-	}
-
-	factoryMap[f.Type] = f
-	factoryList = append(factoryList, f)
-}
-
-// GetFactory returns the factory for a provider type, if registered.
-func GetFactory(providerType string) (ProviderFactory, bool) {
-	factoryMu.RLock()
-	defer factoryMu.RUnlock()
-
-	f, ok := factoryMap[providerType]
-	return f, ok
-}
-
-// ListFactories returns all registered provider factories sorted by type.
-func ListFactories() []ProviderFactory {
-	factoryMu.RLock()
-	defer factoryMu.RUnlock()
-
-	result := make([]ProviderFactory, len(factoryList))
-	copy(result, factoryList)
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Type < result[j].Type
-	})
-	return result
-}
-
-// ListProviderTypes returns all registered provider type names.
-func ListProviderTypes() []string {
-	factories := ListFactories()
-	types := make([]string, len(factories))
-	for i, f := range factories {
-		types[i] = f.Type
-	}
-	return types
-}
-
-// IsRegistered returns true if a provider type is registered.
-func IsRegistered(providerType string) bool {
-	_, ok := GetFactory(providerType)
-	return ok
-}
-
-// ValidateProviderConfig validates a provider configuration using
-// the registered factory's validation function.
-func ValidateProviderConfig(cfg config.ProviderConfig) error {
-	f, ok := GetFactory(cfg.Type)
-	if !ok {
-		return fmt.Errorf("unknown provider type: %s (registered types: %v)", cfg.Type, ListProviderTypes())
-	}
-
-	if f.ValidateConfig != nil {
-		return f.ValidateConfig(cfg)
-	}
-	return nil
-}
-
-// createFromFactory creates a provider using the registered factory.
-// This is called by the Registry.CreateProvider method.
-func createFromFactory(cfg config.ProviderConfig) (domain.Provider, error) {
-	f, ok := GetFactory(cfg.Type)
-	if !ok {
-		return nil, fmt.Errorf("unknown provider type: %s (registered types: %v)", cfg.Type, ListProviderTypes())
-	}
-
-	// Validate config if validator is provided
-	if f.ValidateConfig != nil {
-		if err := f.ValidateConfig(cfg); err != nil {
-			return nil, fmt.Errorf("invalid configuration for provider type %s: %w", cfg.Type, err)
-		}
-	}
-
-	return f.Create(cfg)
-}
+// ValidateProviderConfig validates a provider configuration (delegated to registry).
+var ValidateProviderConfig = registry.ValidateProviderConfig
 
 // ClearFactories removes all registered factories (for testing only).
-func ClearFactories() {
-	factoryMu.Lock()
-	defer factoryMu.Unlock()
+var ClearFactories = registry.ClearFactories
 
-	factoryMap = make(map[string]ProviderFactory)
-	factoryList = nil
+// createFromFactory creates a provider using the registered factory.
+func createFromFactory(cfg config.ProviderConfig) (domain.Provider, error) {
+	return registry.CreateFromFactory(cfg)
 }
