@@ -2,7 +2,12 @@
 // These types are used by both the frontdoor handlers and the upstream provider.
 package openai
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+
+	domainerrors "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+)
 
 // ChatCompletionRequest represents an OpenAI chat completion request.
 type ChatCompletionRequest struct {
@@ -180,6 +185,66 @@ func (e *APIError) Error() string {
 		return e.Code + ": " + e.Message
 	}
 	return e.Message
+}
+
+// ToCanonical converts the OpenAI API error to a canonical domain error.
+func (e *APIError) ToCanonical() *domainerrors.APIError {
+	errType, code := mapOpenAIErrorType(e.Type, e.Code, e.Message)
+	return &domainerrors.APIError{
+		Type:      errType,
+		Code:      code,
+		Message:   e.Message,
+		Param:     e.Param,
+		SourceAPI: domainerrors.APITypeOpenAI,
+	}
+}
+
+// mapOpenAIErrorType maps OpenAI error types/codes to domain error types.
+func mapOpenAIErrorType(errType, errCode, message string) (domainerrors.ErrorType, domainerrors.ErrorCode) {
+	// First check specific error codes
+	switch errCode {
+	case "context_length_exceeded":
+		return domainerrors.ErrorTypeContextLength, domainerrors.ErrorCodeContextLengthExceeded
+	case "rate_limit_exceeded":
+		return domainerrors.ErrorTypeRateLimit, domainerrors.ErrorCodeRateLimitExceeded
+	case "invalid_api_key":
+		return domainerrors.ErrorTypeAuthentication, domainerrors.ErrorCodeInvalidAPIKey
+	case "model_not_found":
+		return domainerrors.ErrorTypeNotFound, domainerrors.ErrorCodeModelNotFound
+	}
+
+	// Check message for patterns
+	msgLower := strings.ToLower(message)
+	if strings.Contains(msgLower, "max_tokens") || strings.Contains(msgLower, "maximum tokens") {
+		if strings.Contains(msgLower, "truncated") || strings.Contains(msgLower, "could not finish") ||
+			strings.Contains(msgLower, "output limit") {
+			return domainerrors.ErrorTypeMaxTokens, domainerrors.ErrorCodeOutputTruncated
+		}
+		return domainerrors.ErrorTypeMaxTokens, domainerrors.ErrorCodeMaxTokensExceeded
+	}
+	if strings.Contains(msgLower, "context length") || strings.Contains(msgLower, "context window") {
+		return domainerrors.ErrorTypeContextLength, domainerrors.ErrorCodeContextLengthExceeded
+	}
+
+	// Map by error type
+	switch errType {
+	case "invalid_request_error":
+		return domainerrors.ErrorTypeInvalidRequest, ""
+	case "authentication_error":
+		return domainerrors.ErrorTypeAuthentication, domainerrors.ErrorCodeInvalidAPIKey
+	case "permission_denied":
+		return domainerrors.ErrorTypePermission, ""
+	case "not_found":
+		return domainerrors.ErrorTypeNotFound, domainerrors.ErrorCodeModelNotFound
+	case "rate_limit_error", "rate_limit_exceeded":
+		return domainerrors.ErrorTypeRateLimit, domainerrors.ErrorCodeRateLimitExceeded
+	case "service_unavailable":
+		return domainerrors.ErrorTypeOverloaded, ""
+	case "server_error":
+		return domainerrors.ErrorTypeServer, ""
+	default:
+		return domainerrors.ErrorTypeServer, ""
+	}
 }
 
 // ParseErrorResponse attempts to parse an error response from JSON.
