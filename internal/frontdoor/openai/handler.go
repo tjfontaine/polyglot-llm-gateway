@@ -2,7 +2,6 @@ package openai
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
-	openaiapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
 	openaicodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
@@ -104,7 +101,7 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 			slog.String("provider", h.provider.Name()),
 		)
 		server.AddError(r.Context(), err)
-		writeAPIError(w, err)
+		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
 
@@ -190,7 +187,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("provider", h.provider.Name()),
 		)
 		server.AddError(r.Context(), err)
-		writeAPIError(w, err)
+		codec.WriteError(w, err, domain.APITypeOpenAI)
 		return
 	}
 
@@ -272,135 +269,4 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		slog.String("requested_model", req.Model),
 		slog.String("served_model", req.Model),
 	)
-}
-
-// writeAPIError writes an error response with the appropriate HTTP status code.
-// It detects both OpenAI and Anthropic API errors and returns them in OpenAI format.
-func writeAPIError(w http.ResponseWriter, err error) {
-	// Check for OpenAI API errors first
-	var openaiErr *openaiapi.APIError
-	if errors.As(err, &openaiErr) {
-		statusCode := mapOpenAIErrorTypeToStatus(openaiErr.Type, openaiErr.Code)
-		writeOpenAIError(w, statusCode, openaiErr.Type, openaiErr.Message, openaiErr.Code)
-		return
-	}
-
-	// Check for Anthropic API errors and translate to OpenAI format
-	var anthropicErr *anthropicapi.APIError
-	if errors.As(err, &anthropicErr) {
-		errType, code, message := translateAnthropicError(anthropicErr)
-		statusCode := mapOpenAIErrorTypeToStatus(errType, code)
-		writeOpenAIError(w, statusCode, errType, message, code)
-		return
-	}
-
-	// For non-API errors, return a generic error response in OpenAI format
-	writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error(), "")
-}
-
-// writeOpenAIError writes an error response in OpenAI format.
-func writeOpenAIError(w http.ResponseWriter, statusCode int, errType, message, code string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	errObj := map[string]interface{}{
-		"message": message,
-		"type":    errType,
-	}
-	if code != "" {
-		errObj["code"] = code
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": errObj,
-	})
-}
-
-// translateAnthropicError translates an Anthropic error to OpenAI error format.
-// Returns the OpenAI error type, code, and message.
-func translateAnthropicError(err *anthropicapi.APIError) (errType string, code string, message string) {
-	// Map Anthropic error types to OpenAI error types
-	switch err.Type {
-	case "invalid_request_error":
-		errType = "invalid_request_error"
-	case "authentication_error":
-		errType = "authentication_error"
-		code = "invalid_api_key"
-	case "permission_error":
-		errType = "permission_denied"
-	case "not_found_error":
-		errType = "not_found"
-		code = "model_not_found"
-	case "rate_limit_error":
-		errType = "rate_limit_error"
-		code = "rate_limit_exceeded"
-	case "overloaded_error":
-		errType = "service_unavailable"
-	case "api_error":
-		errType = "server_error"
-	default:
-		errType = "server_error"
-	}
-
-	// Translate common error messages to be more OpenAI-like
-	message = translateAnthropicErrorMessage(err.Message)
-
-	return errType, code, message
-}
-
-// translateAnthropicErrorMessage translates Anthropic error messages to OpenAI-style messages.
-func translateAnthropicErrorMessage(message string) string {
-	msgLower := strings.ToLower(message)
-
-	switch {
-	case strings.Contains(msgLower, "max_tokens"):
-		if strings.Contains(msgLower, "truncated") || strings.Contains(msgLower, "reached") {
-			return "The response was truncated because max_tokens was reached."
-		}
-		return message
-
-	case strings.Contains(msgLower, "context"):
-		return "This model's maximum context length has been exceeded. Please reduce the length of the messages."
-
-	case strings.Contains(msgLower, "rate limit"):
-		return "Rate limit reached. Please slow down."
-
-	default:
-		return message
-	}
-}
-
-// mapOpenAIErrorTypeToStatus maps OpenAI error types to HTTP status codes.
-func mapOpenAIErrorTypeToStatus(errType, code string) int {
-	// Check specific codes first
-	switch code {
-	case "context_length_exceeded":
-		return http.StatusBadRequest // 400
-	case "rate_limit_exceeded":
-		return http.StatusTooManyRequests // 429
-	case "invalid_api_key":
-		return http.StatusUnauthorized // 401
-	case "model_not_found":
-		return http.StatusNotFound // 404
-	}
-
-	// Then check error types
-	switch errType {
-	case "invalid_request_error":
-		return http.StatusBadRequest // 400
-	case "authentication_error":
-		return http.StatusUnauthorized // 401
-	case "permission_denied":
-		return http.StatusForbidden // 403
-	case "not_found":
-		return http.StatusNotFound // 404
-	case "rate_limit_error", "rate_limit_exceeded":
-		return http.StatusTooManyRequests // 429
-	case "service_unavailable":
-		return http.StatusServiceUnavailable // 503
-	case "server_error":
-		return http.StatusInternalServerError // 500
-	default:
-		return http.StatusInternalServerError // 500
-	}
 }

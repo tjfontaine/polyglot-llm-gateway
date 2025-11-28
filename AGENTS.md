@@ -92,10 +92,113 @@ overview.providers.map(...)
 
 Tests in `src/test/mocks.ts` include `mockNullArraysOverview` to verify null-safety. When adding new components that consume API data, include a test case with null arrays.
 
+## Domain Model Architecture
+
+### Request/Response Flow
+The gateway uses a canonical domain model to abstract differences between API providers:
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌─────────────┐
+│  Client     │────▶│  Frontdoor       │────▶│  Provider        │────▶│  Upstream   │
+│  (Anthropic │     │  (Anthropic)     │     │  (OpenAI)        │     │  API        │
+│   SDK)      │     │                  │     │                  │     │  (OpenAI)   │
+└─────────────┘     └──────────────────┘     └──────────────────┘     └─────────────┘
+                           │                        │
+                           ▼                        ▼
+                    CanonicalRequest          Provider-specific
+                    CanonicalResponse         API Request
+                    domain.APIError           domain.APIError
+```
+
+### Canonical Types (`internal/domain`)
+- **`CanonicalRequest`** - Normalized request with model, messages, parameters
+- **`CanonicalResponse`** - Normalized response with choices, usage, metadata
+- **`CanonicalEvent`** - Streaming event with content deltas and tool calls
+- **`APIError`** - Canonical error type that can be mapped to any API format
+
+### Error Handling Architecture
+
+Errors flow through the domain layer for consistent handling across different API types:
+
+**1. API Clients return canonical errors:**
+```go
+// internal/api/openai/client.go
+if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
+    return nil, apiErr.ToCanonical()  // Convert to domain.APIError
+}
+```
+
+**2. Domain error types (`internal/domain/errors.go`):**
+```go
+type ErrorType string
+const (
+    ErrorTypeInvalidRequest ErrorType = "invalid_request"
+    ErrorTypeAuthentication ErrorType = "authentication"
+    ErrorTypeRateLimit      ErrorType = "rate_limit"
+    ErrorTypeContextLength  ErrorType = "context_length"
+    ErrorTypeMaxTokens      ErrorType = "max_tokens"
+    // ...
+)
+
+type APIError struct {
+    Type       ErrorType
+    Code       ErrorCode
+    Message    string
+    StatusCode int
+    SourceAPI  APIType
+}
+```
+
+**3. Frontdoors format errors for their API type:**
+```go
+// internal/frontdoor/anthropic/handler.go
+codec.WriteError(w, err, domain.APITypeAnthropic)
+
+// internal/frontdoor/openai/handler.go
+codec.WriteError(w, err, domain.APITypeOpenAI)
+```
+
+**4. Codec formats errors appropriately (`internal/codec/errors.go`):**
+```go
+func WriteError(w http.ResponseWriter, err error, apiType domain.APIType) {
+    var formatter ErrorFormatter
+    switch apiType {
+    case domain.APITypeAnthropic:
+        formatter = &AnthropicErrorFormatter{}
+    case domain.APITypeOpenAI:
+        formatter = &OpenAIErrorFormatter{}
+    }
+    resp := formatter.FormatError(err)
+    w.WriteHeader(resp.StatusCode)
+    w.Write(resp.Body)
+}
+```
+
+### Error Type Mapping
+
+| Domain Error | Anthropic | OpenAI | HTTP Status |
+|--------------|-----------|--------|-------------|
+| `invalid_request` | `invalid_request_error` | `invalid_request_error` | 400 |
+| `authentication` | `authentication_error` | `authentication_error` | 401 |
+| `permission` | `permission_error` | `permission_denied` | 403 |
+| `not_found` | `not_found_error` | `not_found` | 404 |
+| `rate_limit` | `rate_limit_error` | `rate_limit_error` | 429 |
+| `context_length` | `invalid_request_error` | `invalid_request_error` | 400 |
+| `max_tokens` | `invalid_request_error` | `invalid_request_error` | 400 |
+| `overloaded` | `overloaded_error` | `service_unavailable` | 503 |
+| `server` | `api_error` | `server_error` | 500 |
+
+### Adding New Error Types
+1. Add the error type constant to `internal/domain/errors.go`
+2. Add mapping in `internal/api/*/types.go` `ToCanonical()` methods
+3. Add formatting in `internal/codec/errors.go` formatters
+4. The frontdoors automatically use the correct format via `codec.WriteError()`
+
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
 - **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` instead of hardcoding wiring.
 - **Canonical types first:** Work with `internal/domain` types at API boundaries. Frontdoors should fully populate `CanonicalRequest`/`CanonicalResponse` and let providers handle translation details.
+- **Error handling:** API clients should convert provider-specific errors to `domain.APIError` using `ToCanonical()`. Frontdoors should use `codec.WriteError()` to format errors for their API type.
 - **Streaming:** When adding streaming support, emit `CanonicalEvent` values and propagate provider errors via the channel before closing it.
 - **Tests & fixtures:** Integration-style provider tests rely on go-vcr cassettes under `testdata/fixtures`. Use `VCR_MODE=record` with real API keys to refresh cassettes; default `go test` replays without network access.
 - **Logging/telemetry:** Use the structured `slog` logger already configured in `cmd/gateway/main.go` and preserve OpenTelemetry middleware hooks in `internal/server` when adding new routes.

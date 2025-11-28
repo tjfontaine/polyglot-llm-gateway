@@ -3,15 +3,12 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
-	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
-	openaiapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/openai"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
 	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
@@ -111,7 +108,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		writeAPIError(w, err)
+		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}
 
@@ -231,7 +228,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 					slog.String("error", err.Error()),
 				)
 				server.AddError(r.Context(), err)
-				writeAPIError(w, err)
+				codec.WriteError(w, err, domain.APITypeAnthropic)
 				return
 			}
 		} else {
@@ -318,7 +315,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		writeAPIError(w, err)
+		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}
 
@@ -396,129 +393,4 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		slog.String("requested_model", req.Model),
 		slog.String("served_model", recordResp.Model),
 	)
-}
-
-// writeAPIError writes an error response with the appropriate HTTP status code.
-// It detects both Anthropic and OpenAI API errors and returns them in Anthropic format.
-func writeAPIError(w http.ResponseWriter, err error) {
-	// Check for Anthropic API errors first
-	var anthropicErr *anthropicapi.APIError
-	if errors.As(err, &anthropicErr) {
-		statusCode := mapAnthropicErrorTypeToStatus(anthropicErr.Type)
-		writeAnthropicError(w, statusCode, anthropicErr.Type, anthropicErr.Message)
-		return
-	}
-
-	// Check for OpenAI API errors and translate to Anthropic format
-	var openaiErr *openaiapi.APIError
-	if errors.As(err, &openaiErr) {
-		errType, message := translateOpenAIError(openaiErr)
-		statusCode := mapAnthropicErrorTypeToStatus(errType)
-		writeAnthropicError(w, statusCode, errType, message)
-		return
-	}
-
-	// For non-API errors, return a generic error response in Anthropic format
-	writeAnthropicError(w, http.StatusInternalServerError, "api_error", err.Error())
-}
-
-// writeAnthropicError writes an error response in Anthropic format.
-func writeAnthropicError(w http.ResponseWriter, statusCode int, errType, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"type": "error",
-		"error": map[string]string{
-			"type":    errType,
-			"message": message,
-		},
-	})
-}
-
-// translateOpenAIError translates an OpenAI error to Anthropic error format.
-// Returns the Anthropic error type and a translated message.
-func translateOpenAIError(err *openaiapi.APIError) (errType string, message string) {
-	// Map OpenAI error types to Anthropic error types
-	switch err.Type {
-	case "invalid_request_error":
-		errType = "invalid_request_error"
-	case "authentication_error":
-		errType = "authentication_error"
-	case "permission_denied":
-		errType = "permission_error"
-	case "not_found":
-		errType = "not_found_error"
-	case "rate_limit_error", "rate_limit_exceeded":
-		errType = "rate_limit_error"
-	case "server_error", "service_unavailable":
-		errType = "api_error"
-	default:
-		errType = "api_error"
-	}
-
-	// Translate common error messages to be more Anthropic-like
-	message = translateErrorMessage(err.Message, err.Code)
-
-	return errType, message
-}
-
-// translateErrorMessage translates OpenAI error messages to Anthropic-style messages.
-func translateErrorMessage(message, code string) string {
-	// Handle specific error codes
-	switch code {
-	case "context_length_exceeded":
-		return "This request would exceed the maximum context length. Please reduce the length of your messages or max_tokens."
-	case "rate_limit_exceeded":
-		return "Rate limit exceeded. Please slow down your requests."
-	case "model_not_found":
-		return "The requested model was not found. Please check the model name."
-	case "invalid_api_key":
-		return "Invalid API key provided."
-	}
-
-	// Handle message patterns
-	switch {
-	case strings.Contains(strings.ToLower(message), "max_tokens"):
-		// Translate max_tokens related errors
-		if strings.Contains(strings.ToLower(message), "too large") ||
-			strings.Contains(strings.ToLower(message), "exceeds") {
-			return "The requested max_tokens exceeds the model's maximum output limit. Please reduce max_tokens."
-		}
-		if strings.Contains(strings.ToLower(message), "could not finish") ||
-			strings.Contains(strings.ToLower(message), "output limit was reached") {
-			return "The response was truncated because max_tokens was reached. Please increase max_tokens for longer responses."
-		}
-		return message
-
-	case strings.Contains(strings.ToLower(message), "context length"):
-		return "The request exceeds the model's context window. Please reduce the length of your messages."
-
-	case strings.Contains(strings.ToLower(message), "rate limit"):
-		return "Rate limit exceeded. Please slow down your requests."
-
-	default:
-		return message
-	}
-}
-
-// mapAnthropicErrorTypeToStatus maps Anthropic error types to HTTP status codes.
-func mapAnthropicErrorTypeToStatus(errType string) int {
-	switch errType {
-	case "invalid_request_error":
-		return http.StatusBadRequest // 400
-	case "authentication_error":
-		return http.StatusUnauthorized // 401
-	case "permission_error":
-		return http.StatusForbidden // 403
-	case "not_found_error":
-		return http.StatusNotFound // 404
-	case "rate_limit_error":
-		return http.StatusTooManyRequests // 429
-	case "overloaded_error":
-		return http.StatusServiceUnavailable // 503
-	case "api_error":
-		return http.StatusInternalServerError // 500
-	default:
-		return http.StatusInternalServerError // 500
-	}
 }

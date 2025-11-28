@@ -432,3 +432,57 @@ Error messages are now translated to feel native to each API:
 ### 12.5 Files Modified
 - `internal/frontdoor/anthropic/handler.go` - OpenAI→Anthropic error translation
 - `internal/frontdoor/openai/handler.go` - Anthropic→OpenAI error translation
+
+---
+
+## Phase 13: Domain Error Abstraction ✅ COMPLETED
+
+### 13.1 Problem
+Error handling was duplicated across frontdoors with inline translation logic. This made it difficult to maintain consistency and add new error types.
+
+### 13.2 Solution: Canonical Error Types
+Created a domain-level error abstraction that:
+- Defines canonical error types that are API-agnostic
+- Provides conversion from API-specific errors to canonical errors
+- Provides formatting from canonical errors to API-specific responses
+
+### 13.3 New Domain Types (`internal/domain/errors.go`)
+- `ErrorType` - Canonical error categories (invalid_request, authentication, rate_limit, etc.)
+- `ErrorCode` - Specific error codes (context_length_exceeded, rate_limit_exceeded, etc.)
+- `APIError` - Canonical error struct with type, code, message, and source API
+- Convenience constructors: `ErrInvalidRequest()`, `ErrRateLimit()`, `ErrContextLength()`, etc.
+
+### 13.4 API Client Updates
+- Added `ToCanonical()` method to `internal/api/anthropic/types.go` `APIError`
+- Added `ToCanonical()` method to `internal/api/openai/types.go` `APIError`
+- Both methods map provider-specific error types/codes to domain error types
+- API clients now return `domain.APIError` instead of provider-specific errors
+
+### 13.5 Codec Error Formatting (`internal/codec/errors.go`)
+- `ErrorFormatter` interface for API-specific error formatting
+- `OpenAIErrorFormatter` - Formats errors as OpenAI JSON
+- `AnthropicErrorFormatter` - Formats errors as Anthropic JSON
+- `WriteError(w, err, apiType)` - Central function for writing error responses
+
+### 13.6 Frontdoor Simplification
+- Removed all inline error translation functions from frontdoors
+- Both handlers now use simple `codec.WriteError(w, err, domain.APIType*)`
+- Error formatting is fully delegated to the codec layer
+
+### 13.7 Architecture Flow
+```
+Provider Error → ToCanonical() → domain.APIError → codec.WriteError() → API Response
+```
+
+### 13.8 Files Created
+- `internal/domain/errors.go` - Canonical error types and constructors
+- `internal/codec/errors.go` - Error formatters and WriteError function
+
+### 13.9 Files Modified
+- `internal/api/anthropic/types.go` - Added ToCanonical() method
+- `internal/api/anthropic/client.go` - Return canonical errors
+- `internal/api/openai/types.go` - Added ToCanonical() method  
+- `internal/api/openai/client.go` - Return canonical errors
+- `internal/frontdoor/anthropic/handler.go` - Use codec.WriteError()
+- `internal/frontdoor/openai/handler.go` - Use codec.WriteError()
+- `AGENTS.md` - Documented error handling architecture
