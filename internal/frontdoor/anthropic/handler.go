@@ -3,12 +3,14 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
 	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
@@ -208,18 +210,27 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		// Pass through to native provider
 		respBody, err := ctp.CountTokens(r.Context(), body)
 		if err != nil {
-			logger.Error("count_tokens failed",
-				slog.String("request_id", requestID),
-				slog.String("error", err.Error()),
-			)
-			server.AddError(r.Context(), err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Check if this is a "not supported" error - if so, fall back to estimation
+			if strings.Contains(err.Error(), "count_tokens not supported") {
+				logger.Debug("count_tokens not supported by provider, falling back to estimation",
+					slog.String("request_id", requestID),
+				)
+				// Fall through to estimation below
+			} else {
+				// Real error from provider
+				logger.Error("count_tokens failed",
+					slog.String("request_id", requestID),
+					slog.String("error", err.Error()),
+				)
+				server.AddError(r.Context(), err)
+				writeAPIError(w, err)
+				return
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(respBody)
 			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(respBody)
-		return
 	}
 
 	// Fallback: use estimation via codec
@@ -365,4 +376,49 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		slog.String("requested_model", req.Model),
 		slog.String("served_model", recordResp.Model),
 	)
+}
+
+// writeAPIError writes an error response with the appropriate HTTP status code.
+// It detects Anthropic API errors and maps their error types to HTTP status codes.
+func writeAPIError(w http.ResponseWriter, err error) {
+	var apiErr *anthropicapi.APIError
+	if errors.As(err, &apiErr) {
+		statusCode := mapErrorTypeToStatus(apiErr.Type)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		// Return the error in Anthropic format
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"type": "error",
+			"error": map[string]string{
+				"type":    apiErr.Type,
+				"message": apiErr.Message,
+			},
+		})
+		return
+	}
+
+	// For non-API errors, return a generic error response
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+// mapErrorTypeToStatus maps Anthropic error types to HTTP status codes.
+func mapErrorTypeToStatus(errType string) int {
+	switch errType {
+	case "invalid_request_error":
+		return http.StatusBadRequest // 400
+	case "authentication_error":
+		return http.StatusUnauthorized // 401
+	case "permission_error":
+		return http.StatusForbidden // 403
+	case "not_found_error":
+		return http.StatusNotFound // 404
+	case "rate_limit_error":
+		return http.StatusTooManyRequests // 429
+	case "overloaded_error":
+		return http.StatusServiceUnavailable // 503
+	case "api_error":
+		return http.StatusInternalServerError // 500
+	default:
+		return http.StatusInternalServerError // 500
+	}
 }
