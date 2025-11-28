@@ -2,8 +2,10 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
@@ -193,7 +195,24 @@ func collapseContentBlocks(blocks anthropic.ContentBlock) (string, error) {
 }
 
 // CanonicalToAPIRequest converts a canonical request to Anthropic API format.
+// For image URL handling with fetching, use CanonicalToAPIRequestWithImageFetching.
 func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequest {
+	return canonicalToAPIRequestInternal(req, nil, nil)
+}
+
+// CanonicalToAPIRequestWithImageFetching converts a canonical request to Anthropic API format,
+// fetching any image URLs and converting them to base64 for Anthropic compatibility.
+func CanonicalToAPIRequestWithImageFetching(ctx context.Context, req *domain.CanonicalRequest, fetcher *codec.ImageFetcher) (*anthropic.MessagesRequest, error) {
+	var fetchErr error
+	result := canonicalToAPIRequestInternal(req, fetcher, &fetchErr)
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+	return result, nil
+}
+
+// canonicalToAPIRequestInternal is the internal implementation that optionally fetches images.
+func canonicalToAPIRequestInternal(req *domain.CanonicalRequest, fetcher *codec.ImageFetcher, fetchErr *error) *anthropic.MessagesRequest {
 	var systemBlocks anthropic.SystemMessages
 	var messages []anthropic.Message
 
@@ -230,6 +249,13 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 						ToolUseID: m.ToolCallID,
 						Content:   m.Content,
 					}},
+				})
+			} else if m.HasRichContent() {
+				// Handle multimodal content (images, etc.)
+				content := convertRichContentToAnthropic(m.RichContent, fetcher, fetchErr)
+				messages = append(messages, anthropic.Message{
+					Role:    m.Role,
+					Content: content,
 				})
 			} else {
 				messages = append(messages, anthropic.Message{
@@ -341,6 +367,12 @@ func CanonicalToAPIRequest(req *domain.CanonicalRequest) *anthropic.MessagesRequ
 
 // APIResponseToCanonical converts an Anthropic API response to canonical format.
 func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.CanonicalResponse {
+	return APIResponseToCanonicalWithRateLimits(apiResp, nil)
+}
+
+// APIResponseToCanonicalWithRateLimits converts an Anthropic API response to canonical format,
+// including rate limit information from the upstream response.
+func APIResponseToCanonicalWithRateLimits(apiResp *anthropic.MessagesResponse, rateLimits *anthropic.RateLimitHeaders) *domain.CanonicalResponse {
 	content := ""
 	var toolCalls []domain.ToolCall
 
@@ -376,7 +408,7 @@ func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.Canonic
 		ToolCalls: toolCalls,
 	}
 
-	return &domain.CanonicalResponse{
+	resp := &domain.CanonicalResponse{
 		ID:      apiResp.ID,
 		Object:  "chat.completion", // Map to OpenAI-compatible object type
 		Created: 0,                 // Anthropic doesn't return created timestamp
@@ -395,6 +427,20 @@ func APIResponseToCanonical(apiResp *anthropic.MessagesResponse) *domain.Canonic
 		},
 		SourceAPIType: domain.APITypeAnthropic,
 	}
+
+	// Add rate limit info if present
+	if rateLimits != nil {
+		resp.RateLimits = &domain.RateLimitInfo{
+			RequestsLimit:     rateLimits.RequestsLimit,
+			RequestsRemaining: rateLimits.RequestsRemaining,
+			RequestsReset:     rateLimits.RequestsReset,
+			TokensLimit:       rateLimits.TokensLimit,
+			TokensRemaining:   rateLimits.TokensRemaining,
+			TokensReset:       rateLimits.TokensReset,
+		}
+	}
+
+	return resp
 }
 
 // mapAnthropicStopReason maps Anthropic stop_reason to OpenAI finish_reason
@@ -491,6 +537,139 @@ func CanonicalToAPIChunk(event *domain.CanonicalEvent) *anthropic.ContentBlockDe
 			Text: event.ContentDelta,
 		},
 	}
+}
+
+// convertRichContentToAnthropic converts domain.MessageContent to Anthropic content blocks.
+// If a fetcher is provided, image URLs will be fetched and converted to base64.
+func convertRichContentToAnthropic(content *domain.MessageContent, fetcher *codec.ImageFetcher, fetchErr *error) anthropic.ContentBlock {
+	if content == nil || content.IsSimpleText() {
+		text := ""
+		if content != nil {
+			text = content.Text
+		}
+		return anthropic.ContentBlock{{Type: "text", Text: text}}
+	}
+
+	var result anthropic.ContentBlock
+	for _, part := range content.Parts {
+		switch part.Type {
+		case domain.ContentTypeText:
+			result = append(result, anthropic.ContentPart{
+				Type: "text",
+				Text: part.Text,
+			})
+
+		case domain.ContentTypeImage:
+			// Already base64 encoded image
+			if part.Source != nil {
+				result = append(result, anthropic.ContentPart{
+					Type: "image",
+					Source: &anthropic.ImageSource{
+						Type:      part.Source.Type,
+						MediaType: part.Source.MediaType,
+						Data:      part.Source.Data,
+					},
+				})
+			}
+
+		case domain.ContentTypeImageURL:
+			// Image URL that needs to be fetched and converted
+			if part.ImageURL != nil {
+				if fetcher != nil {
+					// Fetch and convert the image
+					source, err := fetcher.FetchAndConvert(context.Background(), part.ImageURL.URL)
+					if err != nil {
+						if fetchErr != nil {
+							*fetchErr = fmt.Errorf("failed to fetch image from %s: %w", part.ImageURL.URL, err)
+						}
+						// Still add a placeholder so the message structure is preserved
+						continue
+					}
+					result = append(result, anthropic.ContentPart{
+						Type: "image",
+						Source: &anthropic.ImageSource{
+							Type:      source.Type,
+							MediaType: source.MediaType,
+							Data:      source.Data,
+						},
+					})
+				} else {
+					// Check if it's a data URL (already base64)
+					if strings.HasPrefix(part.ImageURL.URL, "data:") {
+						source, err := parseDataURL(part.ImageURL.URL)
+						if err == nil {
+							result = append(result, anthropic.ContentPart{
+								Type: "image",
+								Source: &anthropic.ImageSource{
+									Type:      source.Type,
+									MediaType: source.MediaType,
+									Data:      source.Data,
+								},
+							})
+						}
+					}
+					// If not a data URL and no fetcher, we can't handle it
+					// The image will be skipped
+				}
+			}
+
+		case domain.ContentTypeToolUse:
+			result = append(result, anthropic.ContentPart{
+				Type:  "tool_use",
+				ID:    part.ID,
+				Name:  part.Name,
+				Input: part.Input,
+			})
+
+		case domain.ContentTypeToolResult:
+			result = append(result, anthropic.ContentPart{
+				Type:      "tool_result",
+				ToolUseID: part.ToolUseID,
+				Content:   part.Content,
+				IsError:   part.IsError,
+			})
+		}
+	}
+
+	return result
+}
+
+// parseDataURL parses a data URL and extracts the base64 content.
+func parseDataURL(url string) (*domain.ImageSource, error) {
+	if !strings.HasPrefix(url, "data:") {
+		return nil, fmt.Errorf("not a data URL")
+	}
+
+	// Remove "data:" prefix
+	content := url[5:]
+
+	// Find the comma separator
+	commaIdx := strings.Index(content, ",")
+	if commaIdx == -1 {
+		return nil, fmt.Errorf("invalid data URL: missing comma separator")
+	}
+
+	metadata := content[:commaIdx]
+	data := content[commaIdx+1:]
+
+	// Parse metadata
+	parts := strings.Split(metadata, ";")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("invalid data URL: missing media type")
+	}
+
+	mediaType := parts[0]
+
+	// Normalize image/jpg to image/jpeg
+	if mediaType == "image/jpg" {
+		mediaType = "image/jpeg"
+	}
+
+	return &domain.ImageSource{
+		Type:      "base64",
+		MediaType: mediaType,
+		Data:      data,
+	}, nil
 }
 
 // Ensure Codec implements the interface

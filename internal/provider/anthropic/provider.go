@@ -3,13 +3,25 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
 	anthropicapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
 	anthropiccodec "github.com/tjfontaine/polyglot-llm-gateway/internal/codec/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+)
+
+const (
+	// defaultMaxRetries is the default number of retry attempts for overload errors.
+	defaultMaxRetries = 2
+	// defaultBaseDelay is the base delay for exponential backoff.
+	defaultBaseDelay = 500 * time.Millisecond
+	// defaultMaxDelay caps the backoff delay.
+	defaultMaxDelay = 5 * time.Second
 )
 
 // ProviderOption configures the provider.
@@ -29,18 +41,36 @@ func WithHTTPClient(httpClient *http.Client) ProviderOption {
 	}
 }
 
+// WithMaxRetries sets the maximum number of retries for overload errors.
+func WithMaxRetries(maxRetries int) ProviderOption {
+	return func(p *Provider) {
+		p.maxRetries = maxRetries
+	}
+}
+
+// WithLogger sets the logger for the provider.
+func WithLogger(logger *slog.Logger) ProviderOption {
+	return func(p *Provider) {
+		p.logger = logger
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom Anthropic client.
 type Provider struct {
 	client     *anthropicapi.Client
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	maxRetries int
+	logger     *slog.Logger
 }
 
 // New creates a new Anthropic provider.
 func New(apiKey string, opts ...ProviderOption) *Provider {
 	p := &Provider{
-		apiKey: apiKey,
+		apiKey:     apiKey,
+		maxRetries: defaultMaxRetries,
+		logger:     slog.Default(),
 	}
 
 	for _, opt := range opts {
@@ -60,6 +90,25 @@ func New(apiKey string, opts ...ProviderOption) *Provider {
 	return p
 }
 
+// isOverloadedError checks if the error is an Anthropic 529 overloaded error.
+func isOverloadedError(err error) bool {
+	var apiErr *domain.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Type == domain.ErrorTypeOverloaded
+	}
+	return false
+}
+
+// calculateBackoff returns the delay for the given retry attempt using exponential backoff.
+func calculateBackoff(attempt int) time.Duration {
+	// Exponential backoff: baseDelay * 2^attempt
+	delay := float64(defaultBaseDelay) * math.Pow(2, float64(attempt))
+	if delay > float64(defaultMaxDelay) {
+		delay = float64(defaultMaxDelay)
+	}
+	return time.Duration(delay)
+}
+
 func (p *Provider) Name() string {
 	return "anthropic"
 }
@@ -76,13 +125,52 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 		UserAgent: req.UserAgent,
 	}
 
-	resp, err := p.client.CreateMessage(ctx, apiReq, opts)
-	if err != nil {
-		return nil, err
+	var respWithHeaders *anthropicapi.MessagesResponseWithHeaders
+	var lastErr error
+
+	// Retry loop for handling 529 overloaded errors
+	for attempt := 0; attempt <= p.maxRetries; attempt++ {
+		respWithHeaders, lastErr = p.client.CreateMessage(ctx, apiReq, opts)
+		if lastErr == nil {
+			// Success - convert and return (including rate limit headers)
+			return anthropiccodec.APIResponseToCanonicalWithRateLimits(respWithHeaders.Response, respWithHeaders.RateLimits), nil
+		}
+
+		// Check if this is a retryable overload error
+		if !isOverloadedError(lastErr) {
+			// Non-retryable error, return immediately
+			return nil, lastErr
+		}
+
+		// Don't retry if this was our last attempt
+		if attempt == p.maxRetries {
+			break
+		}
+
+		// Calculate backoff delay
+		delay := calculateBackoff(attempt)
+		p.logger.Warn("Anthropic overloaded, retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_retries", p.maxRetries),
+			slog.Duration("backoff", delay),
+		)
+
+		// Wait before retrying, respecting context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+			// Continue to next attempt
+		}
 	}
 
-	// Use codec to convert API response to canonical response
-	return anthropiccodec.APIResponseToCanonical(resp), nil
+	// All retries exhausted, return a 503-mapped overloaded error
+	p.logger.Error("Anthropic overloaded after all retries",
+		slog.Int("retries", p.maxRetries),
+		slog.String("error", lastErr.Error()),
+	)
+	return nil, domain.ErrOverloaded("Anthropic API is overloaded after retries. Please try again later.").
+		WithStatusCode(http.StatusServiceUnavailable)
 }
 
 func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
@@ -93,9 +181,53 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 		UserAgent: req.UserAgent,
 	}
 
-	stream, err := p.client.StreamMessage(ctx, apiReq, opts)
-	if err != nil {
-		return nil, err
+	var stream <-chan anthropicapi.StreamEventResult
+	var lastErr error
+
+	// Retry loop for handling 529 overloaded errors
+	for attempt := 0; attempt <= p.maxRetries; attempt++ {
+		stream, lastErr = p.client.StreamMessage(ctx, apiReq, opts)
+		if lastErr == nil {
+			// Success
+			break
+		}
+
+		// Check if this is a retryable overload error
+		if !isOverloadedError(lastErr) {
+			// Non-retryable error, return immediately
+			return nil, lastErr
+		}
+
+		// Don't retry if this was our last attempt
+		if attempt == p.maxRetries {
+			break
+		}
+
+		// Calculate backoff delay
+		delay := calculateBackoff(attempt)
+		p.logger.Warn("Anthropic overloaded on stream, retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_retries", p.maxRetries),
+			slog.Duration("backoff", delay),
+		)
+
+		// Wait before retrying, respecting context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+			// Continue to next attempt
+		}
+	}
+
+	// If we exhausted retries
+	if lastErr != nil {
+		p.logger.Error("Anthropic overloaded on stream after all retries",
+			slog.Int("retries", p.maxRetries),
+			slog.String("error", lastErr.Error()),
+		)
+		return nil, domain.ErrOverloaded("Anthropic API is overloaded after retries. Please try again later.").
+			WithStatusCode(http.StatusServiceUnavailable)
 	}
 
 	out := make(chan domain.CanonicalEvent)

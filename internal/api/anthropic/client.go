@@ -75,7 +75,7 @@ type RequestOptions struct {
 }
 
 // CreateMessage sends a messages request.
-func (c *Client) CreateMessage(ctx context.Context, req *MessagesRequest, opts *RequestOptions) (*MessagesResponse, error) {
+func (c *Client) CreateMessage(ctx context.Context, req *MessagesRequest, opts *RequestOptions) (*MessagesResponseWithHeaders, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -111,7 +111,57 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessagesRequest, opts *
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return &result, nil
+	return &MessagesResponseWithHeaders{
+		Response:   &result,
+		RateLimits: parseRateLimitHeaders(resp.Header),
+	}, nil
+}
+
+// MessagesResponseWithHeaders wraps the response with rate limit headers.
+type MessagesResponseWithHeaders struct {
+	Response   *MessagesResponse
+	RateLimits *RateLimitHeaders
+}
+
+// RateLimitHeaders contains parsed Anthropic rate limit headers.
+type RateLimitHeaders struct {
+	RequestsLimit     int
+	RequestsRemaining int
+	RequestsReset     string
+	TokensLimit       int
+	TokensRemaining   int
+	TokensReset       string
+}
+
+// parseRateLimitHeaders extracts rate limit headers from the HTTP response.
+func parseRateLimitHeaders(headers http.Header) *RateLimitHeaders {
+	rl := &RateLimitHeaders{}
+
+	// Parse Anthropic rate limit headers
+	// anthropic-ratelimit-requests-limit, anthropic-ratelimit-requests-remaining, anthropic-ratelimit-requests-reset
+	// anthropic-ratelimit-tokens-limit, anthropic-ratelimit-tokens-remaining, anthropic-ratelimit-tokens-reset
+	if v := headers.Get("anthropic-ratelimit-requests-limit"); v != "" {
+		fmt.Sscanf(v, "%d", &rl.RequestsLimit)
+	}
+	if v := headers.Get("anthropic-ratelimit-requests-remaining"); v != "" {
+		fmt.Sscanf(v, "%d", &rl.RequestsRemaining)
+	}
+	rl.RequestsReset = headers.Get("anthropic-ratelimit-requests-reset")
+
+	if v := headers.Get("anthropic-ratelimit-tokens-limit"); v != "" {
+		fmt.Sscanf(v, "%d", &rl.TokensLimit)
+	}
+	if v := headers.Get("anthropic-ratelimit-tokens-remaining"); v != "" {
+		fmt.Sscanf(v, "%d", &rl.TokensRemaining)
+	}
+	rl.TokensReset = headers.Get("anthropic-ratelimit-tokens-reset")
+
+	// Check if any rate limit info was found
+	if rl.RequestsLimit == 0 && rl.TokensLimit == 0 {
+		return nil
+	}
+
+	return rl
 }
 
 // StreamMessage sends a streaming messages request and returns a channel of events.

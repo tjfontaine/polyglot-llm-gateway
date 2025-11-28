@@ -557,3 +557,63 @@ Updated `AGENTS.md` with comprehensive domain model architecture documentation c
 - `internal/provider/registry.go` - Pass `use_responses_api` config to provider
 - `internal/config/config.go` - Add `UseResponsesAPI` field
 - `config.yaml` - Enable Responses API for OpenAI
+
+---
+
+## Phase 15: 2025 Spec Alignment ✅ COMPLETED
+
+Implementing features from the "Gateway Implementation Roadmap: Aligning with 2025 Spec" to improve interoperability between OpenAI v1/responses and Anthropic v1/messages APIs.
+
+### 15.1 Anthropic 529 Overload Retry/Backoff ✅
+- [x] Added exponential backoff retry logic for Anthropic 529 (overloaded) errors
+- [x] Configurable max retries (default: 2 attempts)
+- [x] Backoff delays: 500ms, 1s, 2s (exponential with 5s max cap)
+- [x] Retry logic applies to both `Complete` and `Stream` methods
+- [x] Context cancellation respected during backoff waits
+- [x] Returns 503 Service Unavailable after exhausting retries
+- [x] Added `WithMaxRetries()` and `WithLogger()` provider options
+
+### 15.2 Responses API Status Mapping for Tool Calls ✅
+- [x] Map Anthropic `tool_use` stop_reason to OpenAI Responses API `status: incomplete`
+- [x] Map OpenAI `tool_calls` finish_reason to `status: incomplete`
+- [x] Updated `ToResponsesAPIResponse()` in `domain/responses.go`
+- [x] Updated streaming handler to capture `FinishReason` and set appropriate status
+- [x] Updated storage record status to reflect actual response status
+
+### 15.3 Rate Limit Header Normalization ✅
+- [x] Added `RateLimitInfo` struct to `domain/types.go` for capturing upstream rate limits
+- [x] Updated Anthropic API client to parse rate limit headers from responses
+- [x] Added `RateLimitHeaders` struct and `parseRateLimitHeaders()` function
+- [x] Updated `APIResponseToCanonicalWithRateLimits()` in Anthropic codec
+- [x] Added `RateLimitNormalizingMiddleware` in `server/middleware.go`
+- [x] Updated Anthropic frontdoor handler to write normalized rate limit headers
+- [x] Header mapping:
+  - `anthropic-ratelimit-requests-limit` → `x-ratelimit-limit-requests`
+  - `anthropic-ratelimit-requests-remaining` → `x-ratelimit-remaining-requests`
+  - `anthropic-ratelimit-requests-reset` → `x-ratelimit-reset-requests`
+  - `anthropic-ratelimit-tokens-limit` → `x-ratelimit-limit-tokens`
+  - `anthropic-ratelimit-tokens-remaining` → `x-ratelimit-remaining-tokens`
+  - `anthropic-ratelimit-tokens-reset` → `x-ratelimit-reset-tokens`
+
+### 15.4 Image URL-to-Base64 Conversion ✅
+- [x] Created `ImageFetcher` utility in `internal/codec/images.go`
+- [x] Support for fetching HTTP/HTTPS image URLs
+- [x] Support for parsing data: URLs (already base64 encoded)
+- [x] Configurable HTTP client and max image size (default 20MB)
+- [x] Media type detection from Content-Type header or URL extension
+- [x] Support for image/jpeg, image/png, image/gif, image/webp
+- [x] Added `CanonicalToAPIRequestWithImageFetching()` to Anthropic codec
+- [x] Added `convertRichContentToAnthropic()` helper for multimodal content
+
+### 15.5 Files Created
+- `internal/codec/images.go` - Image URL fetching and base64 conversion utility
+
+### 15.6 Files Modified
+- `internal/provider/anthropic/provider.go` - Added 529 retry/backoff logic
+- `internal/domain/responses.go` - Updated status mapping for tool calls
+- `internal/domain/types.go` - Added `RateLimitInfo` struct
+- `internal/api/anthropic/client.go` - Added rate limit header parsing
+- `internal/codec/anthropic/codec.go` - Added image conversion and rate limit support
+- `internal/server/middleware.go` - Added rate limit normalization middleware
+- `internal/frontdoor/anthropic/handler.go` - Added rate limit header writing
+- `internal/frontdoor/responses/handler.go` - Updated streaming status handling

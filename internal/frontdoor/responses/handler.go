@@ -208,6 +208,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 	// Stream content deltas
 	var fullText strings.Builder
 	var finalUsage *domain.Usage
+	var finishReason string
 
 	for event := range events {
 		if event.Error != nil {
@@ -250,6 +251,11 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		if event.Usage != nil {
 			finalUsage = event.Usage
 		}
+
+		// Capture finish reason for status determination
+		if event.FinishReason != "" {
+			finishReason = event.FinishReason
+		}
 	}
 
 	// Send content_part.done event
@@ -290,12 +296,19 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		Item:        finalOutputItem,
 	})
 
+	// Determine response status based on finish reason
+	// Map Anthropic "tool_use" and OpenAI "tool_calls" to "incomplete" status
+	responseStatus := "completed"
+	if finishReason == "tool_calls" || finishReason == "tool_use" {
+		responseStatus = "incomplete"
+	}
+
 	// Build final response
 	finalResp := &domain.ResponsesAPIResponse{
 		ID:                 responseID,
 		Object:             "response",
 		CreatedAt:          createdAt,
-		Status:             "completed",
+		Status:             responseStatus,
 		Model:              req.Model,
 		Output:             []domain.ResponsesOutputItem{finalOutputItem},
 		PreviousResponseID: req.PreviousResponseID,
@@ -327,7 +340,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		record := &storage.ResponseRecord{
 			ID:                 responseID,
 			TenantID:           tenantID,
-			Status:             "completed",
+			Status:             responseStatus,
 			Model:              req.Model,
 			Request:            reqJSON,
 			Response:           respJSON,
