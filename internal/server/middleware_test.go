@@ -134,6 +134,33 @@ func TestSetRateLimits_Integration(t *testing.T) {
 	checkHeader(t, rec, "x-ratelimit-remaining-requests", "95")
 }
 
+func TestRateLimitNormalizingMiddleware_ZeroRemaining(t *testing.T) {
+	// Test that zero remaining is properly reported (clients need to know when they're out of requests)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	info := &RateLimitInfo{
+		RequestsLimit:     100,
+		RequestsRemaining: 0, // Zero remaining should still be reported
+		TokensLimit:       50000,
+		TokensRemaining:   0, // Zero remaining should still be reported
+	}
+
+	wrapped := setupRateLimitsMiddleware(info)(RateLimitNormalizingMiddleware(handler))
+
+	req := httptest.NewRequest("POST", "/v1/messages", nil)
+	rec := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rec, req)
+
+	// Zero remaining values should be set (clients need to know they're rate limited)
+	checkHeader(t, rec, "x-ratelimit-limit-requests", "100")
+	checkHeader(t, rec, "x-ratelimit-remaining-requests", "0")
+	checkHeader(t, rec, "x-ratelimit-limit-tokens", "50000")
+	checkHeader(t, rec, "x-ratelimit-remaining-tokens", "0")
+}
+
 func TestGetRateLimits(t *testing.T) {
 	tests := []struct {
 		name     string

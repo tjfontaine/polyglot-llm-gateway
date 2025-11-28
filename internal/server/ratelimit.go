@@ -84,7 +84,8 @@ func (rw *rateLimitResponseWriter) writeRateLimitHeaders() {
 	if rl.RequestsLimit > 0 {
 		h.Set("x-ratelimit-limit-requests", itoa(rl.RequestsLimit))
 	}
-	if rl.RequestsRemaining > 0 {
+	if rl.RequestsLimit > 0 || rl.RequestsRemaining > 0 {
+		// Only set remaining if we have limit info (0 is a valid remaining value)
 		h.Set("x-ratelimit-remaining-requests", itoa(rl.RequestsRemaining))
 	}
 	if rl.RequestsReset != "" {
@@ -94,7 +95,8 @@ func (rw *rateLimitResponseWriter) writeRateLimitHeaders() {
 	if rl.TokensLimit > 0 {
 		h.Set("x-ratelimit-limit-tokens", itoa(rl.TokensLimit))
 	}
-	if rl.TokensRemaining > 0 {
+	if rl.TokensLimit > 0 || rl.TokensRemaining > 0 {
+		// Only set remaining if we have limit info (0 is a valid remaining value)
 		h.Set("x-ratelimit-remaining-tokens", itoa(rl.TokensRemaining))
 	}
 	if rl.TokensReset != "" {
