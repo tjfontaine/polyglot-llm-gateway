@@ -385,3 +385,50 @@ When requests are routed through `ModelMappingProvider` to a provider that doesn
 
 ### 11.4 Files Modified
 - `internal/frontdoor/anthropic/handler.go` - Added token counter, improved error handling
+
+---
+
+## Phase 12: Cross-API Error Translation ✅ COMPLETED
+
+### 12.1 Problem
+When requests are routed between different API types (e.g., Anthropic frontdoor → OpenAI provider, or vice versa), error responses were not being translated to the expected format for clients. This caused confusion as clients would receive error formats from a different API than they were using.
+
+### 12.2 Anthropic Frontdoor Improvements
+- [x] Added `translateOpenAIError()` to convert OpenAI errors to Anthropic format
+- [x] Added `translateErrorMessage()` for OpenAI→Anthropic message translation
+- [x] Maps OpenAI error types to Anthropic equivalents:
+  - `invalid_request_error` → `invalid_request_error`
+  - `authentication_error` → `authentication_error`
+  - `permission_denied` → `permission_error`
+  - `not_found` → `not_found_error`
+  - `rate_limit_error` → `rate_limit_error`
+  - `server_error` → `api_error`
+- [x] Translates common error messages (max_tokens, context length, rate limit)
+
+### 12.3 OpenAI Frontdoor Improvements
+- [x] Added `writeAPIError()` function with proper error translation
+- [x] Added `translateAnthropicError()` to convert Anthropic errors to OpenAI format
+- [x] Maps Anthropic error types to OpenAI equivalents:
+  - `invalid_request_error` → `invalid_request_error`
+  - `authentication_error` → `authentication_error` (code: `invalid_api_key`)
+  - `permission_error` → `permission_denied`
+  - `not_found_error` → `not_found` (code: `model_not_found`)
+  - `rate_limit_error` → `rate_limit_error` (code: `rate_limit_exceeded`)
+  - `overloaded_error` → `service_unavailable`
+  - `api_error` → `server_error`
+- [x] Returns proper OpenAI JSON error format: `{"error": {"message": "...", "type": "...", "code": "..."}}`
+
+### 12.4 Natural Error Responses
+Error messages are now translated to feel native to each API:
+
+**For Anthropic clients:**
+- "Could not finish the message because max_tokens..." → "The response was truncated because max_tokens was reached. Please increase max_tokens for longer responses."
+- Context length errors get Anthropic-style messaging
+
+**For OpenAI clients:**
+- Anthropic errors get OpenAI-style messaging and proper error codes
+- Status codes are properly mapped (400, 401, 403, 404, 429, 503, 500)
+
+### 12.5 Files Modified
+- `internal/frontdoor/anthropic/handler.go` - OpenAI→Anthropic error translation
+- `internal/frontdoor/openai/handler.go` - Anthropic→OpenAI error translation
