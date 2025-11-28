@@ -52,13 +52,13 @@ func detectErrorTypeFromMessage(message string) (domain.ErrorType, domain.ErrorC
 		strings.Contains(msgLower, "too many tokens"):
 		return domain.ErrorTypeContextLength, domain.ErrorCodeContextLengthExceeded
 
+	case strings.Contains(msgLower, "truncated") ||
+		strings.Contains(msgLower, "could not finish") ||
+		strings.Contains(msgLower, "output limit"):
+		return domain.ErrorTypeMaxTokens, domain.ErrorCodeOutputTruncated
+
 	case strings.Contains(msgLower, "max_tokens") ||
 		strings.Contains(msgLower, "maximum tokens"):
-		if strings.Contains(msgLower, "truncated") ||
-			strings.Contains(msgLower, "could not finish") ||
-			strings.Contains(msgLower, "output limit was reached") {
-			return domain.ErrorTypeMaxTokens, domain.ErrorCodeOutputTruncated
-		}
 		return domain.ErrorTypeMaxTokens, domain.ErrorCodeMaxTokensExceeded
 
 	case strings.Contains(msgLower, "rate limit"):
