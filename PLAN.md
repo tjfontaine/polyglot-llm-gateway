@@ -557,3 +557,148 @@ Updated `AGENTS.md` with comprehensive domain model architecture documentation c
 - `internal/provider/registry.go` - Pass `use_responses_api` config to provider
 - `internal/config/config.go` - Add `UseResponsesAPI` field
 - `config.yaml` - Enable Responses API for OpenAI
+
+---
+
+## Phase 15: 2025 Spec Alignment ✅ COMPLETED
+
+Implementing features from the "Gateway Implementation Roadmap: Aligning with 2025 Spec" to improve interoperability between OpenAI v1/responses and Anthropic v1/messages APIs.
+
+### 15.1 Anthropic 529 Overload Retry/Backoff ✅
+- [x] Added exponential backoff retry logic for Anthropic 529 (overloaded) errors
+- [x] Configurable max retries (default: 2 attempts)
+- [x] Backoff delays: 500ms, 1s, 2s (exponential with 5s max cap)
+- [x] Retry logic applies to both `Complete` and `Stream` methods
+- [x] Context cancellation respected during backoff waits
+- [x] Returns 503 Service Unavailable after exhausting retries
+- [x] Added `WithMaxRetries()` and `WithLogger()` provider options
+
+### 15.2 Responses API Status Mapping for Tool Calls ✅
+- [x] Map Anthropic `tool_use` stop_reason to OpenAI Responses API `status: incomplete`
+- [x] Map OpenAI `tool_calls` finish_reason to `status: incomplete`
+- [x] Updated `ToResponsesAPIResponse()` in `domain/responses.go`
+- [x] Updated streaming handler to capture `FinishReason` and set appropriate status
+- [x] Updated storage record status to reflect actual response status
+
+### 15.3 Rate Limit Header Normalization ✅
+- [x] Added `RateLimitInfo` struct to `domain/types.go` for capturing upstream rate limits
+- [x] Updated Anthropic API client to parse rate limit headers from responses
+- [x] Added `RateLimitHeaders` struct and `parseRateLimitHeaders()` function
+- [x] Updated `APIResponseToCanonicalWithRateLimits()` in Anthropic codec
+- [x] Added `RateLimitNormalizingMiddleware` in `server/middleware.go`
+- [x] Updated Anthropic frontdoor handler to write normalized rate limit headers
+- [x] Header mapping:
+  - `anthropic-ratelimit-requests-limit` → `x-ratelimit-limit-requests`
+  - `anthropic-ratelimit-requests-remaining` → `x-ratelimit-remaining-requests`
+  - `anthropic-ratelimit-requests-reset` → `x-ratelimit-reset-requests`
+  - `anthropic-ratelimit-tokens-limit` → `x-ratelimit-limit-tokens`
+  - `anthropic-ratelimit-tokens-remaining` → `x-ratelimit-remaining-tokens`
+  - `anthropic-ratelimit-tokens-reset` → `x-ratelimit-reset-tokens`
+
+### 15.4 Image URL-to-Base64 Conversion ✅
+- [x] Created `ImageFetcher` utility in `internal/codec/images.go`
+- [x] Support for fetching HTTP/HTTPS image URLs
+- [x] Support for parsing data: URLs (already base64 encoded)
+- [x] Configurable HTTP client and max image size (default 20MB)
+- [x] Media type detection from Content-Type header or URL extension
+- [x] Support for image/jpeg, image/png, image/gif, image/webp
+- [x] Added `CanonicalToAPIRequestWithImageFetching()` to Anthropic codec
+- [x] Added `convertRichContentToAnthropic()` helper for multimodal content
+
+### 15.5 Tool Calling Support in Streaming ✅
+- [x] Enhanced Anthropic provider streaming to handle `tool_use` content blocks
+- [x] Added `content_block_start` event handling for tool call initiation
+- [x] Added `input_json_delta` handling for streaming tool call arguments
+- [x] Added `content_block_stop` event handling for tool call completion
+- [x] Capture `stop_reason` from `message_delta` and map to `FinishReason`
+- [x] Added `mapStopReason()` helper for Anthropic→OpenAI finish reason mapping
+- [x] Updated Responses API streaming handler to:
+  - Emit `function_call` output items with proper SSE events
+  - Stream `function_call_arguments.delta` events
+  - Stream `function_call_arguments.done` events
+  - Properly order output items (message first, then function calls)
+  - Handle mixed text content and tool calls in same response
+
+### 15.6 Files Created
+- `internal/codec/images.go` - Image URL fetching and base64 conversion utility
+
+### 15.7 Files Modified
+- `internal/provider/anthropic/provider.go` - Added 529 retry/backoff logic, tool call streaming
+- `internal/domain/responses.go` - Updated status mapping for tool calls
+- `internal/domain/types.go` - Added `RateLimitInfo` struct
+- `internal/api/anthropic/client.go` - Added rate limit header parsing
+- `internal/codec/anthropic/codec.go` - Added image conversion and rate limit support
+- `internal/server/middleware.go` - Added rate limit normalization middleware
+- `internal/frontdoor/anthropic/handler.go` - Added rate limit header writing
+- `internal/frontdoor/responses/handler.go` - Complete rewrite of streaming handler with tool call support
+
+---
+
+## Phase 16: Comprehensive Testing & Web UI Improvements ✅ COMPLETED
+
+### 16.1 Anthropic Provider Tests ✅
+- [x] Added tests for 529 retry/backoff success after transient failures
+- [x] Added tests for 529 retry exhaustion with proper error
+- [x] Added tests for non-retryable errors (auth, etc.) not retrying
+- [x] Added tests for rate limit header capture in responses
+- [x] Added tests for tool call extraction from non-streaming responses
+- [x] Added tests for tool call streaming events
+- [x] Added tests for `mapStopReason` function
+
+### 16.2 Image URL Conversion Tests ✅
+- [x] Added tests for HTTP URL fetching and base64 conversion
+- [x] Added tests for data URL parsing (base64 encoded)
+- [x] Added tests for media type normalization (image/jpg → image/jpeg)
+- [x] Added tests for invalid URL schemes
+- [x] Added tests for HTTP errors
+- [x] Added tests for oversized images
+- [x] Added tests for unsupported media types
+- [x] Added tests for Content-Type header parsing
+- [x] Added unit tests for `inferMediaType`, `isSupportedMediaType`, `normalizeMediaType`, `parseDataURL`
+
+### 16.3 Rate Limit Middleware Tests ✅
+- [x] Added tests for rate limit header normalization
+- [x] Added tests for partial rate limit info (requests but not tokens)
+- [x] Added tests for no rate limits in context
+- [x] Added integration tests for SetRateLimits + middleware chain
+
+### 16.4 Responses API Handler Tests ✅
+- [x] Added tests for non-streaming response creation
+- [x] Added tests for streaming text content with SSE events
+- [x] Added tests for streaming tool calls with all events:
+  - `response.output_item.added` for function_call
+  - `response.function_call_arguments.delta`
+  - `response.function_call_arguments.done`
+  - `response.output_item.done`
+- [x] Added tests for mixed content (text + tool calls)
+- [x] Added tests for non-streaming tool calls
+- [x] Added tests for `incomplete` status mapping
+
+### 16.5 Web UI Tool Call Display ✅
+- [x] Updated `InteractionDetail` type to include typed `ResponseData`
+- [x] Added `ResponseOutputItem` and `ResponseContentPart` types
+- [x] Created `OutputItemCard` component for rendering output items
+- [x] Created `ResponseSection` component for structured response display
+- [x] Tool calls displayed with:
+  - Violet color scheme to distinguish from messages
+  - Function name and call ID
+  - Pretty-printed JSON arguments
+  - Status badge for completion status
+- [x] Tool results displayed with:
+  - Cyan color scheme
+  - Call ID reference
+  - Output content
+- [x] Added tool call indicator badge in interaction list (for `incomplete` status)
+- [x] Added token usage display when available
+
+### 16.6 Test Files Created
+- `internal/codec/images_test.go` - Image URL conversion tests
+- `internal/server/middleware_test.go` - Rate limit middleware tests
+- `internal/frontdoor/responses/handler_test.go` - Responses API handler tests
+
+### 16.7 Test Files Modified
+- `internal/provider/anthropic/provider_test.go` - Added retry/backoff, rate limits, tool call tests
+
+### 16.8 Web UI Files Modified
+- `web/control-plane/src/types/index.ts` - Added response output types
+- `web/control-plane/src/pages/Data.tsx` - Added tool call rendering components

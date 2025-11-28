@@ -151,6 +151,22 @@ type CanonicalResponse struct {
 
 	// SystemFingerprint from the provider (OpenAI specific)
 	SystemFingerprint string `json:"system_fingerprint,omitempty"`
+
+	// RateLimits contains rate limit information from the upstream provider.
+	RateLimits *RateLimitInfo `json:"-"`
+}
+
+// RateLimitInfo contains rate limit information from upstream providers.
+type RateLimitInfo struct {
+	// Request limits
+	RequestsLimit     int    `json:"requests_limit,omitempty"`
+	RequestsRemaining int    `json:"requests_remaining,omitempty"`
+	RequestsReset     string `json:"requests_reset,omitempty"` // Duration or timestamp
+
+	// Token limits
+	TokensLimit     int    `json:"tokens_limit,omitempty"`
+	TokensRemaining int    `json:"tokens_remaining,omitempty"`
+	TokensReset     string `json:"tokens_reset,omitempty"` // Duration or timestamp
 }
 
 // Choice represents a single completion choice.

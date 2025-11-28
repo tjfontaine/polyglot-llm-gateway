@@ -431,3 +431,376 @@ func TestCountTokens_MockServer(t *testing.T) {
 		t.Errorf("expected 25 input_tokens, got %d", resp.InputTokens)
 	}
 }
+
+// Tests for 529 retry/backoff logic
+
+func TestComplete_529Retry_Success(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			// First two attempts return 529 overloaded
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable) // 529 maps to 503
+			fmt.Fprintln(w, `{"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}`)
+			return
+		}
+		// Third attempt succeeds
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{
+  "id": "msg_123",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "Hello!"}],
+  "model": "claude-3-haiku-20240307",
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 10, "output_tokens": 5}
+}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL), WithMaxRetries(2))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "Hello"}},
+		MaxTokens: 100,
+	}
+
+	resp, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+
+	if attempts != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attempts)
+	}
+
+	if resp.ID != "msg_123" {
+		t.Errorf("Unexpected response ID: %s", resp.ID)
+	}
+}
+
+func TestComplete_529Retry_ExhaustedRetries(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		// Always return 529 overloaded
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintln(w, `{"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL), WithMaxRetries(2))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "Hello"}},
+		MaxTokens: 100,
+	}
+
+	_, err := p.Complete(context.Background(), req)
+	if err == nil {
+		t.Fatal("Expected error after exhausting retries")
+	}
+
+	// Should have tried 3 times (initial + 2 retries)
+	if attempts != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attempts)
+	}
+
+	// Error should mention overloaded
+	if !contains(err.Error(), "overloaded") {
+		t.Errorf("Expected error to mention 'overloaded', got: %v", err)
+	}
+}
+
+func TestComplete_NonRetryableError(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		// Return authentication error (not retryable)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprintln(w, `{"type": "error", "error": {"type": "authentication_error", "message": "Invalid API key"}}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL), WithMaxRetries(2))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "Hello"}},
+		MaxTokens: 100,
+	}
+
+	_, err := p.Complete(context.Background(), req)
+	if err == nil {
+		t.Fatal("Expected error for authentication failure")
+	}
+
+	// Should NOT retry for non-retryable errors
+	if attempts != 1 {
+		t.Errorf("Expected 1 attempt (no retries), got %d", attempts)
+	}
+}
+
+func TestComplete_RateLimitHeaders(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set rate limit headers
+		w.Header().Set("anthropic-ratelimit-requests-limit", "100")
+		w.Header().Set("anthropic-ratelimit-requests-remaining", "95")
+		w.Header().Set("anthropic-ratelimit-requests-reset", "2024-01-01T00:00:00Z")
+		w.Header().Set("anthropic-ratelimit-tokens-limit", "100000")
+		w.Header().Set("anthropic-ratelimit-tokens-remaining", "99000")
+		w.Header().Set("anthropic-ratelimit-tokens-reset", "2024-01-01T00:01:00Z")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{
+  "id": "msg_123",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "Hello!"}],
+  "model": "claude-3-haiku-20240307",
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 10, "output_tokens": 5}
+}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "Hello"}},
+		MaxTokens: 100,
+	}
+
+	resp, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+
+	// Verify rate limit info is captured
+	if resp.RateLimits == nil {
+		t.Fatal("Expected RateLimits to be set")
+	}
+
+	if resp.RateLimits.RequestsLimit != 100 {
+		t.Errorf("Expected RequestsLimit=100, got %d", resp.RateLimits.RequestsLimit)
+	}
+	if resp.RateLimits.RequestsRemaining != 95 {
+		t.Errorf("Expected RequestsRemaining=95, got %d", resp.RateLimits.RequestsRemaining)
+	}
+	if resp.RateLimits.TokensLimit != 100000 {
+		t.Errorf("Expected TokensLimit=100000, got %d", resp.RateLimits.TokensLimit)
+	}
+	if resp.RateLimits.TokensRemaining != 99000 {
+		t.Errorf("Expected TokensRemaining=99000, got %d", resp.RateLimits.TokensRemaining)
+	}
+}
+
+func TestComplete_ToolCalls(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{
+  "id": "msg_123",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "I'll check the weather for you."},
+    {"type": "tool_use", "id": "toolu_123", "name": "get_weather", "input": {"location": "San Francisco"}}
+  ],
+  "model": "claude-3-haiku-20240307",
+  "stop_reason": "tool_use",
+  "usage": {"input_tokens": 50, "output_tokens": 30}
+}`)
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "What's the weather in SF?"}},
+		MaxTokens: 100,
+		Tools: []domain.ToolDefinition{{
+			Type: "function",
+			Function: domain.FunctionDef{
+				Name:        "get_weather",
+				Description: "Get weather for a location",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]string{"type": "string"},
+					},
+				},
+			},
+		}},
+	}
+
+	resp, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		t.Fatal("Expected at least one choice")
+	}
+
+	choice := resp.Choices[0]
+
+	// Should have tool_calls finish reason
+	if choice.FinishReason != "tool_calls" {
+		t.Errorf("Expected finish_reason='tool_calls', got %s", choice.FinishReason)
+	}
+
+	// Should have text content
+	if !contains(choice.Message.Content, "weather") {
+		t.Errorf("Expected content to contain 'weather', got: %s", choice.Message.Content)
+	}
+
+	// Should have tool call
+	if len(choice.Message.ToolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(choice.Message.ToolCalls))
+	}
+
+	tc := choice.Message.ToolCalls[0]
+	if tc.ID != "toolu_123" {
+		t.Errorf("Expected tool call ID='toolu_123', got %s", tc.ID)
+	}
+	if tc.Function.Name != "get_weather" {
+		t.Errorf("Expected function name='get_weather', got %s", tc.Function.Name)
+	}
+}
+
+func TestStream_ToolCalls(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		flusher, _ := w.(http.Flusher)
+
+		// Simulate streaming events for a tool call
+		events := []string{
+			`event: message_start
+data: {"type": "message_start", "message": {"id": "msg_123", "type": "message", "role": "assistant", "content": [], "model": "claude-3-haiku-20240307", "usage": {"input_tokens": 50}}}`,
+
+			`event: content_block_start
+data: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_123", "name": "get_weather"}}`,
+
+			`event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"location\":"}}`,
+
+			`event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"SF\"}"}}`,
+
+			`event: content_block_stop
+data: {"type": "content_block_stop", "index": 0}`,
+
+			`event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 30}}`,
+
+			`event: message_stop
+data: {"type": "message_stop"}`,
+		}
+
+		for _, event := range events {
+			fmt.Fprintln(w, event)
+			fmt.Fprintln(w)
+			flusher.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	p := New("test-key", WithBaseURL(ts.URL))
+
+	req := &domain.CanonicalRequest{
+		Model:     "claude-3-haiku-20240307",
+		Messages:  []domain.Message{{Role: "user", Content: "What's the weather?"}},
+		MaxTokens: 100,
+		Stream:    true,
+	}
+
+	events, err := p.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Stream returned error: %v", err)
+	}
+
+	var toolCallEvents []domain.CanonicalEvent
+	var finishReason string
+
+	for event := range events {
+		if event.Error != nil {
+			t.Fatalf("Stream event error: %v", event.Error)
+		}
+		if event.ToolCall != nil {
+			toolCallEvents = append(toolCallEvents, event)
+		}
+		if event.FinishReason != "" {
+			finishReason = event.FinishReason
+		}
+	}
+
+	// Should have tool call events
+	if len(toolCallEvents) < 2 {
+		t.Errorf("Expected at least 2 tool call events, got %d", len(toolCallEvents))
+	}
+
+	// Check first event is content_block_start
+	if len(toolCallEvents) > 0 && toolCallEvents[0].Type != domain.EventTypeContentBlockStart {
+		t.Errorf("Expected first event to be content_block_start, got %v", toolCallEvents[0].Type)
+	}
+
+	// Check tool call ID and name
+	if len(toolCallEvents) > 0 {
+		tc := toolCallEvents[0].ToolCall
+		if tc.ID != "toolu_123" {
+			t.Errorf("Expected tool call ID='toolu_123', got %s", tc.ID)
+		}
+		if tc.Function.Name != "get_weather" {
+			t.Errorf("Expected function name='get_weather', got %s", tc.Function.Name)
+		}
+	}
+
+	// Check finish reason is mapped correctly
+	if finishReason != "tool_calls" {
+		t.Errorf("Expected finish_reason='tool_calls', got %s", finishReason)
+	}
+}
+
+func TestMapStopReason(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"end_turn", "stop"},
+		{"max_tokens", "length"},
+		{"stop_sequence", "stop"},
+		{"tool_use", "tool_calls"},
+		{"unknown", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := mapStopReason(tt.input)
+			if result != tt.expected {
+				t.Errorf("mapStopReason(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Helper function
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

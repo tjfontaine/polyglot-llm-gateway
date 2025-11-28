@@ -371,6 +371,7 @@ type FunctionCallArgumentsDoneEvent struct {
 // ToResponsesAPIResponse converts a CanonicalResponse to ResponsesAPIResponse.
 func ToResponsesAPIResponse(resp *CanonicalResponse) *ResponsesAPIResponse {
 	output := make([]ResponsesOutputItem, 0, len(resp.Choices))
+	hasToolCalls := false
 
 	for _, choice := range resp.Choices {
 		content := make([]ResponsesContentPart, 0, 1)
@@ -385,6 +386,7 @@ func ToResponsesAPIResponse(resp *CanonicalResponse) *ResponsesAPIResponse {
 
 		// Handle tool calls
 		for _, tc := range choice.Message.ToolCalls {
+			hasToolCalls = true
 			output = append(output, ResponsesOutputItem{
 				Type:      "function_call",
 				ID:        tc.ID,
@@ -406,11 +408,27 @@ func ToResponsesAPIResponse(resp *CanonicalResponse) *ResponsesAPIResponse {
 		}
 	}
 
+	// Determine response status based on finish reason
+	// Per OpenAI Responses API spec:
+	// - "completed": The response finished normally
+	// - "incomplete": The response requires client-side action (tool calls)
+	// - "failed": The response encountered an error
+	// - "cancelled": The response was cancelled
+	status := "completed"
+	if len(resp.Choices) > 0 {
+		finishReason := resp.Choices[0].FinishReason
+		// Map Anthropic "tool_use" and OpenAI "tool_calls" to "incomplete" status
+		// This signals to the client that they need to execute tools and continue
+		if finishReason == "tool_calls" || finishReason == "tool_use" || hasToolCalls {
+			status = "incomplete"
+		}
+	}
+
 	return &ResponsesAPIResponse{
 		ID:        resp.ID,
 		Object:    "response",
 		CreatedAt: resp.Created,
-		Status:    "completed",
+		Status:    status,
 		Model:     resp.Model,
 		Output:    output,
 		Usage: &ResponsesUsage{

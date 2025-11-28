@@ -11,14 +11,188 @@ import {
   Route,
   ServerCog,
   Shield,
-  Signal,
+  Terminal,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import { useApi, formatShortDate } from '../hooks/useApi';
 import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge } from '../components/ui';
-import type { InteractionDetail } from '../types';
+import type { InteractionDetail, ResponseOutputItem, ResponseData } from '../types';
 
 type FilterType = '' | 'conversation' | 'response';
+
+// Helper component to render a single output item
+function OutputItemCard({ item }: { item: ResponseOutputItem }) {
+  if (item.type === 'message') {
+    const text = item.content
+      ?.filter(part => part.type === 'output_text')
+      .map(part => part.text)
+      .join('') || '';
+    
+    return (
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+        <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
+          <Bot size={14} className="text-emerald-300" />
+          <span className="font-semibold text-emerald-200">Assistant Message</span>
+          {item.status && <StatusBadge status={item.status} />}
+        </div>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-white">
+          {text || <span className="text-slate-500 italic">No content</span>}
+        </p>
+      </div>
+    );
+  }
+
+  if (item.type === 'function_call') {
+    // Try to format arguments as pretty JSON
+    let formattedArgs = item.arguments || '{}';
+    try {
+      formattedArgs = JSON.stringify(JSON.parse(item.arguments || '{}'), null, 2);
+    } catch {
+      // Keep original if not valid JSON
+    }
+
+    return (
+      <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-violet-500/20">
+              <Wrench size={14} className="text-violet-300" />
+            </div>
+            <div>
+              <span className="font-semibold text-violet-200 text-sm">Tool Call</span>
+              <span className="text-slate-400 text-xs ml-2">→ {item.name}</span>
+            </div>
+          </div>
+          {item.status && <StatusBadge status={item.status} />}
+        </div>
+        
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">Function:</span>
+            <code className="px-2 py-0.5 rounded bg-slate-800/80 text-xs text-violet-200 font-mono">
+              {item.name}
+            </code>
+          </div>
+          {item.call_id && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">Call ID:</span>
+              <code className="px-2 py-0.5 rounded bg-slate-800/80 text-xs text-slate-300 font-mono">
+                {item.call_id}
+              </code>
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <Terminal size={12} className="text-slate-400" />
+              <span className="text-xs text-slate-400">Arguments</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[200px] font-mono border border-white/5">
+              {formattedArgs}
+            </pre>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (item.type === 'function_call_output') {
+    return (
+      <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3">
+        <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
+          <Terminal size={14} className="text-cyan-300" />
+          <span className="font-semibold text-cyan-200">Tool Result</span>
+          {item.call_id && (
+            <code className="px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-300 font-mono">
+              {item.call_id}
+            </code>
+          )}
+        </div>
+        <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[150px] font-mono">
+          {item.output || 'No output'}
+        </pre>
+      </div>
+    );
+  }
+
+  // Fallback for unknown types
+  return (
+    <div className="rounded-xl border border-slate-500/30 bg-slate-500/10 px-4 py-3">
+      <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
+        <span className="font-semibold">Unknown: {item.type}</span>
+      </div>
+      <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[150px] font-mono">
+        {JSON.stringify(item, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
+// Helper to render the response section with improved tool call display
+function ResponseSection({ response }: { response: ResponseData }) {
+  const hasOutput = response.output && response.output.length > 0;
+  const hasToolCalls = response.output?.some(item => item.type === 'function_call') || false;
+
+  return (
+    <div className="space-y-4">
+      {/* Status bar for tool calls */}
+      {hasToolCalls && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-violet-500/10 border border-violet-500/20">
+          <Wrench size={16} className="text-violet-300" />
+          <span className="text-sm text-violet-200 font-medium">
+            This response includes tool calls
+          </span>
+          <span className="px-2 py-0.5 rounded-full bg-violet-500/20 text-xs text-violet-200">
+            {response.output?.filter(i => i.type === 'function_call').length} tool{response.output?.filter(i => i.type === 'function_call').length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      )}
+
+      {/* Output items */}
+      {hasOutput ? (
+        <div className="space-y-3">
+          <div className="text-xs text-slate-400 font-medium uppercase tracking-wide px-1">
+            Output ({response.output?.length} item{response.output?.length !== 1 ? 's' : ''})
+          </div>
+          {response.output?.map((item, idx) => (
+            <OutputItemCard key={item.id || idx} item={item} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+            <Bot size={14} className="text-emerald-300" />
+            <span className="font-semibold text-emerald-200">Response</span>
+          </div>
+          <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[350px] font-mono">
+            {JSON.stringify(response, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {/* Usage info */}
+      {response.usage && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          {response.usage.input_tokens !== undefined && (
+            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
+              Input: <span className="text-white font-medium">{response.usage.input_tokens}</span> tokens
+            </span>
+          )}
+          {response.usage.output_tokens !== undefined && (
+            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
+              Output: <span className="text-white font-medium">{response.usage.output_tokens}</span> tokens
+            </span>
+          )}
+          {response.usage.total_tokens !== undefined && (
+            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
+              Total: <span className="text-white font-medium">{response.usage.total_tokens}</span> tokens
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Data() {
   const { overview, interactions, interactionsTotal, loadingInteractions, interactionsError, refreshInteractions, fetchInteractionDetail } = useApi();
@@ -244,6 +418,12 @@ export function Data() {
                         continues
                       </span>
                     )}
+                    {interaction.type === 'response' && interaction.status === 'incomplete' && (
+                      <span className="rounded-md bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-200">
+                        <Wrench size={10} className="inline mr-1" />
+                        tool use
+                      </span>
+                    )}
                   </div>
                 </button>
               ))}
@@ -404,15 +584,7 @@ export function Data() {
                     )}
 
                     {selectedInteraction.response && (
-                      <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-                        <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                          <Bot size={14} className="text-emerald-300" />
-                          <span className="font-semibold text-emerald-200">Response</span>
-                        </div>
-                        <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[350px] font-mono">
-                          {JSON.stringify(selectedInteraction.response, null, 2)}
-                        </pre>
-                      </div>
+                      <ResponseSection response={selectedInteraction.response} />
                     )}
 
                     {!selectedInteraction.request && !selectedInteraction.response && (

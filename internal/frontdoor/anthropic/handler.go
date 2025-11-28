@@ -131,6 +131,19 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.Record(r.Context(), h.store, resp.ID, canonReq, resp, metadata)
 
+	// Set rate limit info in context for middleware to write as headers
+	if resp.RateLimits != nil {
+		ctx := server.SetRateLimits(r.Context(), &server.RateLimitInfo{
+			RequestsLimit:     resp.RateLimits.RequestsLimit,
+			RequestsRemaining: resp.RateLimits.RequestsRemaining,
+			RequestsReset:     resp.RateLimits.RequestsReset,
+			TokensLimit:       resp.RateLimits.TokensLimit,
+			TokensRemaining:   resp.RateLimits.TokensRemaining,
+			TokensReset:       resp.RateLimits.TokensReset,
+		})
+		r = r.WithContext(ctx)
+	}
+
 	// Use raw response if available (pass-through mode), otherwise encode
 	var respBody []byte
 	if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
@@ -152,8 +165,37 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Write rate limit headers directly (since middleware already executed)
+	h.writeRateLimitHeaders(w, resp.RateLimits)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respBody)
+}
+
+// writeRateLimitHeaders writes normalized rate limit headers from the provider response.
+func (h *Handler) writeRateLimitHeaders(w http.ResponseWriter, rl *domain.RateLimitInfo) {
+	if rl == nil {
+		return
+	}
+
+	if rl.RequestsLimit > 0 {
+		w.Header().Set("x-ratelimit-limit-requests", fmt.Sprintf("%d", rl.RequestsLimit))
+	}
+	if rl.RequestsRemaining > 0 {
+		w.Header().Set("x-ratelimit-remaining-requests", fmt.Sprintf("%d", rl.RequestsRemaining))
+	}
+	if rl.RequestsReset != "" {
+		w.Header().Set("x-ratelimit-reset-requests", rl.RequestsReset)
+	}
+	if rl.TokensLimit > 0 {
+		w.Header().Set("x-ratelimit-limit-tokens", fmt.Sprintf("%d", rl.TokensLimit))
+	}
+	if rl.TokensRemaining > 0 {
+		w.Header().Set("x-ratelimit-remaining-tokens", fmt.Sprintf("%d", rl.TokensRemaining))
+	}
+	if rl.TokensReset != "" {
+		w.Header().Set("x-ratelimit-reset-tokens", rl.TokensReset)
+	}
 }
 
 func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
