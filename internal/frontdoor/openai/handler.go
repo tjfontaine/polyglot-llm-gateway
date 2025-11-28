@@ -1,7 +1,9 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -214,11 +216,18 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	for event := range events {
 		if event.Error != nil {
-			logger.Error("stream event error",
-				slog.String("request_id", requestID),
-				slog.String("error", event.Error.Error()),
-			)
-			server.AddError(r.Context(), event.Error)
+			// Context cancellation is expected when client disconnects - log at info level
+			if errors.Is(event.Error, context.Canceled) {
+				logger.Info("stream canceled by client",
+					slog.String("request_id", requestID),
+				)
+			} else {
+				logger.Error("stream event error",
+					slog.String("request_id", requestID),
+					slog.String("error", event.Error.Error()),
+				)
+				server.AddError(r.Context(), event.Error)
+			}
 			break
 		}
 

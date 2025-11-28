@@ -3,6 +3,7 @@ package responses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -181,6 +182,14 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 
 	for event := range events {
 		if event.Error != nil {
+			// Context cancellation is expected when client disconnects - log at info level
+			if errors.Is(event.Error, context.Canceled) {
+				h.logger.Info("stream canceled by client",
+					slog.String("request_id", requestID),
+				)
+				// Don't send error event to client since they disconnected
+				return
+			}
 			h.logger.Error("stream event error",
 				slog.String("request_id", requestID),
 				slog.String("error", event.Error.Error()),
