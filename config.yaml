@@ -55,6 +55,7 @@ providers:
   - name: openai
     type: openai
     api_key: ${OPENAI_API_KEY}
+    use_responses_api: true
   
   - name: anthropic
     type: anthropic

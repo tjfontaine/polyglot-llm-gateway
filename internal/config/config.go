@@ -76,6 +76,7 @@ type ProviderConfig struct {
 	BaseURL           string `koanf:"base_url"`           // Custom API endpoint
 	SupportsResponses bool   `koanf:"supports_responses"` // Flag for native Responses API support
 	EnablePassthrough bool   `koanf:"enable_passthrough"` // Enable pass-through mode when frontdoor matches
+	UseResponsesAPI   bool   `koanf:"use_responses_api"`  // Use Responses API instead of Chat Completions (OpenAI)
 }
 
 type RoutingConfig struct {

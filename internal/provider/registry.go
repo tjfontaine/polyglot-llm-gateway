@@ -25,6 +25,9 @@ func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, e
 		if cfg.BaseURL != "" {
 			opts = append(opts, openai.WithBaseURL(cfg.BaseURL))
 		}
+		if cfg.UseResponsesAPI {
+			opts = append(opts, openai.WithResponsesAPI(true))
+		}
 		baseProvider = openai.New(cfg.APIKey, opts...)
 	case "anthropic":
 		var opts []anthropic.ProviderOption

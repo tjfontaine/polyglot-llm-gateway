@@ -83,11 +83,35 @@ func (p *ModelMappingProvider) Complete(ctx context.Context, req *domain.Canonic
 }
 
 func (p *ModelMappingProvider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
-	provider, mappedReq, _, err := p.selectProvider(req)
+	provider, mappedReq, responseModel, err := p.selectProvider(req)
 	if err != nil {
 		return nil, err
 	}
-	return provider.Stream(ctx, mappedReq)
+
+	upstream, err := provider.Stream(ctx, mappedReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// If no model rewriting needed, return upstream directly
+	if responseModel == "" {
+		return upstream, nil
+	}
+
+	// Wrap to rewrite model in events
+	out := make(chan domain.CanonicalEvent)
+	go func() {
+		defer close(out)
+		for event := range upstream {
+			// Rewrite model if the event has a model and we need to remap it
+			if event.Model != "" && responseModel != "" {
+				event.Model = responseModel
+			}
+			out <- event
+		}
+	}()
+
+	return out, nil
 }
 
 func (p *ModelMappingProvider) ListModels(ctx context.Context) (*domain.ModelList, error) {
