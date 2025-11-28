@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 )
 
 // ConversationStore defines the interface for conversation storage
@@ -97,4 +99,32 @@ type ResponseRecord struct {
 	PreviousResponseID string            `json:"previous_response_id,omitempty"`
 	CreatedAt          time.Time         `json:"created_at"`
 	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
+// InteractionStore defines the interface for unified interaction storage.
+// This provides full visibility into request/response pairs with canonical mapping data.
+type InteractionStore interface {
+	ConversationStore
+
+	// SaveInteraction saves an interaction record
+	SaveInteraction(ctx context.Context, interaction *domain.Interaction) error
+
+	// GetInteraction retrieves an interaction by ID
+	GetInteraction(ctx context.Context, id string) (*domain.Interaction, error)
+
+	// UpdateInteraction updates an existing interaction
+	UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error
+
+	// ListInteractions lists interactions with pagination and optional filtering
+	ListInteractions(ctx context.Context, opts InteractionListOptions) ([]*domain.InteractionSummary, error)
+}
+
+// InteractionListOptions defines options for listing interactions
+type InteractionListOptions struct {
+	TenantID  string
+	Frontdoor domain.APIType // Filter by frontdoor type
+	Provider  string         // Filter by provider
+	Status    string         // Filter by status
+	Limit     int
+	Offset    int
 }

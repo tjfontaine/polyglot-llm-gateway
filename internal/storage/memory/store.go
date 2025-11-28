@@ -3,17 +3,20 @@ package memory
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
-// Store is an in-memory implementation of ConversationStore and ResponseStore
+// Store is an in-memory implementation of ConversationStore, ResponseStore, and InteractionStore
 type Store struct {
 	mu            sync.RWMutex
 	conversations map[string]*storage.Conversation
 	responses     map[string]*storage.ResponseRecord
+	interactions  map[string]*domain.Interaction
 }
 
 // New creates a new in-memory store
@@ -21,11 +24,12 @@ func New() *Store {
 	return &Store{
 		conversations: make(map[string]*storage.Conversation),
 		responses:     make(map[string]*storage.ResponseRecord),
+		interactions:  make(map[string]*domain.Interaction),
 	}
 }
 
-// Ensure Store implements ResponseStore
-var _ storage.ResponseStore = (*Store)(nil)
+// Ensure Store implements InteractionStore (which extends ConversationStore)
+var _ storage.InteractionStore = (*Store)(nil)
 
 func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversation) error {
 	s.mu.Lock()
@@ -179,6 +183,86 @@ func (s *Store) ListResponses(ctx context.Context, opts storage.ListOptions) ([]
 	start := opts.Offset
 	if start >= len(result) {
 		return []*storage.ResponseRecord{}, nil
+	}
+
+	end := start + opts.Limit
+	if opts.Limit == 0 || end > len(result) {
+		end = len(result)
+	}
+
+	return result[start:end], nil
+}
+
+// InteractionStore implementation
+
+func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if interaction.CreatedAt.IsZero() {
+		interaction.CreatedAt = now
+	}
+	interaction.UpdatedAt = now
+	s.interactions[interaction.ID] = interaction
+	return nil
+}
+
+func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	interaction, exists := s.interactions[id]
+	if !exists {
+		return nil, fmt.Errorf("interaction %s not found", id)
+	}
+	return interaction, nil
+}
+
+func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.interactions[interaction.ID]; !exists {
+		return fmt.Errorf("interaction %s not found", interaction.ID)
+	}
+
+	interaction.UpdatedAt = time.Now()
+	s.interactions[interaction.ID] = interaction
+	return nil
+}
+
+func (s *Store) ListInteractions(ctx context.Context, opts storage.InteractionListOptions) ([]*domain.InteractionSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*domain.InteractionSummary
+	for _, interaction := range s.interactions {
+		// Apply filters
+		if opts.TenantID != "" && interaction.TenantID != opts.TenantID {
+			continue
+		}
+		if opts.Frontdoor != "" && interaction.Frontdoor != opts.Frontdoor {
+			continue
+		}
+		if opts.Provider != "" && interaction.Provider != opts.Provider {
+			continue
+		}
+		if opts.Status != "" && string(interaction.Status) != opts.Status {
+			continue
+		}
+		result = append(result, interaction.ToSummary())
+	}
+
+	// Sort by UpdatedAt descending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
+
+	// Simple pagination
+	start := opts.Offset
+	if start >= len(result) {
+		return []*domain.InteractionSummary{}, nil
 	}
 
 	end := start + opts.Limit
