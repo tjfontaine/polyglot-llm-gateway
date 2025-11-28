@@ -12,7 +12,6 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 // RecordInteractionParams contains parameters for recording an interaction
@@ -336,16 +335,4 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 	}
 
 	return nil
-}
-
-// tenantIDFromContext extracts tenant ID from context.
-// Note: This is defined in recorder.go but duplicated here for visibility.
-// In production code, this would be in a shared utils package.
-func tenantIDFromCtx(ctx context.Context) string {
-	if tenantVal := ctx.Value("tenant"); tenantVal != nil {
-		if t, ok := tenantVal.(*tenant.Tenant); ok && t != nil && t.ID != "" {
-			return t.ID
-		}
-	}
-	return "default"
 }
