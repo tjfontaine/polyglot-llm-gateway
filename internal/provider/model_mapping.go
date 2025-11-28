@@ -75,6 +75,9 @@ func (p *ModelMappingProvider) Complete(ctx context.Context, req *domain.Canonic
 		return nil, err
 	}
 
+	// Preserve the original provider model for logging/observability
+	resp.ProviderModel = resp.Model
+
 	if responseModel != "" {
 		resp.Model = responseModel
 	}
@@ -103,9 +106,13 @@ func (p *ModelMappingProvider) Stream(ctx context.Context, req *domain.Canonical
 	go func() {
 		defer close(out)
 		for event := range upstream {
-			// Rewrite model if the event has a model and we need to remap it
-			if event.Model != "" && responseModel != "" {
-				event.Model = responseModel
+			// Preserve the original provider model for logging/observability
+			if event.Model != "" {
+				event.ProviderModel = event.Model
+				// Rewrite model if configured (for client display)
+				if responseModel != "" {
+					event.Model = responseModel
+				}
 			}
 			out <- event
 		}

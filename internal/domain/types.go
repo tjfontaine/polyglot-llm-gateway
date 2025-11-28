@@ -154,6 +154,10 @@ type CanonicalResponse struct {
 
 	// RateLimits contains rate limit information from the upstream provider.
 	RateLimits *RateLimitInfo `json:"-"`
+
+	// ProviderModel tracks the actual model used by the provider (for logging/observability)
+	// This is preserved even when Model is rewritten by model mapping
+	ProviderModel string `json:"-"`
 }
 
 // RateLimitInfo contains rate limit information from upstream providers.
@@ -238,8 +242,12 @@ type CanonicalEvent struct {
 	// ID for response events
 	ResponseID string
 
-	// Model for message start events
+	// Model for message start events (may be rewritten for client display)
 	Model string
+
+	// ProviderModel tracks the actual model used by the provider (for logging/observability)
+	// This is preserved even when Model is rewritten by model mapping
+	ProviderModel string
 
 	// RawEvent for pass-through mode (original SSE data)
 	RawEvent json.RawMessage

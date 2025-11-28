@@ -798,3 +798,56 @@ After this change, client-initiated stream cancellations will show:
 ```
 
 Instead of misleading ERROR logs that suggest something went wrong when the behavior is normal and expected.
+
+---
+
+## Phase 19: Provider Model Observability ✅ COMPLETED
+
+### 19.1 Problem
+When `rewrite_response_model: true` is configured, the `served_model` in logs would show the rewritten model name (the original client-requested model) instead of the actual model used by the provider. This made debugging difficult because you couldn't see what model was actually being called.
+
+Example config:
+```yaml
+model_routing:
+  rewrites:
+    - model_prefix: claude-sonnet-
+      provider: openai
+      model: gpt-5-mini
+      rewrite_response_model: true
+```
+
+Would log:
+```
+"requested_model":"claude-sonnet-4-5-20250929","served_model":"claude-sonnet-4-5-20250929"
+```
+
+When the actual model used was `gpt-5-mini`.
+
+### 19.2 Solution
+Added `ProviderModel` field to track the actual model from the provider, separate from the potentially-rewritten `Model` field.
+
+**Domain Types (`internal/domain/types.go`):**
+- [x] Added `ProviderModel` field to `CanonicalResponse` struct
+- [x] Added `ProviderModel` field to `CanonicalEvent` struct
+
+**ModelMappingProvider (`internal/provider/model_mapping.go`):**
+- [x] Updated `Complete()` to preserve original model in `ProviderModel` before rewriting
+- [x] Updated `Stream()` wrapper to copy `Model` to `ProviderModel` before rewriting
+
+**Anthropic Frontdoor (`internal/frontdoor/anthropic/handler.go`):**
+- [x] Capture `ProviderModel` from streaming events
+- [x] Log `provider_model` when it differs from `served_model`
+- [x] Add `provider_model` to context for middleware logging
+
+**OpenAI Frontdoor (`internal/frontdoor/openai/handler.go`):**
+- [x] Same updates for both streaming and non-streaming paths
+
+### 19.3 Result
+After this change, logs now show all three model values when routing is configured:
+```
+"requested_model":"claude-sonnet-4-5-20250929","served_model":"claude-sonnet-4-5-20250929","provider_model":"gpt-5-mini"
+```
+
+- `requested_model`: What the client requested
+- `served_model`: What the client sees in the response (may be rewritten)
+- `provider_model`: What was actually sent to the provider (only shown when different from served_model)

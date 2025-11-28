@@ -113,17 +113,27 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("messages completion",
+	// Build log fields
+	logFields := []any{
 		slog.String("request_id", requestID),
 		slog.String("frontdoor", "anthropic"),
 		slog.String("app", h.appName),
 		slog.String("provider", providerName),
 		slog.String("requested_model", canonReq.Model),
 		slog.String("served_model", resp.Model),
-		slog.String("finish_reason", resp.Choices[0].FinishReason),
-	)
+	}
+	if len(resp.Choices) > 0 {
+		logFields = append(logFields, slog.String("finish_reason", resp.Choices[0].FinishReason))
+	}
+	if resp.ProviderModel != "" && resp.ProviderModel != resp.Model {
+		logFields = append(logFields, slog.String("provider_model", resp.ProviderModel))
+	}
+	logger.Info("messages completion", logFields...)
 
 	server.AddLogField(r.Context(), "served_model", resp.Model)
+	if resp.ProviderModel != "" {
+		server.AddLogField(r.Context(), "provider_model", resp.ProviderModel)
+	}
 
 	metadata := map[string]string{
 		"frontdoor": "anthropic",
@@ -375,6 +385,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	var builder strings.Builder
 	var servedModel string
+	var providerModel string
 
 	for event := range events {
 		if event.Error != nil {
@@ -395,6 +406,10 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		// Capture served model from streaming events
 		if event.Model != "" {
 			servedModel = event.Model
+		}
+		// Capture provider model (the actual model used, before any rewriting)
+		if event.ProviderModel != "" {
+			providerModel = event.ProviderModel
 		}
 
 		builder.WriteString(event.ContentDelta)
@@ -443,15 +458,24 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	}
 
 	server.AddLogField(r.Context(), "served_model", servedModel)
+	if providerModel != "" {
+		server.AddLogField(r.Context(), "provider_model", providerModel)
+	}
 
 	conversation.Record(r.Context(), h.store, "", req, recordResp, metadata)
 
-	logger.Info("messages stream completed",
+	// Build log fields
+	logFields := []any{
 		slog.String("request_id", requestID),
 		slog.String("frontdoor", "anthropic"),
 		slog.String("app", h.appName),
 		slog.String("provider", providerName),
 		slog.String("requested_model", req.Model),
 		slog.String("served_model", servedModel),
-	)
+	}
+	if providerModel != "" && providerModel != servedModel {
+		logFields = append(logFields, slog.String("provider_model", providerModel))
+	}
+
+	logger.Info("messages stream completed", logFields...)
 }
