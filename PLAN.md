@@ -605,15 +605,29 @@ Implementing features from the "Gateway Implementation Roadmap: Aligning with 20
 - [x] Added `CanonicalToAPIRequestWithImageFetching()` to Anthropic codec
 - [x] Added `convertRichContentToAnthropic()` helper for multimodal content
 
-### 15.5 Files Created
+### 15.5 Tool Calling Support in Streaming ✅
+- [x] Enhanced Anthropic provider streaming to handle `tool_use` content blocks
+- [x] Added `content_block_start` event handling for tool call initiation
+- [x] Added `input_json_delta` handling for streaming tool call arguments
+- [x] Added `content_block_stop` event handling for tool call completion
+- [x] Capture `stop_reason` from `message_delta` and map to `FinishReason`
+- [x] Added `mapStopReason()` helper for Anthropic→OpenAI finish reason mapping
+- [x] Updated Responses API streaming handler to:
+  - Emit `function_call` output items with proper SSE events
+  - Stream `function_call_arguments.delta` events
+  - Stream `function_call_arguments.done` events
+  - Properly order output items (message first, then function calls)
+  - Handle mixed text content and tool calls in same response
+
+### 15.6 Files Created
 - `internal/codec/images.go` - Image URL fetching and base64 conversion utility
 
-### 15.6 Files Modified
-- `internal/provider/anthropic/provider.go` - Added 529 retry/backoff logic
+### 15.7 Files Modified
+- `internal/provider/anthropic/provider.go` - Added 529 retry/backoff logic, tool call streaming
 - `internal/domain/responses.go` - Updated status mapping for tool calls
 - `internal/domain/types.go` - Added `RateLimitInfo` struct
 - `internal/api/anthropic/client.go` - Added rate limit header parsing
 - `internal/codec/anthropic/codec.go` - Added image conversion and rate limit support
 - `internal/server/middleware.go` - Added rate limit normalization middleware
 - `internal/frontdoor/anthropic/handler.go` - Added rate limit header writing
-- `internal/frontdoor/responses/handler.go` - Updated streaming status handling
+- `internal/frontdoor/responses/handler.go` - Complete rewrite of streaming handler with tool call support

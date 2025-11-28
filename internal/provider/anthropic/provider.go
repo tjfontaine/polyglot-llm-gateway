@@ -235,6 +235,10 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 		defer close(out)
 
 		var inputTokens, outputTokens int
+		var stopReason string
+
+		// Track active tool calls by content block index
+		activeToolCalls := make(map[int]*domain.ToolCallChunk)
 
 		for result := range stream {
 			if result.Err != nil {
@@ -253,14 +257,69 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 				inputTokens = event.Message.Usage.InputTokens
 				out <- domain.CanonicalEvent{Role: event.Message.Role}
 
+			case "content_block_start":
+				event, err := result.ParseContentBlockStart()
+				if err != nil {
+					out <- domain.CanonicalEvent{Error: fmt.Errorf("parse content_block_start: %w", err)}
+					return
+				}
+
+				// Handle tool_use content block start
+				if event.ContentBlock.Type == "tool_use" {
+					toolCall := &domain.ToolCallChunk{
+						Index: event.Index,
+						ID:    event.ContentBlock.ID,
+						Type:  "function",
+					}
+					toolCall.Function.Name = event.ContentBlock.Name
+					activeToolCalls[event.Index] = toolCall
+
+					// Send initial tool call event
+					out <- domain.CanonicalEvent{
+						Type:     domain.EventTypeContentBlockStart,
+						Index:    event.Index,
+						ToolCall: toolCall,
+					}
+				}
+
 			case "content_block_delta":
 				event, err := result.ParseContentBlockDelta()
 				if err != nil {
 					out <- domain.CanonicalEvent{Error: fmt.Errorf("parse content_block_delta: %w", err)}
 					return
 				}
-				if event.Delta.Type == "text_delta" {
+
+				switch event.Delta.Type {
+				case "text_delta":
 					out <- domain.CanonicalEvent{ContentDelta: event.Delta.Text}
+
+				case "input_json_delta":
+					// Tool call argument streaming
+					if tc, ok := activeToolCalls[event.Index]; ok {
+						tc.Function.Arguments += event.Delta.PartialJSON
+						out <- domain.CanonicalEvent{
+							Type:     domain.EventTypeContentBlockDelta,
+							Index:    event.Index,
+							ToolCall: tc,
+						}
+					}
+				}
+
+			case "content_block_stop":
+				event, err := result.ParseContentBlockStop()
+				if err != nil {
+					out <- domain.CanonicalEvent{Error: fmt.Errorf("parse content_block_stop: %w", err)}
+					return
+				}
+
+				// Finalize tool call if this was a tool_use block
+				if tc, ok := activeToolCalls[event.Index]; ok {
+					out <- domain.CanonicalEvent{
+						Type:     domain.EventTypeContentBlockStop,
+						Index:    event.Index,
+						ToolCall: tc,
+					}
+					delete(activeToolCalls, event.Index)
 				}
 
 			case "message_delta":
@@ -272,28 +331,50 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 				if event.Usage != nil {
 					outputTokens = event.Usage.OutputTokens
 				}
+				// Capture stop reason
+				if event.Delta.StopReason != "" {
+					stopReason = event.Delta.StopReason
+				}
 
 			case "message_stop":
-				// Send final usage
-				if inputTokens > 0 || outputTokens > 0 {
-					out <- domain.CanonicalEvent{
-						Usage: &domain.Usage{
-							PromptTokens:     inputTokens,
-							CompletionTokens: outputTokens,
-							TotalTokens:      inputTokens + outputTokens,
-						},
-					}
+				// Map Anthropic stop_reason to OpenAI finish_reason
+				finishReason := mapStopReason(stopReason)
+
+				// Send final event with usage and finish reason
+				out <- domain.CanonicalEvent{
+					Usage: &domain.Usage{
+						PromptTokens:     inputTokens,
+						CompletionTokens: outputTokens,
+						TotalTokens:      inputTokens + outputTokens,
+					},
+					FinishReason: finishReason,
 				}
 				return
 
-			case "ping", "content_block_start", "content_block_stop":
-				// Ignore these events
+			case "ping":
+				// Ignore ping events
 				continue
 			}
 		}
 	}()
 
 	return out, nil
+}
+
+// mapStopReason maps Anthropic stop_reason to OpenAI finish_reason
+func mapStopReason(stopReason string) string {
+	switch stopReason {
+	case "end_turn":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	case "stop_sequence":
+		return "stop"
+	case "tool_use":
+		return "tool_calls"
+	default:
+		return stopReason
+	}
 }
 
 func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {

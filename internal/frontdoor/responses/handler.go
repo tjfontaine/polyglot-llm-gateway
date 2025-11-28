@@ -123,6 +123,15 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(resp)
 }
 
+// streamingToolCall tracks a tool call being streamed
+type streamingToolCall struct {
+	id        string
+	name      string
+	arguments strings.Builder
+	itemID    string
+	index     int
+}
+
 func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, tenantID string) {
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 
@@ -174,41 +183,18 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		Response: *initialResp,
 	})
 
-	// Create output item for the message
-	outputIndex := 0
-	contentIndex := 0
-	itemID := "item_" + uuid.New().String()
-
-	// Send output_item.added event
-	outputItem := domain.ResponsesOutputItem{
-		Type:   "message",
-		ID:     itemID,
-		Role:   "assistant",
-		Status: "in_progress",
-	}
-	h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
-		Type:        "response.output_item.added",
-		OutputIndex: outputIndex,
-		Item:        outputItem,
-	})
-
-	// Send content_part.added event
-	contentPart := domain.ResponsesContentPart{
-		Type: "output_text",
-		Text: "",
-	}
-	h.sendSSEEvent(w, flusher, "response.content_part.added", domain.ContentPartAddedEvent{
-		Type:         "response.content_part.added",
-		ItemID:       itemID,
-		OutputIndex:  outputIndex,
-		ContentIndex: contentIndex,
-		Part:         contentPart,
-	})
-
-	// Stream content deltas
+	// Tracking state
 	var fullText strings.Builder
 	var finalUsage *domain.Usage
 	var finishReason string
+	var outputItems []domain.ResponsesOutputItem
+	activeToolCalls := make(map[int]*streamingToolCall)
+
+	// Message item state
+	outputIndex := 0
+	messageItemID := "item_" + uuid.New().String()
+	messageStarted := false
+	textContentIndex := 0
 
 	for event := range events {
 		if event.Error != nil {
@@ -235,16 +221,146 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Send text delta
+		// Handle text content delta
 		if event.ContentDelta != "" {
+			// Start message output item if not already started
+			if !messageStarted {
+				h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
+					Type:        "response.output_item.added",
+					OutputIndex: outputIndex,
+					Item: domain.ResponsesOutputItem{
+						Type:   "message",
+						ID:     messageItemID,
+						Role:   "assistant",
+						Status: "in_progress",
+					},
+				})
+
+				h.sendSSEEvent(w, flusher, "response.content_part.added", domain.ContentPartAddedEvent{
+					Type:         "response.content_part.added",
+					ItemID:       messageItemID,
+					OutputIndex:  outputIndex,
+					ContentIndex: textContentIndex,
+					Part: domain.ResponsesContentPart{
+						Type: "output_text",
+						Text: "",
+					},
+				})
+				messageStarted = true
+			}
+
 			fullText.WriteString(event.ContentDelta)
 			h.sendSSEEvent(w, flusher, "response.output_text.delta", domain.TextDeltaEvent{
 				Type:         "response.output_text.delta",
-				ItemID:       itemID,
+				ItemID:       messageItemID,
 				OutputIndex:  outputIndex,
-				ContentIndex: contentIndex,
+				ContentIndex: textContentIndex,
 				Delta:        event.ContentDelta,
 			})
+		}
+
+		// Handle tool call start
+		if event.Type == domain.EventTypeContentBlockStart && event.ToolCall != nil {
+			tc := event.ToolCall
+			toolItemID := "item_" + uuid.New().String()
+
+			// Finalize message output item if we have text content
+			if messageStarted && fullText.Len() > 0 {
+				h.finalizeMessageItem(w, flusher, messageItemID, outputIndex, textContentIndex, fullText.String())
+				outputItems = append(outputItems, domain.ResponsesOutputItem{
+					Type:   "message",
+					ID:     messageItemID,
+					Role:   "assistant",
+					Status: "completed",
+					Content: []domain.ResponsesContentPart{{
+						Type: "output_text",
+						Text: fullText.String(),
+					}},
+				})
+				outputIndex++
+				messageStarted = false
+			}
+
+			// Track this tool call
+			activeToolCalls[tc.Index] = &streamingToolCall{
+				id:     tc.ID,
+				name:   tc.Function.Name,
+				itemID: toolItemID,
+				index:  outputIndex,
+			}
+
+			// Send function_call output item added
+			h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
+				Type:        "response.output_item.added",
+				OutputIndex: outputIndex,
+				Item: domain.ResponsesOutputItem{
+					Type:   "function_call",
+					ID:     toolItemID,
+					CallID: tc.ID,
+					Name:   tc.Function.Name,
+					Status: "in_progress",
+				},
+			})
+
+			outputIndex++
+		}
+
+		// Handle tool call argument delta
+		if event.Type == domain.EventTypeContentBlockDelta && event.ToolCall != nil {
+			tc := event.ToolCall
+			if stc, ok := activeToolCalls[tc.Index]; ok {
+				stc.arguments.WriteString(tc.Function.Arguments)
+
+				// Send function_call_arguments.delta event
+				h.sendSSEEvent(w, flusher, "response.function_call_arguments.delta", domain.FunctionCallArgumentsDeltaEvent{
+					Type:        "response.function_call_arguments.delta",
+					ItemID:      stc.itemID,
+					OutputIndex: stc.index,
+					CallID:      stc.id,
+					Delta:       tc.Function.Arguments,
+				})
+			}
+		}
+
+		// Handle tool call complete
+		if event.Type == domain.EventTypeContentBlockStop && event.ToolCall != nil {
+			tc := event.ToolCall
+			if stc, ok := activeToolCalls[tc.Index]; ok {
+				// Send function_call_arguments.done event
+				h.sendSSEEvent(w, flusher, "response.function_call_arguments.done", domain.FunctionCallArgumentsDoneEvent{
+					Type:        "response.function_call_arguments.done",
+					ItemID:      stc.itemID,
+					OutputIndex: stc.index,
+					CallID:      stc.id,
+					Name:        stc.name,
+					Arguments:   stc.arguments.String(),
+				})
+
+				// Send output_item.done event
+				h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
+					Type:        "response.output_item.done",
+					OutputIndex: stc.index,
+					Item: domain.ResponsesOutputItem{
+						Type:      "function_call",
+						ID:        stc.itemID,
+						CallID:    stc.id,
+						Name:      stc.name,
+						Arguments: stc.arguments.String(),
+						Status:    "completed",
+					},
+				})
+
+				outputItems = append(outputItems, domain.ResponsesOutputItem{
+					Type:      "function_call",
+					ID:        stc.itemID,
+					CallID:    stc.id,
+					Name:      stc.name,
+					Arguments: stc.arguments.String(),
+					Status:    "completed",
+				})
+
+				delete(activeToolCalls, tc.Index)
+			}
 		}
 
 		// Capture usage if provided
@@ -258,43 +374,20 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Send content_part.done event
-	finalContentPart := domain.ResponsesContentPart{
-		Type: "output_text",
-		Text: fullText.String(),
+	// Finalize any remaining text content
+	if messageStarted {
+		h.finalizeMessageItem(w, flusher, messageItemID, 0, textContentIndex, fullText.String())
+		outputItems = append([]domain.ResponsesOutputItem{{
+			Type:   "message",
+			ID:     messageItemID,
+			Role:   "assistant",
+			Status: "completed",
+			Content: []domain.ResponsesContentPart{{
+				Type: "output_text",
+				Text: fullText.String(),
+			}},
+		}}, outputItems...)
 	}
-	h.sendSSEEvent(w, flusher, "response.content_part.done", domain.ContentPartDoneEvent{
-		Type:         "response.content_part.done",
-		ItemID:       itemID,
-		OutputIndex:  outputIndex,
-		ContentIndex: contentIndex,
-		Part:         finalContentPart,
-	})
-
-	// Send output_text.done event
-	h.sendSSEEvent(w, flusher, "response.output_text.done", domain.TextDoneEvent{
-		Type:         "response.output_text.done",
-		ItemID:       itemID,
-		OutputIndex:  outputIndex,
-		ContentIndex: contentIndex,
-		Text:         fullText.String(),
-	})
-
-	// Send output_item.done event
-	finalOutputItem := domain.ResponsesOutputItem{
-		Type:   "message",
-		ID:     itemID,
-		Role:   "assistant",
-		Status: "completed",
-		Content: []domain.ResponsesContentPart{
-			finalContentPart,
-		},
-	}
-	h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
-		Type:        "response.output_item.done",
-		OutputIndex: outputIndex,
-		Item:        finalOutputItem,
-	})
 
 	// Determine response status based on finish reason
 	// Map Anthropic "tool_use" and OpenAI "tool_calls" to "incomplete" status
@@ -310,7 +403,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		CreatedAt:          createdAt,
 		Status:             responseStatus,
 		Model:              req.Model,
-		Output:             []domain.ResponsesOutputItem{finalOutputItem},
+		Output:             outputItems,
 		PreviousResponseID: req.PreviousResponseID,
 		Metadata:           req.Metadata,
 	}
@@ -354,6 +447,46 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			)
 		}
 	}
+}
+
+// finalizeMessageItem sends the completion events for a message output item
+func (h *Handler) finalizeMessageItem(w http.ResponseWriter, flusher http.Flusher, itemID string, outputIndex, contentIndex int, text string) {
+	// Send content_part.done event
+	h.sendSSEEvent(w, flusher, "response.content_part.done", domain.ContentPartDoneEvent{
+		Type:         "response.content_part.done",
+		ItemID:       itemID,
+		OutputIndex:  outputIndex,
+		ContentIndex: contentIndex,
+		Part: domain.ResponsesContentPart{
+			Type: "output_text",
+			Text: text,
+		},
+	})
+
+	// Send output_text.done event
+	h.sendSSEEvent(w, flusher, "response.output_text.done", domain.TextDoneEvent{
+		Type:         "response.output_text.done",
+		ItemID:       itemID,
+		OutputIndex:  outputIndex,
+		ContentIndex: contentIndex,
+		Text:         text,
+	})
+
+	// Send output_item.done event
+	h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: outputIndex,
+		Item: domain.ResponsesOutputItem{
+			Type:   "message",
+			ID:     itemID,
+			Role:   "assistant",
+			Status: "completed",
+			Content: []domain.ResponsesContentPart{{
+				Type: "output_text",
+				Text: text,
+			}},
+		},
+	})
 }
 
 func (h *Handler) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data any) {
