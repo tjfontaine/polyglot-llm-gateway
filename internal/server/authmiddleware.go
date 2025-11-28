@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 // TenantContextKey is the context key for tenant information.
@@ -29,14 +30,14 @@ func AuthMiddleware(authenticator *auth.Authenticator) func(http.Handler) http.H
 			}
 
 			// Validate API key and get tenant
-			tenant, err := authenticator.ValidateAPIKey(apiKey)
+			t, err := authenticator.ValidateAPIKey(apiKey)
 			if err != nil {
 				http.Error(w, "Invalid API key", http.StatusUnauthorized)
 				return
 			}
 
 			// Inject tenant into context
-			ctx := context.WithValue(r.Context(), TenantContextKey, tenant)
+			ctx := context.WithValue(r.Context(), TenantContextKey, t)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -44,6 +45,9 @@ func AuthMiddleware(authenticator *auth.Authenticator) func(http.Handler) http.H
 
 // GetTenant retrieves the tenant from context.
 // Returns nil if no tenant is set.
-func GetTenant(ctx context.Context) interface{} {
-	return ctx.Value(TenantContextKey)
+func GetTenant(ctx context.Context) *tenant.Tenant {
+	if t, ok := ctx.Value(TenantContextKey).(*tenant.Tenant); ok {
+		return t
+	}
+	return nil
 }
