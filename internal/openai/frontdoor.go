@@ -1,4 +1,4 @@
-// Frontdoor handler for the OpenAI Chat Completions API format.
+// Package openai provides a frontdoor handler for the OpenAI Chat Completions API format.
 package openai
 
 import (

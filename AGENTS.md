@@ -194,9 +194,9 @@ type Codec interface {
 }
 ```
 
-Each API type has its consolidated package containing types, client, codec, and provider:
-- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory)
-- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory)
+Each API type has its consolidated package containing types, client, codec, provider, and frontdoor:
+- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
+- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
 
 ### Request Flow Example
 
@@ -374,35 +374,10 @@ import (
 )
 ```
 
-#### 3. Create Frontdoor Handler (If exposing a new API format)
-Due to import cycle constraints, frontdoor handlers must be in a separate package. Create `internal/frontdoor/gemini/`:
+#### 3. Add Frontdoor Handler (If exposing a new API format)
+Frontdoor handlers can now be included in the same consolidated package. Add `frontdoor.go` to `internal/gemini/`:
 
-**`handler.go`** - HTTP handlers for the API format:
-```go
-package gemini
-
-import (
-    geminipkg "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
-    // ... other imports
-)
-
-type Handler struct {
-    provider domain.Provider
-    codec    codec.Codec  // Uses geminipkg.NewCodec()
-    // ...
-}
-
-func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
-    return &Handler{
-        provider: provider,
-        codec:    geminipkg.NewCodec(),
-        // ...
-    }
-}
-func (h *Handler) HandleGenerateContent(w http.ResponseWriter, r *http.Request) { /* ... */ }
-```
-
-**`factory.go`** - Self-registering frontdoor factory:
+**`frontdoor.go`** - HTTP handlers for the API format:
 ```go
 package gemini
 
@@ -410,34 +385,72 @@ import (
     "net/http"
     "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
     "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
+    // ... other imports
 )
 
+// FrontdoorType is the frontdoor type identifier used in configuration.
 const FrontdoorType = "gemini"
+
+// FrontdoorAPIType returns the canonical API type for this frontdoor.
+func FrontdoorAPIType() domain.APIType {
+    return domain.APITypeGemini
+}
 
 // Register this frontdoor at package initialization.
 func init() {
     registry.RegisterFactory(registry.FrontdoorFactory{
         Type:           FrontdoorType,
-        APIType:        domain.APITypeGemini,
+        APIType:        FrontdoorAPIType(),
         Description:    "Google Gemini API format",
-        CreateHandlers: createHandlers,
+        CreateHandlers: createFrontdoorHandlers,
     })
 }
 
-func createHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
-    handler := NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+// FrontdoorHandler handles Gemini API requests.
+type FrontdoorHandler struct {
+    provider domain.Provider
+    codec    codec.Codec  // Uses NewCodec() from same package
+    // ...
+}
+
+func NewFrontdoorHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
+    return &FrontdoorHandler{
+        provider: provider,
+        codec:    NewCodec(),  // Direct call - no package alias needed
+        // ...
+    }
+}
+
+func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+    handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
     return []registry.HandlerRegistration{
         {Path: cfg.BasePath + "/v1:generateContent", Method: http.MethodPost, Handler: handler.HandleGenerateContent},
     }
 }
+
+func (h *FrontdoorHandler) HandleGenerateContent(w http.ResponseWriter, r *http.Request) { /* ... */ }
 ```
 
-#### 4. Register Frontdoor Import
-Add a blank import in `internal/frontdoor/registry.go` to trigger init():
+**Note on import cycles:** The consolidated package approach works because:
+1. Provider registration happens in `factory.go` which only imports `config`, `domain`, and `provider/registry`
+2. Frontdoor registration in `frontdoor.go` imports additional packages like `conversation`, `server`, etc.
+3. The `provider/registry.go` no longer imports the consolidated packages directly - instead, `cmd/gateway/main.go` imports them to trigger registration
+4. Tests that need factory registration use external test packages (e.g., `package gemini_test`) to avoid cycles
+
+#### 4. Register Package Import
+The package must be imported in `cmd/gateway/main.go` to trigger both provider and frontdoor init() registration:
 ```go
 import (
     // ... existing imports ...
-    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/gemini"
+    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
+)
+```
+
+Also add a blank import in `internal/frontdoor/registry.go` for frontdoor discovery:
+```go
+import (
+    // ... existing imports ...
+    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
 )
 ```
 
