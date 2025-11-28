@@ -2,7 +2,7 @@ package frontdoor
 
 import (
 	"fmt"
-	"net/http" // Keep net/http for HandlerRegistration type
+	"net/http"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
@@ -13,6 +13,42 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
+// Register built-in frontdoors at package initialization.
+// New frontdoors should add their registration here.
+func init() {
+	// Register OpenAI frontdoor
+	RegisterFactory(FrontdoorFactory{
+		Type:        openai_frontdoor.FrontdoorType,
+		APIType:     openai_frontdoor.APIType(),
+		Description: "OpenAI Chat Completions API format",
+		CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
+			handler := openai_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+			regs := openai_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
+			result := make([]HandlerRegistration, len(regs))
+			for i, r := range regs {
+				result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+			}
+			return result
+		},
+	})
+
+	// Register Anthropic frontdoor
+	RegisterFactory(FrontdoorFactory{
+		Type:        anthropic_frontdoor.FrontdoorType,
+		APIType:     anthropic_frontdoor.APIType(),
+		Description: "Anthropic Messages API format",
+		CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
+			handler := anthropic_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+			regs := anthropic_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
+			result := make([]HandlerRegistration, len(regs))
+			for i, r := range regs {
+				result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+			}
+			return result
+		},
+	})
+}
+
 // HandlerRegistration represents a registered handler
 type HandlerRegistration struct {
 	Path    string
@@ -20,7 +56,9 @@ type HandlerRegistration struct {
 	Handler func(http.ResponseWriter, *http.Request)
 }
 
-// Registry creates and registers frontdoor handlers
+// Registry creates and registers frontdoor handlers.
+// Frontdoors are created using registered FrontdoorFactory instances.
+// See factory.go for documentation on how to add new frontdoors.
 type Registry struct{}
 
 // NewRegistry creates a new frontdoor registry
@@ -28,7 +66,8 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-// CreateHandlers creates frontdoor handlers based on configuration
+// CreateHandlers creates frontdoor handlers based on configuration.
+// It uses the registered FrontdoorFactory for each specified frontdoor type.
 func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Provider, providers map[string]domain.Provider, store storage.ConversationStore) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
@@ -56,23 +95,20 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 			p = mapper
 		}
 
-		switch cfg.Frontdoor {
-		case "openai":
-			handler := openai_frontdoor.NewHandler(p, store, cfg.Name, cfg.Models)
-			registrations = append(registrations,
-				HandlerRegistration{Path: cfg.Path + "/v1/chat/completions", Method: http.MethodPost, Handler: handler.HandleChatCompletion},
-				HandlerRegistration{Path: cfg.Path + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
-			)
-		case "anthropic":
-			handler := anthropic_frontdoor.NewHandler(p, store, cfg.Name, cfg.Models)
-			registrations = append(registrations,
-				HandlerRegistration{Path: cfg.Path + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
-				HandlerRegistration{Path: cfg.Path + "/v1/messages/count_tokens", Method: http.MethodPost, Handler: handler.HandleCountTokens},
-				HandlerRegistration{Path: cfg.Path + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
-			)
-		default:
-			return nil, fmt.Errorf("unknown frontdoor type: %s", cfg.Frontdoor)
+		// Use the factory pattern to create handlers
+		handlerCfg := HandlerConfig{
+			Provider: p,
+			Store:    store,
+			AppName:  cfg.Name,
+			BasePath: cfg.Path,
+			Models:   cfg.Models,
 		}
+
+		handlers, err := createHandlersFromFactory(cfg.Frontdoor, handlerCfg)
+		if err != nil {
+			return nil, err
+		}
+		registrations = append(registrations, handlers...)
 	}
 
 	return registrations, nil

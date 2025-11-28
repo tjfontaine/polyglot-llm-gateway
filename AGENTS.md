@@ -276,20 +276,141 @@ if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
 
 ### Adding New API Support
 
-To add a new API type (e.g., Google Gemini):
+To add a new API type (e.g., Google Gemini), follow these steps:
 
-1. **Define API types** in `internal/api/gemini/types.go`
-2. **Create codec** in `internal/codec/gemini/codec.go` implementing `Codec` interface
-3. **Create provider** in `internal/provider/gemini/provider.go` implementing `Provider` interface
-4. **Create frontdoor handler** in `internal/frontdoor/gemini/handler.go`
-5. **Add error mapping** - `ToCanonical()` method and formatter in `codec/errors.go`
-6. **Register** in frontdoor and provider registries
+#### 1. Define API Types
+Create `internal/api/gemini/types.go` with request/response structures for the API.
 
-The canonical domain model ensures the new API automatically works with all existing frontdoors and providers.
+#### 2. Create Codec
+Create `internal/codec/gemini/codec.go` implementing the `codec.Codec` interface for bidirectional translation.
+
+#### 3. Create Provider (Backend)
+Create `internal/provider/gemini/` with two files:
+
+**`provider.go`** - Implements `domain.Provider` interface:
+```go
+package gemini
+
+type Provider struct { /* ... */ }
+
+func New(apiKey string, opts ...ProviderOption) *Provider { /* ... */ }
+func (p *Provider) Name() string { return "gemini" }
+func (p *Provider) APIType() domain.APIType { return domain.APITypeGemini }
+func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) { /* ... */ }
+func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) { /* ... */ }
+func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) { /* ... */ }
+```
+
+**`factory.go`** - Factory registration helpers:
+```go
+package gemini
+
+const ProviderType = "gemini"
+
+func CreateFromConfig(cfg config.ProviderConfig) (domain.Provider, error) {
+    var opts []ProviderOption
+    if cfg.BaseURL != "" {
+        opts = append(opts, WithBaseURL(cfg.BaseURL))
+    }
+    return New(cfg.APIKey, opts...), nil
+}
+
+func ValidateConfig(cfg config.ProviderConfig) error {
+    if cfg.APIKey == "" {
+        return fmt.Errorf("api_key is required")
+    }
+    return nil
+}
+```
+
+#### 4. Register Provider Factory
+Add registration in `internal/provider/registry.go` init():
+```go
+func init() {
+    // ... existing registrations ...
+    
+    RegisterFactory(ProviderFactory{
+        Type:           gemini.ProviderType,
+        APIType:        domain.APITypeGemini,
+        Description:    "Google Gemini API provider",
+        Create:         gemini.CreateFromConfig,
+        ValidateConfig: gemini.ValidateConfig,
+    })
+}
+```
+
+#### 5. Create Frontdoor Handler (If exposing a new API format)
+Create `internal/frontdoor/gemini/` with two files:
+
+**`handler.go`** - HTTP handlers for the API format:
+```go
+package gemini
+
+type Handler struct { /* ... */ }
+
+func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler { /* ... */ }
+func (h *Handler) HandleGenerateContent(w http.ResponseWriter, r *http.Request) { /* ... */ }
+```
+
+**`factory.go`** - Handler registration helpers:
+```go
+package gemini
+
+const FrontdoorType = "gemini"
+
+func APIType() domain.APIType { return domain.APITypeGemini }
+
+func CreateHandlerRegistrations(handler *Handler, basePath string) []struct {
+    Path    string
+    Method  string
+    Handler func(http.ResponseWriter, *http.Request)
+} {
+    return []struct{...}{
+        {Path: basePath + "/v1:generateContent", Method: http.MethodPost, Handler: handler.HandleGenerateContent},
+    }
+}
+```
+
+#### 6. Register Frontdoor Factory
+Add registration in `internal/frontdoor/registry.go` init():
+```go
+func init() {
+    // ... existing registrations ...
+    
+    RegisterFactory(FrontdoorFactory{
+        Type:        gemini_frontdoor.FrontdoorType,
+        APIType:     gemini_frontdoor.APIType(),
+        Description: "Google Gemini API format",
+        CreateHandlers: func(cfg HandlerConfig) []HandlerRegistration {
+            handler := gemini_frontdoor.NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+            regs := gemini_frontdoor.CreateHandlerRegistrations(handler, cfg.BasePath)
+            result := make([]HandlerRegistration, len(regs))
+            for i, r := range regs {
+                result[i] = HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+            }
+            return result
+        },
+    })
+}
+```
+
+#### 7. Add Error Mapping
+Add `ToCanonical()` method for provider errors and update `codec/errors.go` formatter.
+
+### Verification
+
+After adding a new provider/frontdoor:
+- Run `go build ./...` to verify compilation
+- Run `go test ./internal/provider/... ./internal/frontdoor/...` to verify tests pass
+- Check that `provider.ListProviderTypes()` includes your new type
+- Check that `frontdoor.ListFrontdoorTypes()` includes your new type (if applicable)
+
+The factory pattern ensures compile-time validation and makes the required components explicit.
 
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
-- **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` instead of hardcoding wiring.
+- **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` using the factory pattern instead of hardcoding wiring.
+- **Factory pattern:** New providers and frontdoors must register themselves via `RegisterFactory()` in their respective package init() functions.
 - **Canonical types first:** Work with `internal/domain` types at API boundaries. Frontdoors should fully populate `CanonicalRequest`/`CanonicalResponse` and let providers handle translation details.
 - **Error handling:** API clients should convert provider-specific errors to `domain.APIError` using `ToCanonical()`. Frontdoors should use `codec.WriteError()` to format errors for their API type.
 - **Streaming:** When adding streaming support, emit `CanonicalEvent` values and propagate provider errors via the channel before closing it.
@@ -316,7 +437,7 @@ The canonical domain model ensures the new API automatically works with all exis
 
 ## Review Checklist for Changes
 - Code is formatted (`gofmt`, ESLint for frontend) and lints cleanly.
-- New routes or providers are registered via the appropriate registry helpers instead of manual router wiring.
+- New routes or providers are registered via the appropriate registry helpers using the factory pattern instead of manual router wiring.
 - Tests are added or updated, especially when touching routing, provider translations, or storage persistence.
 - Configuration defaults and environment variable substitution (`internal/config`) remain consistent with existing behavior.
 - Sensitive data (API keys) is referenced via env vars; do not hardcode secrets.
