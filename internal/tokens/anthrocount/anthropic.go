@@ -1,3 +1,8 @@
+// Package anthrocount provides a token counter that uses Anthropic's native
+// count_tokens API for precise token counting of Claude model requests.
+//
+// This package is separated from the main tokens package to avoid import cycles
+// since it imports the anthropic package for API client access.
 package anthrocount
 
 import (
@@ -9,7 +14,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/tokens"
 )
 
-// AnthropicCounter uses Anthropic's native count_tokens API.
+// AnthropicCounter uses Anthropic's native count_tokens API for precise counting.
 type AnthropicCounter struct {
 	client  *anthropic.Client
 	matcher *tokens.ModelMatcher

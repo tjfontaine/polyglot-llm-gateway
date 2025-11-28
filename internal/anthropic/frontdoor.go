@@ -1,4 +1,4 @@
-// Frontdoor handler for the Anthropic Messages API format.
+// Package anthropic provides a frontdoor handler for the Anthropic Messages API format.
 package anthropic
 
 import (
@@ -89,7 +89,11 @@ func NewFrontdoorHandler(provider domain.Provider, store storage.ConversationSto
 		})
 	}
 
-	// Set up token counter registry with OpenAI tiktoken support
+	// Set up token counter registry for fallback estimation.
+	// Uses OpenAI tiktoken for estimation when the underlying provider doesn't
+	// support native token counting (e.g., when routing Anthropic API requests
+	// to an OpenAI-compatible provider). Native Anthropic counting is handled
+	// via provider.CountTokens() pass-through in HandleCountTokens.
 	tokenRegistry := tokens.NewRegistry()
 	tokenRegistry.Register(tokens.NewOpenAICounter())
 
