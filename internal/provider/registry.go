@@ -9,34 +9,54 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
 )
 
-// Registry creates providers from configuration
+// Register built-in providers at package initialization.
+// New providers should add their registration here.
+func init() {
+	// Register OpenAI provider
+	RegisterFactory(ProviderFactory{
+		Type:           openai.ProviderType,
+		APIType:        domain.APITypeOpenAI,
+		Description:    "OpenAI API provider (GPT models)",
+		Create:         openai.CreateFromConfig,
+		ValidateConfig: openai.ValidateConfig,
+	})
+
+	// Register OpenAI-compatible provider (for local models, etc.)
+	RegisterFactory(ProviderFactory{
+		Type:           openai.ProviderTypeCompatible,
+		APIType:        domain.APITypeOpenAI,
+		Description:    "OpenAI-compatible API provider (local models, etc.)",
+		Create:         openai.CreateFromConfig,
+		ValidateConfig: openai.ValidateConfig,
+	})
+
+	// Register Anthropic provider
+	RegisterFactory(ProviderFactory{
+		Type:           anthropic.ProviderType,
+		APIType:        domain.APITypeAnthropic,
+		Description:    "Anthropic API provider (Claude models)",
+		Create:         anthropic.CreateFromConfig,
+		ValidateConfig: anthropic.ValidateConfig,
+	})
+}
+
+// Registry creates providers from configuration.
+// Providers are created using registered ProviderFactory instances.
+// See factory.go for documentation on how to add new providers.
 type Registry struct{}
 
+// NewRegistry creates a new provider registry.
 func NewRegistry() *Registry {
 	return &Registry{}
 }
 
+// CreateProvider creates a provider instance from configuration.
+// It uses the registered ProviderFactory for the specified provider type.
 func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, error) {
-	var baseProvider domain.Provider
-
-	switch cfg.Type {
-	case "openai", "openai-compatible":
-		var opts []openai.ProviderOption
-		if cfg.BaseURL != "" {
-			opts = append(opts, openai.WithBaseURL(cfg.BaseURL))
-		}
-		if cfg.UseResponsesAPI {
-			opts = append(opts, openai.WithResponsesAPI(true))
-		}
-		baseProvider = openai.New(cfg.APIKey, opts...)
-	case "anthropic":
-		var opts []anthropic.ProviderOption
-		if cfg.BaseURL != "" {
-			opts = append(opts, anthropic.WithBaseURL(cfg.BaseURL))
-		}
-		baseProvider = anthropic.New(cfg.APIKey, opts...)
-	default:
-		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
+	// Use the factory pattern to create providers
+	baseProvider, err := createFromFactory(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// Wrap with pass-through if enabled
