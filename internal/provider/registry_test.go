@@ -1,13 +1,18 @@
-package provider
+package provider_test
 
 import (
 	"testing"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
+
+	// Import consolidated packages to trigger their init() registration for tests.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 func TestRegistry_CreateProvider(t *testing.T) {
-	registry := NewRegistry()
+	registry := provider.NewRegistry()
 
 	tests := []struct {
 		name    string

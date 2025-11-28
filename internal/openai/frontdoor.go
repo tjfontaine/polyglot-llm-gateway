@@ -1,3 +1,4 @@
+// Frontdoor handler for the OpenAI Chat Completions API format.
 package openai
 
 import (
@@ -16,12 +17,57 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	openaipkg "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
-type Handler struct {
+// FrontdoorType is the frontdoor type identifier used in configuration.
+const FrontdoorType = "openai"
+
+// FrontdoorAPIType returns the canonical API type for this frontdoor.
+func FrontdoorAPIType() domain.APIType {
+	return domain.APITypeOpenAI
+}
+
+// FrontdoorRoute defines an HTTP route registration.
+type FrontdoorRoute struct {
+	Path    string
+	Method  string
+	Handler func(http.ResponseWriter, *http.Request)
+}
+
+// Register this frontdoor at package initialization.
+func init() {
+	registry.RegisterFactory(registry.FrontdoorFactory{
+		Type:           FrontdoorType,
+		APIType:        FrontdoorAPIType(),
+		Description:    "OpenAI Chat Completions API format",
+		CreateHandlers: createFrontdoorHandlers,
+	})
+}
+
+// createFrontdoorHandlers creates handler registrations for OpenAI frontdoor.
+func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
+	result := make([]registry.HandlerRegistration, len(routes))
+	for i, r := range routes {
+		result[i] = registry.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+	}
+	return result
+}
+
+// CreateFrontdoorHandlerRegistrations creates the HTTP handler registrations for OpenAI frontdoor.
+func CreateFrontdoorHandlerRegistrations(handler *FrontdoorHandler, basePath string) []FrontdoorRoute {
+	return []FrontdoorRoute{
+		{Path: basePath + "/v1/chat/completions", Method: http.MethodPost, Handler: handler.HandleChatCompletion},
+		{Path: basePath + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
+	}
+}
+
+// FrontdoorHandler handles OpenAI Chat Completions API requests.
+type FrontdoorHandler struct {
 	provider domain.Provider
 	store    storage.ConversationStore
 	appName  string
@@ -29,7 +75,8 @@ type Handler struct {
 	codec    codec.Codec
 }
 
-func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
+// NewFrontdoorHandler creates a new OpenAI frontdoor handler.
+func NewFrontdoorHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
 	exposedModels := make([]domain.Model, 0, len(models))
 	for _, model := range models {
 		exposedModels = append(exposedModels, domain.Model{
@@ -40,16 +87,16 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 		})
 	}
 
-	return &Handler{
+	return &FrontdoorHandler{
 		provider: provider,
 		store:    store,
 		appName:  appName,
 		models:   exposedModels,
-		codec:    openaipkg.NewCodec(),
+		codec:    NewCodec(),
 	}
 }
 
-func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
+func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
@@ -184,7 +231,7 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 	w.Write(respBody)
 }
 
-func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
+func (h *FrontdoorHandler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	server.AddLogField(r.Context(), "frontdoor", "openai")
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", h.provider.Name())
@@ -210,7 +257,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
+func (h *FrontdoorHandler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 	providerName := h.provider.Name()

@@ -10,9 +10,10 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 
-	// Import frontdoor packages to trigger their init() registration.
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/anthropic"
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/openai"
+	// Import consolidated packages to trigger their frontdoor init() registration.
+	// The anthropic and openai packages contain both provider and frontdoor code.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // Registry creates and registers frontdoor handlers.
