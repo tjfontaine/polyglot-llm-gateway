@@ -702,3 +702,17 @@ Implementing features from the "Gateway Implementation Roadmap: Aligning with 20
 ### 16.8 Web UI Files Modified
 - `web/control-plane/src/types/index.ts` - Added response output types
 - `web/control-plane/src/pages/Data.tsx` - Added tool call rendering components
+
+---
+
+## Phase 17: Bug Fixes ✅ COMPLETED
+
+### 17.1 OpenAI Responses API stream_options Fix ✅
+- [x] Fixed error "Unknown parameter: 'stream_options.include_usage'" when streaming via Responses API
+- [x] Root cause: `StreamResponse()` in `api/openai/client.go` was auto-adding `stream_options.include_usage` which is not supported by the Responses API
+- [x] The Responses API uses SSE events and automatically includes usage in `response.completed` events
+- [x] Fix: Removed auto-population of `stream_options` from `StreamResponse()` method
+- [x] Chat Completions API streaming still correctly sets `stream_options` (it's only unsupported in Responses API)
+
+### 17.2 Files Modified
+- `internal/api/openai/client.go` - Removed stream_options auto-add from StreamResponse()

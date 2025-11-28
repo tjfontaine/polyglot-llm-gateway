@@ -289,11 +289,12 @@ type ResponsesStreamEvent struct {
 }
 
 // StreamResponse sends a streaming request to the Responses API.
+// Note: The Responses API uses SSE events and includes usage in "response.completed" events,
+// so stream_options is not needed (and not supported by the API).
 func (c *Client) StreamResponse(ctx context.Context, req *ResponsesRequest, opts *RequestOptions) (<-chan ResponsesStreamResult, error) {
 	req.Stream = true
-	if req.StreamOptions == nil {
-		req.StreamOptions = &StreamOptions{IncludeUsage: true}
-	}
+	// Don't set stream_options for Responses API - it's not supported.
+	// Usage is automatically included in "response.completed" events.
 
 	body, err := json.Marshal(req)
 	if err != nil {
