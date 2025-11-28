@@ -233,3 +233,145 @@ func (c *Client) setHeaders(req *http.Request, opts *RequestOptions) {
 		req.Header.Set("User-Agent", "polyglot-llm-gateway/1.0")
 	}
 }
+
+// ========== Responses API ==========
+
+// CreateResponse sends a request to the Responses API.
+func (c *Client) CreateResponse(ctx context.Context, req *ResponsesRequest, opts *RequestOptions) (*ResponsesResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(httpReq, opts)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
+			return nil, apiErr.ToCanonical()
+		}
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result ResponsesResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ResponsesStreamResult wraps a streaming event or error.
+type ResponsesStreamResult struct {
+	Event *ResponsesStreamEvent
+	Err   error
+}
+
+// ResponsesStreamEvent represents a streaming event from the Responses API.
+type ResponsesStreamEvent struct {
+	Type string
+	Data json.RawMessage
+}
+
+// StreamResponse sends a streaming request to the Responses API.
+func (c *Client) StreamResponse(ctx context.Context, req *ResponsesRequest, opts *RequestOptions) (<-chan ResponsesStreamResult, error) {
+	req.Stream = true
+	if req.StreamOptions == nil {
+		req.StreamOptions = &StreamOptions{IncludeUsage: true}
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setHeaders(httpReq, opts)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		if apiErr, err := ParseErrorResponse(respBody); err == nil && apiErr != nil {
+			return nil, apiErr.ToCanonical()
+		}
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	out := make(chan ResponsesStreamResult)
+	go c.responsesStreamReader(resp.Body, out)
+	return out, nil
+}
+
+func (c *Client) responsesStreamReader(body io.ReadCloser, out chan<- ResponsesStreamResult) {
+	defer close(out)
+	defer body.Close()
+
+	scanner := bufio.NewScanner(body)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	var currentEvent string
+	var currentData strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Empty line indicates end of event
+		if line == "" {
+			if currentEvent != "" && currentData.Len() > 0 {
+				data := currentData.String()
+				if data != "[DONE]" {
+					out <- ResponsesStreamResult{
+						Event: &ResponsesStreamEvent{
+							Type: currentEvent,
+							Data: json.RawMessage(data),
+						},
+					}
+				}
+			}
+			currentEvent = ""
+			currentData.Reset()
+			continue
+		}
+
+		// Parse event type
+		if strings.HasPrefix(line, "event: ") {
+			currentEvent = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+
+		// Parse data
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			currentData.WriteString(data)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		out <- ResponsesStreamResult{Err: fmt.Errorf("stream read error: %w", err)}
+	}
+}

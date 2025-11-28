@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	openaiapi "github.com/tjfontaine/polyglot-llm-gateway/internal/api/openai"
@@ -26,12 +27,20 @@ func WithHTTPClient(httpClient *http.Client) ProviderOption {
 	}
 }
 
+// WithResponsesAPI enables using the Responses API instead of Chat Completions.
+func WithResponsesAPI(enable bool) ProviderOption {
+	return func(p *Provider) {
+		p.useResponsesAPI = enable
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom OpenAI client.
 type Provider struct {
-	client     *openaiapi.Client
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
+	client          *openaiapi.Client
+	apiKey          string
+	baseURL         string
+	httpClient      *http.Client
+	useResponsesAPI bool
 }
 
 // New creates a new OpenAI provider.
@@ -66,12 +75,16 @@ func (p *Provider) APIType() domain.APIType {
 }
 
 func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (*domain.CanonicalResponse, error) {
-	// Use codec to convert canonical request to API request
-	apiReq := openaicodec.CanonicalToAPIRequest(req)
-
 	opts := &openaiapi.RequestOptions{
 		UserAgent: req.UserAgent,
 	}
+
+	if p.useResponsesAPI {
+		return p.completeWithResponses(ctx, req, opts)
+	}
+
+	// Use codec to convert canonical request to API request
+	apiReq := openaicodec.CanonicalToAPIRequest(req)
 
 	resp, err := p.client.CreateChatCompletion(ctx, apiReq, opts)
 	if err != nil {
@@ -82,13 +95,28 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 	return openaicodec.APIResponseToCanonical(resp), nil
 }
 
-func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
-	// Use codec to convert canonical request to API request
-	apiReq := openaicodec.CanonicalToAPIRequest(req)
+func (p *Provider) completeWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *openaiapi.RequestOptions) (*domain.CanonicalResponse, error) {
+	apiReq := canonicalToResponsesRequest(req)
 
+	resp, err := p.client.CreateResponse(ctx, apiReq, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return responsesResponseToCanonical(resp), nil
+}
+
+func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
 	opts := &openaiapi.RequestOptions{
 		UserAgent: req.UserAgent,
 	}
+
+	if p.useResponsesAPI {
+		return p.streamWithResponses(ctx, req, opts)
+	}
+
+	// Use codec to convert canonical request to API request
+	apiReq := openaicodec.CanonicalToAPIRequest(req)
 
 	stream, err := p.client.StreamChatCompletion(ctx, apiReq, opts)
 	if err != nil {
@@ -107,6 +135,79 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 			// Use codec to convert API chunk to canonical event
 			event := openaicodec.APIChunkToCanonical(result.Chunk)
 			out <- *event
+		}
+	}()
+
+	return out, nil
+}
+
+func (p *Provider) streamWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *openaiapi.RequestOptions) (<-chan domain.CanonicalEvent, error) {
+	apiReq := canonicalToResponsesRequest(req)
+	apiReq.Stream = true
+
+	stream, err := p.client.StreamResponse(ctx, apiReq, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan domain.CanonicalEvent)
+	go func() {
+		defer close(out)
+		var currentModel string
+		var currentResponseID string
+
+		for result := range stream {
+			if result.Err != nil {
+				out <- domain.CanonicalEvent{Error: result.Err}
+				return
+			}
+
+			event := result.Event
+			if event == nil {
+				continue
+			}
+
+			// Parse different event types
+			switch event.Type {
+			case "response.created", "response.in_progress":
+				var data struct {
+					Response openaiapi.ResponsesResponse `json:"response"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					currentModel = data.Response.Model
+					currentResponseID = data.Response.ID
+				}
+
+			case "response.output_text.delta":
+				var data struct {
+					Delta string `json:"delta"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil && data.Delta != "" {
+					out <- domain.CanonicalEvent{
+						ContentDelta: data.Delta,
+						Model:        currentModel,
+						ResponseID:   currentResponseID,
+					}
+				}
+
+			case "response.completed":
+				var data struct {
+					Response openaiapi.ResponsesResponse `json:"response"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					if data.Response.Usage != nil {
+						out <- domain.CanonicalEvent{
+							Model:      data.Response.Model,
+							ResponseID: data.Response.ID,
+							Usage: &domain.Usage{
+								PromptTokens:     data.Response.Usage.InputTokens,
+								CompletionTokens: data.Response.Usage.OutputTokens,
+								TotalTokens:      data.Response.Usage.TotalTokens,
+							},
+						}
+					}
+				}
+			}
 		}
 	}()
 
@@ -134,4 +235,145 @@ func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) {
 		Object: resp.Object,
 		Data:   models,
 	}, nil
+}
+
+// canonicalToResponsesRequest converts a canonical request to OpenAI Responses API format.
+func canonicalToResponsesRequest(req *domain.CanonicalRequest) *openaiapi.ResponsesRequest {
+	// Build input items from messages
+	var input any
+
+	// If there's a single user message and no system prompt, use simple text input
+	if len(req.Messages) == 1 && req.Messages[0].Role == "user" && req.SystemPrompt == "" && req.Instructions == "" {
+		input = req.Messages[0].Content
+	} else {
+		// Build input items from messages
+		items := make([]openaiapi.ResponsesInputItem, 0, len(req.Messages))
+		for _, msg := range req.Messages {
+			item := openaiapi.ResponsesInputItem{
+				Type: "message",
+				Role: msg.Role,
+				Content: []openaiapi.ResponsesContentPart{
+					{Type: "input_text", Text: msg.Content},
+				},
+			}
+			items = append(items, item)
+		}
+		input = items
+	}
+
+	apiReq := &openaiapi.ResponsesRequest{
+		Model: req.Model,
+		Input: input,
+	}
+
+	// Set instructions from system prompt
+	if req.Instructions != "" {
+		apiReq.Instructions = req.Instructions
+	} else if req.SystemPrompt != "" {
+		apiReq.Instructions = req.SystemPrompt
+	}
+
+	if req.MaxTokens > 0 {
+		apiReq.MaxOutputTokens = req.MaxTokens
+	}
+
+	if req.Temperature > 0 {
+		apiReq.Temperature = &req.Temperature
+	}
+
+	if req.TopP > 0 {
+		apiReq.TopP = &req.TopP
+	}
+
+	apiReq.ToolChoice = req.ToolChoice
+
+	// Convert tools
+	if len(req.Tools) > 0 {
+		apiReq.Tools = make([]openaiapi.ResponsesTool, len(req.Tools))
+		for i, t := range req.Tools {
+			apiReq.Tools[i] = openaiapi.ResponsesTool{
+				Type: t.Type,
+				Function: openaiapi.FunctionTool{
+					Name:        t.Function.Name,
+					Description: t.Function.Description,
+					Parameters:  t.Function.Parameters,
+				},
+			}
+		}
+	}
+
+	return apiReq
+}
+
+// responsesResponseToCanonical converts an OpenAI Responses API response to canonical format.
+func responsesResponseToCanonical(resp *openaiapi.ResponsesResponse) *domain.CanonicalResponse {
+	choices := make([]domain.Choice, 0)
+
+	for _, item := range resp.Output {
+		if item.Type == "message" {
+			var content string
+			for _, part := range item.Content {
+				if part.Type == "output_text" {
+					content += part.Text
+				}
+			}
+
+			choices = append(choices, domain.Choice{
+				Index: len(choices),
+				Message: domain.Message{
+					Role:    item.Role,
+					Content: content,
+				},
+				FinishReason: "stop",
+			})
+		} else if item.Type == "function_call" {
+			// Handle function calls
+			if len(choices) == 0 {
+				choices = append(choices, domain.Choice{
+					Index: 0,
+					Message: domain.Message{
+						Role: "assistant",
+					},
+					FinishReason: "tool_calls",
+				})
+			}
+
+			choices[0].Message.ToolCalls = append(choices[0].Message.ToolCalls, domain.ToolCall{
+				ID:   item.CallID,
+				Type: "function",
+				Function: domain.ToolCallFunction{
+					Name:      item.Name,
+					Arguments: item.Arguments,
+				},
+			})
+		}
+	}
+
+	// Ensure we have at least one choice
+	if len(choices) == 0 {
+		choices = append(choices, domain.Choice{
+			Index:        0,
+			Message:      domain.Message{Role: "assistant"},
+			FinishReason: "stop",
+		})
+	}
+
+	canonResp := &domain.CanonicalResponse{
+		ID:            resp.ID,
+		Object:        "chat.completion",
+		Created:       resp.CreatedAt,
+		Model:         resp.Model,
+		Choices:       choices,
+		SourceAPIType: domain.APITypeOpenAI,
+	}
+
+	if resp.Usage != nil {
+		canonResp.Usage = domain.Usage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		}
+	}
+
+	return canonResp
 }

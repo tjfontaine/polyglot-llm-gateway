@@ -498,3 +498,62 @@ Updated `AGENTS.md` with comprehensive domain model architecture documentation c
 - **Error Type Mapping**: Table mapping domain errors to Anthropic/OpenAI formats and HTTP status codes
 - **Pass-Through Optimization**: How to bypass canonical conversion when frontdoor matches provider
 - **Adding New API Support**: Step-by-step guide for adding new API types (e.g., Google Gemini)
+
+---
+
+## Phase 14: Model Mapping Streaming & OpenAI Responses API ✅ COMPLETED
+
+### 14.1 Problem
+1. **Streaming model tracking**: The `served_model` in logs was showing the requested model instead of the actual model being used by the provider
+2. **OpenAI API type**: Requests routed to OpenAI were using Chat Completions API (`/v1/chat/completions`) instead of the newer Responses API (`/v1/responses`)
+
+### 14.2 Streaming Model Capture
+- [x] Updated `APIChunkToCanonical` in `codec/openai/codec.go` to capture `Model` and `ResponseID` from streaming chunks
+- [x] Updated `APIChunkToCanonical` to capture `FinishReason` from streaming chunks
+- [x] Updated `ModelMappingProvider.Stream` to wrap upstream channel and rewrite model in events when `rewrite_response_model: true`
+- [x] Updated Anthropic frontdoor `handleStream` to capture `servedModel` from streaming events
+- [x] Logs now correctly show `served_model` as the actual model used (e.g., the rewritten model name)
+
+### 14.3 OpenAI Responses API Client
+- [x] Added Responses API types to `api/openai/types.go`:
+  - `ResponsesRequest` - request format for `/v1/responses`
+  - `ResponsesResponse` - response format
+  - `ResponsesInputItem`, `ResponsesContentPart` - input types
+  - `ResponsesOutputItem` - output types
+  - `ResponsesUsage`, `ResponsesError` - usage and error types
+  - `ResponsesTool`, `TruncationStrategy` - configuration types
+- [x] Added client methods to `api/openai/client.go`:
+  - `CreateResponse()` - non-streaming Responses API call
+  - `StreamResponse()` - streaming Responses API call
+  - `responsesStreamReader()` - SSE event parser for Responses API
+
+### 14.4 OpenAI Provider Responses API Support
+- [x] Added `WithResponsesAPI(bool)` option to OpenAI provider
+- [x] Updated `Provider.Complete()` to use Responses API when enabled
+- [x] Updated `Provider.Stream()` to use Responses API when enabled
+- [x] Added `canonicalToResponsesRequest()` - converts canonical request to Responses API format
+- [x] Added `responsesResponseToCanonical()` - converts Responses API response to canonical format
+- [x] Added `streamWithResponses()` - handles streaming from Responses API with proper event parsing
+
+### 14.5 Configuration
+- [x] Added `use_responses_api` field to `ProviderConfig` in `config/config.go`
+- [x] Updated provider registry to apply `WithResponsesAPI` option when configured
+- [x] Updated `config.yaml` to enable Responses API for OpenAI provider:
+  ```yaml
+  providers:
+    - name: openai
+      type: openai
+      api_key: ${OPENAI_API_KEY}
+      use_responses_api: true
+  ```
+
+### 14.6 Files Modified
+- `internal/codec/openai/codec.go` - Capture model/response ID from streaming chunks
+- `internal/provider/model_mapping.go` - Rewrite model in streaming events
+- `internal/frontdoor/anthropic/handler.go` - Capture served model from streams
+- `internal/api/openai/types.go` - Add Responses API types
+- `internal/api/openai/client.go` - Add Responses API client methods
+- `internal/provider/openai/provider.go` - Add Responses API support with conversion functions
+- `internal/provider/registry.go` - Pass `use_responses_api` config to provider
+- `internal/config/config.go` - Add `UseResponsesAPI` field
+- `config.yaml` - Enable Responses API for OpenAI

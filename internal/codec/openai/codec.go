@@ -347,12 +347,20 @@ func CanonicalToAPIResponse(resp *domain.CanonicalResponse) *openai.ChatCompleti
 
 // APIChunkToCanonical converts an OpenAI streaming chunk to a canonical event.
 func APIChunkToCanonical(chunk *openai.ChatCompletionChunk) *domain.CanonicalEvent {
-	event := &domain.CanonicalEvent{}
+	event := &domain.CanonicalEvent{
+		ResponseID: chunk.ID,
+		Model:      chunk.Model,
+	}
 
 	if len(chunk.Choices) > 0 {
 		choice := chunk.Choices[0]
 		event.Role = choice.Delta.Role
 		event.ContentDelta = choice.Delta.Content
+
+		// Capture finish reason
+		if choice.FinishReason != nil {
+			event.FinishReason = *choice.FinishReason
+		}
 
 		// Handle tool calls
 		if len(choice.Delta.ToolCalls) > 0 {

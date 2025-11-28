@@ -331,6 +331,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	}
 
 	var builder strings.Builder
+	var servedModel string
 
 	for event := range events {
 		if event.Error != nil {
@@ -339,6 +340,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 				slog.String("error", event.Error.Error()),
 			)
 			break
+		}
+
+		// Capture served model from streaming events
+		if event.Model != "" {
+			servedModel = event.Model
 		}
 
 		builder.WriteString(event.ContentDelta)
@@ -361,6 +367,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
 	flusher.Flush()
 
+	// Use served model from provider if available, otherwise use requested model
+	if servedModel == "" {
+		servedModel = req.Model
+	}
+
 	metadata := map[string]string{
 		"frontdoor": "anthropic",
 		"app":       h.appName,
@@ -369,7 +380,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	}
 
 	recordResp := &domain.CanonicalResponse{
-		Model: req.Model,
+		Model: servedModel,
 		Choices: []domain.Choice{
 			{
 				Index: 0,
@@ -381,7 +392,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		},
 	}
 
-	server.AddLogField(r.Context(), "served_model", recordResp.Model)
+	server.AddLogField(r.Context(), "served_model", servedModel)
 
 	conversation.Record(r.Context(), h.store, "", req, recordResp, metadata)
 
@@ -391,6 +402,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		slog.String("app", h.appName),
 		slog.String("provider", providerName),
 		slog.String("requested_model", req.Model),
-		slog.String("served_model", recordResp.Model),
+		slog.String("served_model", servedModel),
 	)
 }
