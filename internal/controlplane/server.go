@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
@@ -591,7 +592,7 @@ type InteractionListResponse struct {
 	Total        int                  `json:"total"`
 }
 
-// InteractionDetailView is the full detail view of an interaction
+// InteractionDetailView is the full detail view of an interaction (legacy)
 type InteractionDetailView struct {
 	ID                 string            `json:"id"`
 	Type               string            `json:"type"`
@@ -608,6 +609,56 @@ type InteractionDetailView struct {
 	Response json.RawMessage `json:"response,omitempty"`
 }
 
+// NewInteractionDetailView provides the full detail of a unified interaction
+// with bidirectional visibility into request/response mapping
+type NewInteractionDetailView struct {
+	ID             string            `json:"id"`
+	TenantID       string            `json:"tenant_id"`
+	Frontdoor      string            `json:"frontdoor"`
+	Provider       string            `json:"provider"`
+	AppName        string            `json:"app_name,omitempty"`
+	RequestedModel string            `json:"requested_model"`
+	ServedModel    string            `json:"served_model,omitempty"`
+	ProviderModel  string            `json:"provider_model,omitempty"`
+	Streaming      bool              `json:"streaming"`
+	Status         string            `json:"status"`
+	Duration       string            `json:"duration"`
+	DurationNs     int64             `json:"duration_ns"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	RequestHeaders map[string]string `json:"request_headers,omitempty"`
+	CreatedAt      int64             `json:"created_at"`
+	UpdatedAt      int64             `json:"updated_at"`
+
+	Request  *InteractionRequestView  `json:"request,omitempty"`
+	Response *InteractionResponseView `json:"response,omitempty"`
+	Error    *InteractionErrorView    `json:"error,omitempty"`
+}
+
+// InteractionRequestView shows request details with raw and canonical data
+type InteractionRequestView struct {
+	Raw             json.RawMessage `json:"raw,omitempty"`
+	CanonicalJSON   json.RawMessage `json:"canonical,omitempty"`
+	UnmappedFields  []string        `json:"unmapped_fields,omitempty"`
+	ProviderRequest json.RawMessage `json:"provider_request,omitempty"`
+}
+
+// InteractionResponseView shows response details with raw and canonical data
+type InteractionResponseView struct {
+	Raw            json.RawMessage `json:"raw,omitempty"`
+	CanonicalJSON  json.RawMessage `json:"canonical,omitempty"`
+	UnmappedFields []string        `json:"unmapped_fields,omitempty"`
+	ClientResponse json.RawMessage `json:"client_response,omitempty"`
+	FinishReason   string          `json:"finish_reason,omitempty"`
+	Usage          *domain.Usage   `json:"usage,omitempty"`
+}
+
+// InteractionErrorView shows error details
+type InteractionErrorView struct {
+	Type    string `json:"type"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
 func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
 		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
@@ -616,7 +667,7 @@ func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) 
 
 	limit := 50
 	offset := 0
-	filterType := r.URL.Query().Get("type") // "conversation", "response", or "" for all
+	filterType := r.URL.Query().Get("type") // "conversation", "response", "interaction", or "" for all
 
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.Atoi(q); err == nil && v > 0 && v <= 200 {
@@ -631,6 +682,44 @@ func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tenantID := tenantIDFromContext(r.Context())
+
+	// Check if we have an InteractionStore for the new unified interactions
+	if iStore, ok := s.store.(storage.InteractionStore); ok && (filterType == "" || filterType == "interaction") {
+		opts := storage.InteractionListOptions{
+			TenantID:  tenantID,
+			Frontdoor: domain.APIType(r.URL.Query().Get("frontdoor")),
+			Provider:  r.URL.Query().Get("provider"),
+			Status:    r.URL.Query().Get("status"),
+			Limit:     limit,
+			Offset:    offset,
+		}
+
+		interactions, err := iStore.ListInteractions(r.Context(), opts)
+		if err == nil && len(interactions) > 0 {
+			// Convert to API response format
+			result := make([]InteractionSummary, 0, len(interactions))
+			for _, i := range interactions {
+				result = append(result, InteractionSummary{
+					ID:        i.ID,
+					Type:      "interaction",
+					Status:    string(i.Status),
+					Model:     i.ServedModel,
+					Metadata:  i.Metadata,
+					CreatedAt: i.CreatedAt.Unix(),
+					UpdatedAt: i.UpdatedAt.Unix(),
+				})
+			}
+
+			resp := InteractionListResponse{
+				Interactions: result,
+				Total:        len(result),
+			}
+			writeJSON(w, resp)
+			return
+		}
+	}
+
+	// Fall back to the legacy behavior of merging conversations and responses
 	opts := storage.ListOptions{
 		TenantID: tenantID,
 		Limit:    limit * 2, // Get more to allow merging and sorting
@@ -724,7 +813,68 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 	interactionID := chi.URLParam(r, "interaction_id")
 	tenantID := tenantIDFromContext(r.Context())
 
-	// Try to get as conversation first
+	// Try to get as new unified interaction first
+	if iStore, ok := s.store.(storage.InteractionStore); ok {
+		interaction, err := iStore.GetInteraction(r.Context(), interactionID)
+		if err == nil {
+			if interaction.TenantID != "" && tenantID != "" && interaction.TenantID != tenantID {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+
+			resp := NewInteractionDetailView{
+				ID:             interaction.ID,
+				TenantID:       interaction.TenantID,
+				Frontdoor:      string(interaction.Frontdoor),
+				Provider:       interaction.Provider,
+				AppName:        interaction.AppName,
+				RequestedModel: interaction.RequestedModel,
+				ServedModel:    interaction.ServedModel,
+				ProviderModel:  interaction.ProviderModel,
+				Streaming:      interaction.Streaming,
+				Status:         string(interaction.Status),
+				Duration:       interaction.Duration.String(),
+				DurationNs:     int64(interaction.Duration),
+				Metadata:       interaction.Metadata,
+				RequestHeaders: interaction.RequestHeaders,
+				CreatedAt:      interaction.CreatedAt.Unix(),
+				UpdatedAt:      interaction.UpdatedAt.Unix(),
+			}
+
+			if interaction.Request != nil {
+				resp.Request = &InteractionRequestView{
+					Raw:            interaction.Request.Raw,
+					CanonicalJSON:  interaction.Request.CanonicalJSON,
+					UnmappedFields: interaction.Request.UnmappedFields,
+					ProviderRequest: interaction.Request.ProviderRequest,
+				}
+			}
+
+			if interaction.Response != nil {
+				resp.Response = &InteractionResponseView{
+					Raw:            interaction.Response.Raw,
+					CanonicalJSON:  interaction.Response.CanonicalJSON,
+					UnmappedFields: interaction.Response.UnmappedFields,
+					ClientResponse: interaction.Response.ClientResponse,
+					FinishReason:   interaction.Response.FinishReason,
+					Usage:          interaction.Response.Usage,
+				}
+			}
+
+			if interaction.Error != nil {
+				resp.Error = &InteractionErrorView{
+					Type:    interaction.Error.Type,
+					Code:    interaction.Error.Code,
+					Message: interaction.Error.Message,
+				}
+			}
+
+			writeJSON(w, resp)
+			return
+		}
+	}
+
+	// Try to get as conversation (legacy)
 	conv, err := s.store.GetConversation(r.Context(), interactionID)
 	if err == nil {
 		if conv.TenantID != "" && tenantID != "" && conv.TenantID != tenantID {
@@ -760,7 +910,7 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Try to get as response
+	// Try to get as response (legacy)
 	if respStore, ok := s.store.(storage.ResponseStore); ok {
 		record, err := respStore.GetResponse(r.Context(), interactionID)
 		if err == nil {
