@@ -702,3 +702,58 @@ Implementing features from the "Gateway Implementation Roadmap: Aligning with 20
 ### 16.8 Web UI Files Modified
 - `web/control-plane/src/types/index.ts` - Added response output types
 - `web/control-plane/src/pages/Data.tsx` - Added tool call rendering components
+
+---
+
+## Phase 17: Bug Fixes & Spec Alignment ✅ COMPLETED
+
+### 17.1 OpenAI Responses API stream_options Fix ✅
+- [x] Fixed error "Unknown parameter: 'stream_options.include_usage'" when streaming via Responses API
+- [x] Root cause: `StreamResponse()` in `api/openai/client.go` was auto-adding `stream_options.include_usage` which is not supported by the Responses API
+- [x] The Responses API uses SSE events and automatically includes usage in `response.done` events
+- [x] Fix: Removed auto-population of `stream_options` from `StreamResponse()` method
+- [x] Chat Completions API streaming still correctly sets `stream_options` (it's only unsupported in Responses API)
+
+### 17.2 OpenAI Responses API Spec v2.0 Alignment ✅
+Aligned streaming events with OpenAI Responses API Specification v2.0:
+
+**Streaming Event Changes:**
+- [x] `response.created` - Now returns `{"id": "...", "model": "..."}` (simplified from full response object)
+- [x] `response.output_item.added` - Changed `output_index` to `item_index` per spec
+- [x] `response.output_item.delta` - Unified event for both text (`delta.content`) and tool args (`delta.arguments`)
+- [x] `response.output_item.done` - Changed `output_index` to `item_index` per spec
+- [x] `response.done` - Replaced `response.completed` with `{"usage": {...}, "finish_reason": "..."}` format
+
+**Removed Non-Spec Events:**
+- [x] Removed `response.in_progress` (not in spec)
+- [x] Removed `response.content_part.added` (not in spec)
+- [x] Removed `response.content_part.done` (not in spec)
+- [x] Removed `response.output_text.delta` (replaced by `response.output_item.delta`)
+- [x] Removed `response.output_text.done` (not in spec)
+- [x] Removed `response.function_call_arguments.delta` (replaced by `response.output_item.delta`)
+- [x] Removed `response.function_call_arguments.done` (not in spec)
+- [x] Removed `response.completed` (replaced by `response.done`)
+
+**Updated Domain Types:**
+- [x] `ResponseCreatedEvent` - Simplified to `{ID, CreatedAt, Model}`
+- [x] `OutputItemAddedEvent` - Uses `ItemIndex` instead of `OutputIndex`
+- [x] `OutputItemDeltaEvent` - New unified type with `Delta.Content` and `Delta.Arguments`
+- [x] `OutputItemDoneEvent` - Uses `ItemIndex` instead of `OutputIndex`
+- [x] `ResponseDoneEvent` - New type with `Usage` and `FinishReason`
+
+**Updated StreamEventType Constants:**
+- [x] Added `EventTypeResponseOutputItemDelta`
+- [x] Added `EventTypeResponseDone`
+- [x] Removed obsolete event type constants
+
+**Provider Updates:**
+- [x] Updated OpenAI provider to consume new spec-compliant events from upstream
+- [x] Added backwards compatibility for legacy event names
+
+### 17.3 Files Modified
+- `internal/api/openai/client.go` - Removed stream_options auto-add from StreamResponse()
+- `internal/domain/responses.go` - Updated event types to match spec
+- `internal/domain/types.go` - Updated StreamEventType constants
+- `internal/frontdoor/responses/handler.go` - Updated streaming to emit spec-compliant events
+- `internal/provider/openai/provider.go` - Updated to consume spec-compliant events
+- `internal/frontdoor/responses/handler_test.go` - Updated tests for new event format

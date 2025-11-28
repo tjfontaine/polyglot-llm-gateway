@@ -172,29 +172,23 @@ func TestHandleCreateResponse_Streaming_TextContent(t *testing.T) {
 	// Parse SSE events
 	events := parseSSEEvents(t, rec.Body.String())
 
-	// Should have response.created, response.in_progress, text events, and response.completed
+	// Per spec: response.created, response.output_item.added, response.output_item.delta, response.output_item.done, response.done
 	hasCreated := false
-	hasCompleted := false
+	hasDone := false
 	hasDelta := false
-	var completedResp domain.ResponsesAPIResponse
+	var doneEvent domain.ResponseDoneEvent
 
 	for _, e := range events {
 		if e.EventType == "response.created" {
 			hasCreated = true
 		}
-		if e.EventType == "response.output_text.delta" {
+		if e.EventType == "response.output_item.delta" {
 			hasDelta = true
 		}
-		if e.EventType == "response.completed" {
-			hasCompleted = true
-			if err := json.Unmarshal([]byte(e.Data), &struct {
-				Response domain.ResponsesAPIResponse `json:"response"`
-			}{Response: completedResp}); err == nil {
-				var event struct {
-					Response domain.ResponsesAPIResponse `json:"response"`
-				}
-				json.Unmarshal([]byte(e.Data), &event)
-				completedResp = event.Response
+		if e.EventType == "response.done" {
+			hasDone = true
+			if err := json.Unmarshal([]byte(e.Data), &doneEvent); err != nil {
+				t.Errorf("Failed to parse response.done event: %v", err)
 			}
 		}
 	}
@@ -203,13 +197,13 @@ func TestHandleCreateResponse_Streaming_TextContent(t *testing.T) {
 		t.Error("Expected response.created event")
 	}
 	if !hasDelta {
-		t.Error("Expected response.output_text.delta event")
+		t.Error("Expected response.output_item.delta event")
 	}
-	if !hasCompleted {
-		t.Error("Expected response.completed event")
+	if !hasDone {
+		t.Error("Expected response.done event")
 	}
-	if completedResp.Status != "completed" {
-		t.Errorf("Expected final status 'completed', got %s", completedResp.Status)
+	if doneEvent.FinishReason != "stop" {
+		t.Errorf("Expected finish_reason 'stop', got %s", doneEvent.FinishReason)
 	}
 }
 
@@ -272,12 +266,11 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 
 	events := parseSSEEvents(t, rec.Body.String())
 
-	// Check for function_call events
+	// Check for spec-compliant events
 	hasOutputItemAdded := false
 	hasArgumentsDelta := false
-	hasArgumentsDone := false
 	hasOutputItemDone := false
-	var completedResp domain.ResponsesAPIResponse
+	var doneEvent domain.ResponseDoneEvent
 
 	for _, e := range events {
 		if e.EventType == "response.output_item.added" {
@@ -294,15 +287,11 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 				}
 			}
 		}
-		if e.EventType == "response.function_call_arguments.delta" {
-			hasArgumentsDelta = true
-		}
-		if e.EventType == "response.function_call_arguments.done" {
-			hasArgumentsDone = true
-			var event domain.FunctionCallArgumentsDoneEvent
+		if e.EventType == "response.output_item.delta" {
+			var event domain.OutputItemDeltaEvent
 			if err := json.Unmarshal([]byte(e.Data), &event); err == nil {
-				if event.Arguments != `{"location":"SF"}` {
-					t.Errorf("Expected arguments '{\"location\":\"SF\"}', got %s", event.Arguments)
+				if event.Delta.Arguments != "" {
+					hasArgumentsDelta = true
 				}
 			}
 		}
@@ -311,15 +300,16 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 			if err := json.Unmarshal([]byte(e.Data), &event); err == nil {
 				if event.Item.Type == "function_call" {
 					hasOutputItemDone = true
+					if event.Item.Arguments != `{"location":"SF"}` {
+						t.Errorf("Expected arguments '{\"location\":\"SF\"}', got %s", event.Item.Arguments)
+					}
 				}
 			}
 		}
-		if e.EventType == "response.completed" {
-			var event struct {
-				Response domain.ResponsesAPIResponse `json:"response"`
+		if e.EventType == "response.done" {
+			if err := json.Unmarshal([]byte(e.Data), &doneEvent); err != nil {
+				t.Errorf("Failed to parse response.done event: %v", err)
 			}
-			json.Unmarshal([]byte(e.Data), &event)
-			completedResp = event.Response
 		}
 	}
 
@@ -327,32 +317,15 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 		t.Error("Expected response.output_item.added event for function_call")
 	}
 	if !hasArgumentsDelta {
-		t.Error("Expected response.function_call_arguments.delta event")
-	}
-	if !hasArgumentsDone {
-		t.Error("Expected response.function_call_arguments.done event")
+		t.Error("Expected response.output_item.delta event with arguments")
 	}
 	if !hasOutputItemDone {
 		t.Error("Expected response.output_item.done event for function_call")
 	}
 
-	// Status should be "incomplete" for tool_calls
-	if completedResp.Status != "incomplete" {
-		t.Errorf("Expected final status 'incomplete' for tool_calls, got %s", completedResp.Status)
-	}
-
-	// Output should contain the function_call
-	hasFunctionCall := false
-	for _, item := range completedResp.Output {
-		if item.Type == "function_call" {
-			hasFunctionCall = true
-			if item.Name != "get_weather" {
-				t.Errorf("Expected function name 'get_weather', got %s", item.Name)
-			}
-		}
-	}
-	if !hasFunctionCall {
-		t.Error("Expected function_call in output")
+	// finish_reason should be "tool_calls" per spec
+	if doneEvent.FinishReason != "tool_calls" {
+		t.Errorf("Expected finish_reason 'tool_calls', got %s", doneEvent.FinishReason)
 	}
 }
 
@@ -401,46 +374,33 @@ func TestHandleCreateResponse_Streaming_MixedContent(t *testing.T) {
 
 	events := parseSSEEvents(t, rec.Body.String())
 
-	// Should have text delta events
-	textDeltaCount := 0
+	// Should have delta events with content
+	contentDeltaCount := 0
 	for _, e := range events {
-		if e.EventType == "response.output_text.delta" {
-			textDeltaCount++
-		}
-	}
-
-	if textDeltaCount < 2 {
-		t.Errorf("Expected at least 2 text delta events, got %d", textDeltaCount)
-	}
-
-	// Check completed response has both message and function_call
-	var completedResp domain.ResponsesAPIResponse
-	for _, e := range events {
-		if e.EventType == "response.completed" {
-			var event struct {
-				Response domain.ResponsesAPIResponse `json:"response"`
+		if e.EventType == "response.output_item.delta" {
+			var event domain.OutputItemDeltaEvent
+			if err := json.Unmarshal([]byte(e.Data), &event); err == nil {
+				if event.Delta.Content != "" {
+					contentDeltaCount++
+				}
 			}
-			json.Unmarshal([]byte(e.Data), &event)
-			completedResp = event.Response
 		}
 	}
 
-	hasMessage := false
-	hasFunctionCall := false
-	for _, item := range completedResp.Output {
-		if item.Type == "message" {
-			hasMessage = true
-		}
-		if item.Type == "function_call" {
-			hasFunctionCall = true
+	if contentDeltaCount < 2 {
+		t.Errorf("Expected at least 2 content delta events, got %d", contentDeltaCount)
+	}
+
+	// Check response.done has correct finish_reason
+	var doneEvent domain.ResponseDoneEvent
+	for _, e := range events {
+		if e.EventType == "response.done" {
+			json.Unmarshal([]byte(e.Data), &doneEvent)
 		}
 	}
 
-	if !hasMessage {
-		t.Error("Expected message in output")
-	}
-	if !hasFunctionCall {
-		t.Error("Expected function_call in output")
+	if doneEvent.FinishReason != "tool_calls" {
+		t.Errorf("Expected finish_reason 'tool_calls', got %s", doneEvent.FinishReason)
 	}
 }
 

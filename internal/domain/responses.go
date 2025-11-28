@@ -265,7 +265,14 @@ type ResponsesError struct {
 	Message string `json:"message"`
 }
 
-// Responses API Streaming Events
+// Responses API Streaming Events (per OpenAI Responses API Spec v1.1)
+//
+// Event flow:
+// 1. response.created - sent immediately when request is accepted
+// 2. response.output_item.added - when a new Item (message or function_call) begins
+// 3. response.output_item.delta - for streaming content or arguments
+// 4. response.output_item.done - when an Item is fully generated
+// 5. response.done - final event with usage and finish_reason
 
 // ResponsesStreamEvent represents a streaming event from the Responses API.
 type ResponsesStreamEvent struct {
@@ -274,96 +281,66 @@ type ResponsesStreamEvent struct {
 }
 
 // ResponseCreatedEvent is sent when a response is created.
+// Event: response.created
 type ResponseCreatedEvent struct {
+	ID        string `json:"id"`
+	CreatedAt int64  `json:"created"`
+	Model     string `json:"model"`
+}
+
+// OutputItemAddedEvent is sent when an output item is added.
+// Event: response.output_item.added
+type OutputItemAddedEvent struct {
+	ItemIndex int                 `json:"item_index"`
+	Item      ResponsesOutputItem `json:"item"`
+}
+
+// OutputItemDeltaEvent is sent for streaming content or function arguments.
+// Event: response.output_item.delta
+type OutputItemDeltaEvent struct {
+	ItemIndex int              `json:"item_index"`
+	Delta     OutputItemDelta  `json:"delta"`
+}
+
+// OutputItemDelta contains either content delta or arguments delta.
+type OutputItemDelta struct {
+	Content   string `json:"content,omitempty"`   // For text content
+	Arguments string `json:"arguments,omitempty"` // For function arguments
+}
+
+// OutputItemDoneEvent is sent when an output item is complete.
+// Event: response.output_item.done
+type OutputItemDoneEvent struct {
+	ItemIndex int                 `json:"item_index"`
+	Item      ResponsesOutputItem `json:"item"`
+}
+
+// ResponseDoneEvent is sent when the entire response is complete.
+// Event: response.done
+type ResponseDoneEvent struct {
+	Usage        *ResponsesUsage `json:"usage,omitempty"`
+	FinishReason string          `json:"finish_reason"` // "stop", "tool_calls", "length", etc.
+}
+
+// ResponseFailedEvent is sent when a response fails.
+// Event: response.failed
+type ResponseFailedEvent struct {
+	Response ResponsesAPIResponse `json:"response"`
+}
+
+// Legacy event types - kept for backwards compatibility with existing code
+// These wrap the new types for internal use
+
+// LegacyResponseCreatedEvent wraps ResponseCreatedEvent for internal handler use
+type LegacyResponseCreatedEvent struct {
 	Type     string               `json:"type"` // "response.created"
 	Response ResponsesAPIResponse `json:"response"`
 }
 
-// ResponseInProgressEvent is sent when response processing starts.
-type ResponseInProgressEvent struct {
-	Type     string               `json:"type"` // "response.in_progress"
-	Response ResponsesAPIResponse `json:"response"`
-}
-
-// ResponseCompletedEvent is sent when a response is complete.
-type ResponseCompletedEvent struct {
-	Type     string               `json:"type"` // "response.completed"
-	Response ResponsesAPIResponse `json:"response"`
-}
-
-// ResponseFailedEvent is sent when a response fails.
-type ResponseFailedEvent struct {
+// LegacyResponseFailedEvent wraps error response for internal handler use
+type LegacyResponseFailedEvent struct {
 	Type     string               `json:"type"` // "response.failed"
 	Response ResponsesAPIResponse `json:"response"`
-}
-
-// OutputItemAddedEvent is sent when an output item is added.
-type OutputItemAddedEvent struct {
-	Type        string              `json:"type"` // "response.output_item.added"
-	OutputIndex int                 `json:"output_index"`
-	Item        ResponsesOutputItem `json:"item"`
-}
-
-// OutputItemDoneEvent is sent when an output item is complete.
-type OutputItemDoneEvent struct {
-	Type        string              `json:"type"` // "response.output_item.done"
-	OutputIndex int                 `json:"output_index"`
-	Item        ResponsesOutputItem `json:"item"`
-}
-
-// ContentPartAddedEvent is sent when a content part is added.
-type ContentPartAddedEvent struct {
-	Type         string               `json:"type"` // "response.content_part.added"
-	ItemID       string               `json:"item_id"`
-	OutputIndex  int                  `json:"output_index"`
-	ContentIndex int                  `json:"content_index"`
-	Part         ResponsesContentPart `json:"part"`
-}
-
-// ContentPartDoneEvent is sent when a content part is complete.
-type ContentPartDoneEvent struct {
-	Type         string               `json:"type"` // "response.content_part.done"
-	ItemID       string               `json:"item_id"`
-	OutputIndex  int                  `json:"output_index"`
-	ContentIndex int                  `json:"content_index"`
-	Part         ResponsesContentPart `json:"part"`
-}
-
-// TextDeltaEvent is sent for streaming text content.
-type TextDeltaEvent struct {
-	Type         string `json:"type"` // "response.output_text.delta"
-	ItemID       string `json:"item_id"`
-	OutputIndex  int    `json:"output_index"`
-	ContentIndex int    `json:"content_index"`
-	Delta        string `json:"delta"`
-}
-
-// TextDoneEvent is sent when text content is complete.
-type TextDoneEvent struct {
-	Type         string `json:"type"` // "response.output_text.done"
-	ItemID       string `json:"item_id"`
-	OutputIndex  int    `json:"output_index"`
-	ContentIndex int    `json:"content_index"`
-	Text         string `json:"text"`
-}
-
-// FunctionCallArgumentsDeltaEvent is sent for streaming function arguments.
-type FunctionCallArgumentsDeltaEvent struct {
-	Type        string `json:"type"` // "response.function_call_arguments.delta"
-	ItemID      string `json:"item_id"`
-	OutputIndex int    `json:"output_index"`
-	CallID      string `json:"call_id"`
-	Delta       string `json:"delta"`
-}
-
-// FunctionCallArgumentsDoneEvent is sent when function arguments are complete.
-type FunctionCallArgumentsDoneEvent struct {
-	Type        string `json:"type"` // "response.function_call_arguments.done"
-	ItemID      string `json:"item_id"`
-	OutputIndex int    `json:"output_index"`
-	CallID      string `json:"call_id"`
-	Name        string `json:"name"`
-	Arguments   string `json:"arguments"`
 }
 
 // Helper functions for converting between canonical and Responses API formats

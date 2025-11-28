@@ -197,17 +197,13 @@ const (
 	EventTypeContentBlockDelta StreamEventType = "content_block_delta"
 	EventTypeContentBlockStop  StreamEventType = "content_block_stop"
 
-	// Responses API events
-	EventTypeResponseCreated         StreamEventType = "response.created"
-	EventTypeResponseInProgress      StreamEventType = "response.in_progress"
-	EventTypeResponseCompleted       StreamEventType = "response.completed"
-	EventTypeResponseFailed          StreamEventType = "response.failed"
-	EventTypeResponseOutputItemAdd   StreamEventType = "response.output_item.added"
-	EventTypeResponseOutputItemDone  StreamEventType = "response.output_item.done"
-	EventTypeResponseContentPartAdd  StreamEventType = "response.content_part.added"
-	EventTypeResponseContentPartDone StreamEventType = "response.content_part.done"
-	EventTypeResponseTextDelta       StreamEventType = "response.output_text.delta"
-	EventTypeResponseTextDone        StreamEventType = "response.output_text.done"
+	// Responses API events (per OpenAI Responses API Spec v1.1)
+	EventTypeResponseCreated        StreamEventType = "response.created"
+	EventTypeResponseOutputItemAdd  StreamEventType = "response.output_item.added"
+	EventTypeResponseOutputItemDelta StreamEventType = "response.output_item.delta"
+	EventTypeResponseOutputItemDone StreamEventType = "response.output_item.done"
+	EventTypeResponseDone           StreamEventType = "response.done"
+	EventTypeResponseFailed         StreamEventType = "response.failed"
 )
 
 // CanonicalEvent represents a streaming event.

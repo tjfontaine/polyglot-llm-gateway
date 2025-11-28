@@ -167,9 +167,67 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 				continue
 			}
 
-			// Parse different event types
+			// Parse different event types (per OpenAI Responses API Spec v1.1)
 			switch event.Type {
-			case "response.created", "response.in_progress":
+			case "response.created":
+				// Per spec: {"id": "resp_123", "created": 1732000000, "model": "gpt-5"}
+				var data struct {
+					ID    string `json:"id"`
+					Model string `json:"model"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					currentModel = data.Model
+					currentResponseID = data.ID
+				}
+
+			case "response.output_item.delta":
+				// Per spec: {"item_index": 0, "delta": {"content": "Hello"}} or {"delta": {"arguments": "..."}}
+				var data struct {
+					ItemIndex int `json:"item_index"`
+					Delta     struct {
+						Content   string `json:"content"`
+						Arguments string `json:"arguments"`
+					} `json:"delta"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					if data.Delta.Content != "" {
+						out <- domain.CanonicalEvent{
+							ContentDelta: data.Delta.Content,
+							Model:        currentModel,
+							ResponseID:   currentResponseID,
+						}
+					}
+					// TODO: Handle arguments delta for tool calls if needed
+				}
+
+			case "response.done":
+				// Per spec: {"usage": {...}, "finish_reason": "stop"}
+				var data struct {
+					Usage *struct {
+						InputTokens  int `json:"input_tokens"`
+						OutputTokens int `json:"output_tokens"`
+						TotalTokens  int `json:"total_tokens"`
+					} `json:"usage"`
+					FinishReason string `json:"finish_reason"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					ev := domain.CanonicalEvent{
+						Model:        currentModel,
+						ResponseID:   currentResponseID,
+						FinishReason: data.FinishReason,
+					}
+					if data.Usage != nil {
+						ev.Usage = &domain.Usage{
+							PromptTokens:     data.Usage.InputTokens,
+							CompletionTokens: data.Usage.OutputTokens,
+							TotalTokens:      data.Usage.TotalTokens,
+						}
+					}
+					out <- ev
+				}
+
+			// Legacy event handling for backwards compatibility
+			case "response.in_progress":
 				var data struct {
 					Response openaiapi.ResponsesResponse `json:"response"`
 				}
