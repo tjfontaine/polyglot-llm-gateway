@@ -5,40 +5,12 @@ import (
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
+
+	// Import provider packages to trigger their init() registration.
+	// New providers should be added here.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/openai"
 )
-
-// Register built-in providers at package initialization.
-// New providers should add their registration here.
-func init() {
-	// Register OpenAI provider
-	RegisterFactory(ProviderFactory{
-		Type:           openai.ProviderType,
-		APIType:        domain.APITypeOpenAI,
-		Description:    "OpenAI API provider (GPT models)",
-		Create:         openai.CreateFromConfig,
-		ValidateConfig: openai.ValidateConfig,
-	})
-
-	// Register OpenAI-compatible provider (for local models, etc.)
-	RegisterFactory(ProviderFactory{
-		Type:           openai.ProviderTypeCompatible,
-		APIType:        domain.APITypeOpenAI,
-		Description:    "OpenAI-compatible API provider (local models, etc.)",
-		Create:         openai.CreateFromConfig,
-		ValidateConfig: openai.ValidateConfig,
-	})
-
-	// Register Anthropic provider
-	RegisterFactory(ProviderFactory{
-		Type:           anthropic.ProviderType,
-		APIType:        domain.APITypeAnthropic,
-		Description:    "Anthropic API provider (Claude models)",
-		Create:         anthropic.CreateFromConfig,
-		ValidateConfig: anthropic.ValidateConfig,
-	})
-}
 
 // Registry creates providers from configuration.
 // Providers are created using registered ProviderFactory instances.

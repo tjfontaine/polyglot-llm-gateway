@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
 )
 
 // FrontdoorType is the frontdoor type identifier used in configuration.
@@ -21,8 +22,28 @@ type Route struct {
 	Handler func(http.ResponseWriter, *http.Request)
 }
 
+// Register this frontdoor at package initialization.
+func init() {
+	registry.RegisterFactory(registry.FrontdoorFactory{
+		Type:           FrontdoorType,
+		APIType:        APIType(),
+		Description:    "OpenAI Chat Completions API format",
+		CreateHandlers: createHandlers,
+	})
+}
+
+// createHandlers creates handler registrations for OpenAI frontdoor.
+func createHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+	handler := NewHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	routes := CreateHandlerRegistrations(handler, cfg.BasePath)
+	result := make([]registry.HandlerRegistration, len(routes))
+	for i, r := range routes {
+		result[i] = registry.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+	}
+	return result
+}
+
 // CreateHandlerRegistrations creates the HTTP handler registrations for OpenAI frontdoor.
-// This function is called by the frontdoor registry factory.
 func CreateHandlerRegistrations(handler *Handler, basePath string) []Route {
 	return []Route{
 		{Path: basePath + "/v1/chat/completions", Method: http.MethodPost, Handler: handler.HandleChatCompletion},
