@@ -1,7 +1,9 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -107,14 +109,24 @@ func (h *Handler) HandleChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	requestedModel := req.Model
 	servedModel := resp.Model
-	logger.Info("chat completion",
+
+	// Build log fields
+	logFields := []any{
 		slog.String("frontdoor", "openai"),
 		slog.String("app", h.appName),
 		slog.String("provider", h.provider.Name()),
 		slog.String("requested_model", requestedModel),
 		slog.String("served_model", servedModel),
-	)
+	}
+	if resp.ProviderModel != "" && resp.ProviderModel != servedModel {
+		logFields = append(logFields, slog.String("provider_model", resp.ProviderModel))
+	}
+	logger.Info("chat completion", logFields...)
+
 	server.AddLogField(r.Context(), "served_model", servedModel)
+	if resp.ProviderModel != "" {
+		server.AddLogField(r.Context(), "provider_model", resp.ProviderModel)
+	}
 
 	metadata := map[string]string{
 		"frontdoor": "openai",
@@ -202,6 +214,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	}
 
 	var builder strings.Builder
+	var servedModel string
+	var providerModel string
 	streamID := "chatcmpl-" + uuid.New().String()
 	created := time.Now().Unix()
 
@@ -214,12 +228,28 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	for event := range events {
 		if event.Error != nil {
-			logger.Error("stream event error",
-				slog.String("request_id", requestID),
-				slog.String("error", event.Error.Error()),
-			)
-			server.AddError(r.Context(), event.Error)
+			// Context cancellation is expected when client disconnects - log at info level
+			if errors.Is(event.Error, context.Canceled) {
+				logger.Info("stream canceled by client",
+					slog.String("request_id", requestID),
+				)
+			} else {
+				logger.Error("stream event error",
+					slog.String("request_id", requestID),
+					slog.String("error", event.Error.Error()),
+				)
+				server.AddError(r.Context(), event.Error)
+			}
 			break
+		}
+
+		// Capture served model from streaming events
+		if event.Model != "" {
+			servedModel = event.Model
+		}
+		// Capture provider model (the actual model used, before any rewriting)
+		if event.ProviderModel != "" {
+			providerModel = event.ProviderModel
 		}
 
 		builder.WriteString(event.ContentDelta)
@@ -241,6 +271,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 
+	// Use served model from provider if available, otherwise use requested model
+	if servedModel == "" {
+		servedModel = req.Model
+	}
+
 	recordMetadata := map[string]string{
 		"frontdoor": "openai",
 		"app":       h.appName,
@@ -250,7 +285,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 
 	conversation.Record(r.Context(), h.store, streamID, req, &domain.CanonicalResponse{
 		ID:    streamID,
-		Model: req.Model,
+		Model: servedModel,
 		Choices: []domain.Choice{
 			{
 				Index: 0,
@@ -262,11 +297,22 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 		},
 	}, recordMetadata)
 
-	logger.Info("chat stream completed",
+	server.AddLogField(r.Context(), "served_model", servedModel)
+	if providerModel != "" {
+		server.AddLogField(r.Context(), "provider_model", providerModel)
+	}
+
+	// Build log fields
+	logFields := []any{
 		slog.String("frontdoor", "openai"),
 		slog.String("app", h.appName),
 		slog.String("provider", h.provider.Name()),
 		slog.String("requested_model", req.Model),
-		slog.String("served_model", req.Model),
-	)
+		slog.String("served_model", servedModel),
+	}
+	if providerModel != "" && providerModel != servedModel {
+		logFields = append(logFields, slog.String("provider_model", providerModel))
+	}
+
+	logger.Info("chat stream completed", logFields...)
 }

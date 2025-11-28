@@ -757,3 +757,97 @@ Aligned streaming events with OpenAI Responses API Specification v2.0:
 - `internal/frontdoor/responses/handler.go` - Updated streaming to emit spec-compliant events
 - `internal/provider/openai/provider.go` - Updated to consume spec-compliant events
 - `internal/frontdoor/responses/handler_test.go` - Updated tests for new event format
+
+---
+
+## Phase 18: Stream Cancellation Log Improvement ✅ COMPLETED
+
+### 18.1 Problem
+When clients disconnect during streaming (e.g., user stops a request), the stream read loop encounters a `context.Canceled` error. This was being logged at ERROR level with the message "stream event error" and "stream read error: context canceled", even though client-initiated cancellation is expected behavior.
+
+Example of the misleading error logs:
+```
+{"level":"ERROR","msg":"stream event error","error":"stream read error: context canceled"}
+{"level":"INFO","msg":"messages stream completed",...,"status":200}
+```
+
+### 18.2 Solution
+Updated all frontdoor handlers to distinguish between context cancellation (expected) and real errors:
+
+**Anthropic Frontdoor (`internal/frontdoor/anthropic/handler.go`):**
+- [x] Added `errors` package import
+- [x] Check `errors.Is(event.Error, context.Canceled)` before logging
+- [x] Log context cancellation at INFO level with message "stream canceled by client"
+- [x] Continue to log actual errors at ERROR level
+
+**OpenAI Frontdoor (`internal/frontdoor/openai/handler.go`):**
+- [x] Added `context` and `errors` package imports
+- [x] Same context cancellation check and logging behavior
+- [x] Only add error to request context for real errors (not cancellations)
+
+**Responses API Handler (`internal/frontdoor/responses/handler.go`):**
+- [x] Added `errors` package import
+- [x] Same context cancellation check and logging behavior
+- [x] Skip sending `response.failed` SSE event on client disconnect (client won't receive it anyway)
+
+### 18.3 Result
+After this change, client-initiated stream cancellations will show:
+```
+{"level":"INFO","msg":"stream canceled by client","request_id":"..."}
+{"level":"INFO","msg":"messages stream completed",...,"status":200}
+```
+
+Instead of misleading ERROR logs that suggest something went wrong when the behavior is normal and expected.
+
+---
+
+## Phase 19: Provider Model Observability ✅ COMPLETED
+
+### 19.1 Problem
+When `rewrite_response_model: true` is configured, the `served_model` in logs would show the rewritten model name (the original client-requested model) instead of the actual model used by the provider. This made debugging difficult because you couldn't see what model was actually being called.
+
+Example config:
+```yaml
+model_routing:
+  rewrites:
+    - model_prefix: claude-sonnet-
+      provider: openai
+      model: gpt-5-mini
+      rewrite_response_model: true
+```
+
+Would log:
+```
+"requested_model":"claude-sonnet-4-5-20250929","served_model":"claude-sonnet-4-5-20250929"
+```
+
+When the actual model used was `gpt-5-mini`.
+
+### 19.2 Solution
+Added `ProviderModel` field to track the actual model from the provider, separate from the potentially-rewritten `Model` field.
+
+**Domain Types (`internal/domain/types.go`):**
+- [x] Added `ProviderModel` field to `CanonicalResponse` struct
+- [x] Added `ProviderModel` field to `CanonicalEvent` struct
+
+**ModelMappingProvider (`internal/provider/model_mapping.go`):**
+- [x] Updated `Complete()` to preserve original model in `ProviderModel` before rewriting
+- [x] Updated `Stream()` wrapper to copy `Model` to `ProviderModel` before rewriting
+
+**Anthropic Frontdoor (`internal/frontdoor/anthropic/handler.go`):**
+- [x] Capture `ProviderModel` from streaming events
+- [x] Log `provider_model` when it differs from `served_model`
+- [x] Add `provider_model` to context for middleware logging
+
+**OpenAI Frontdoor (`internal/frontdoor/openai/handler.go`):**
+- [x] Same updates for both streaming and non-streaming paths
+
+### 19.3 Result
+After this change, logs now show all three model values when routing is configured:
+```
+"requested_model":"claude-sonnet-4-5-20250929","served_model":"claude-sonnet-4-5-20250929","provider_model":"gpt-5-mini"
+```
+
+- `requested_model`: What the client requested
+- `served_model`: What the client sees in the response (may be rewritten)
+- `provider_model`: What was actually sent to the provider (only shown when different from served_model)
