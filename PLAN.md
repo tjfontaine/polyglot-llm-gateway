@@ -353,3 +353,35 @@ This would cause `count_tokens` requests to use the Anthropic provider directly 
 - [x] Updated `TestRouter_CountTokens` to test model-based routing
 - [x] Added test cases for routing to provider with `CountTokens` support
 - [x] Added test cases for error when routed provider doesn't support `CountTokens`
+
+---
+
+## Phase 11: CountTokens Fallback & Error Handling Improvements ✅ COMPLETED
+
+### 11.1 Problem
+When requests are routed through `ModelMappingProvider` to a provider that doesn't support native `CountTokens` (e.g., OpenAI), the handler was:
+1. Returning HTTP 500 instead of falling back to token estimation
+2. Returning HTTP 500 for all API errors instead of appropriate status codes (400, 401, 429, etc.)
+
+### 11.2 CountTokens Fallback Fix
+- [x] Updated `HandleCountTokens` to detect "count_tokens not supported" errors and fall back to token estimation
+- [x] Added `tokenCounter` field to Handler struct with `tokens.Registry`
+- [x] Integrated `OpenAICounter` (tiktoken-based) for accurate OpenAI model token counting
+- [x] Added `canonicalToTokenRequest` helper for converting canonical requests to token count requests
+- [x] Fallback now uses proper tiktoken for OpenAI models, estimation for others
+
+### 11.3 Error Status Code Fix
+- [x] Added `writeAPIError` function to map Anthropic API errors to HTTP status codes
+- [x] Maps error types to appropriate status codes:
+  - `invalid_request_error` → 400 Bad Request
+  - `authentication_error` → 401 Unauthorized
+  - `permission_error` → 403 Forbidden
+  - `not_found_error` → 404 Not Found
+  - `rate_limit_error` → 429 Too Many Requests
+  - `overloaded_error` → 503 Service Unavailable
+  - `api_error` → 500 Internal Server Error
+- [x] Updated `HandleMessages`, `handleStream`, and `HandleCountTokens` to use `writeAPIError`
+- [x] Error responses now include proper Anthropic JSON format with type and message
+
+### 11.4 Files Modified
+- `internal/frontdoor/anthropic/handler.go` - Added token counter, improved error handling
