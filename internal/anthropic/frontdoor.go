@@ -1,3 +1,4 @@
+// Frontdoor handler for the Anthropic Messages API format.
 package anthropic
 
 import (
@@ -11,17 +12,63 @@ import (
 	"strings"
 	"time"
 
-	anthropicpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/codec"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/tokens"
 )
 
-type Handler struct {
+// FrontdoorType is the frontdoor type identifier used in configuration.
+const FrontdoorType = "anthropic"
+
+// FrontdoorAPIType returns the canonical API type for this frontdoor.
+func FrontdoorAPIType() domain.APIType {
+	return domain.APITypeAnthropic
+}
+
+// FrontdoorRoute defines an HTTP route registration.
+type FrontdoorRoute struct {
+	Path    string
+	Method  string
+	Handler func(http.ResponseWriter, *http.Request)
+}
+
+// Register this frontdoor at package initialization.
+func init() {
+	registry.RegisterFactory(registry.FrontdoorFactory{
+		Type:           FrontdoorType,
+		APIType:        FrontdoorAPIType(),
+		Description:    "Anthropic Messages API format",
+		CreateHandlers: createFrontdoorHandlers,
+	})
+}
+
+// createFrontdoorHandlers creates handler registrations for Anthropic frontdoor.
+func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
+	result := make([]registry.HandlerRegistration, len(routes))
+	for i, r := range routes {
+		result[i] = registry.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+	}
+	return result
+}
+
+// CreateFrontdoorHandlerRegistrations creates the HTTP handler registrations for Anthropic frontdoor.
+func CreateFrontdoorHandlerRegistrations(handler *FrontdoorHandler, basePath string) []FrontdoorRoute {
+	return []FrontdoorRoute{
+		{Path: basePath + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
+		{Path: basePath + "/v1/messages/count_tokens", Method: http.MethodPost, Handler: handler.HandleCountTokens},
+		{Path: basePath + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
+	}
+}
+
+// FrontdoorHandler handles Anthropic Messages API requests.
+type FrontdoorHandler struct {
 	provider     domain.Provider
 	store        storage.ConversationStore
 	appName      string
@@ -30,7 +77,8 @@ type Handler struct {
 	tokenCounter *tokens.Registry
 }
 
-func NewHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *Handler {
+// NewFrontdoorHandler creates a new Anthropic frontdoor handler.
+func NewFrontdoorHandler(provider domain.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
 	exposedModels := make([]domain.Model, 0, len(models))
 	for _, model := range models {
 		exposedModels = append(exposedModels, domain.Model{
@@ -45,17 +93,17 @@ func NewHandler(provider domain.Provider, store storage.ConversationStore, appNa
 	tokenRegistry := tokens.NewRegistry()
 	tokenRegistry.Register(tokens.NewOpenAICounter())
 
-	return &Handler{
+	return &FrontdoorHandler{
 		provider:     provider,
 		store:        store,
 		appName:      appName,
 		models:       exposedModels,
-		codec:        anthropicpkg.NewCodec(),
+		codec:        NewCodec(),
 		tokenCounter: tokenRegistry,
 	}
 }
 
-func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
+func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
@@ -111,7 +159,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		
+
 		// Record failed interaction
 		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
 			Store:          h.store,
@@ -124,7 +172,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			Error:          err,
 			Duration:       time.Since(startTime),
 		})
-		
+
 		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}
@@ -208,7 +256,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRateLimitHeaders writes normalized rate limit headers from the provider response.
-func (h *Handler) writeRateLimitHeaders(w http.ResponseWriter, rl *domain.RateLimitInfo) {
+func (h *FrontdoorHandler) writeRateLimitHeaders(w http.ResponseWriter, rl *domain.RateLimitInfo) {
 	if rl == nil {
 		return
 	}
@@ -233,7 +281,7 @@ func (h *Handler) writeRateLimitHeaders(w http.ResponseWriter, rl *domain.RateLi
 	}
 }
 
-func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
+func (h *FrontdoorHandler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	server.AddLogField(r.Context(), "frontdoor", "anthropic")
 	server.AddLogField(r.Context(), "app", h.appName)
 	server.AddLogField(r.Context(), "provider", h.provider.Name())
@@ -263,7 +311,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 // This endpoint supports:
 // 1. Native pass-through for providers that support CountTokens (e.g., Anthropic)
 // 2. Estimation for other providers via the token counter registry
-func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
+func (h *FrontdoorHandler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 
@@ -361,7 +409,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 // canonicalToTokenRequest converts a canonical request to a token count request.
-func (h *Handler) canonicalToTokenRequest(req *domain.CanonicalRequest) *domain.TokenCountRequest {
+func (h *FrontdoorHandler) canonicalToTokenRequest(req *domain.CanonicalRequest) *domain.TokenCountRequest {
 	tokenReq := &domain.TokenCountRequest{
 		Model:    req.Model,
 		Messages: req.Messages,
@@ -378,7 +426,7 @@ func (h *Handler) canonicalToTokenRequest(req *domain.CanonicalRequest) *domain.
 	return tokenReq
 }
 
-func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
+func (h *FrontdoorHandler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(server.RequestIDKey).(string)
 	providerName := h.provider.Name()
@@ -392,7 +440,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			slog.String("provider", providerName),
 		)
 		server.AddError(r.Context(), err)
-		
+
 		// Record failed streaming interaction
 		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
 			Store:          h.store,
@@ -406,7 +454,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, req *doma
 			Error:          err,
 			Duration:       time.Since(startTime),
 		})
-		
+
 		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
 	}

@@ -1,4 +1,4 @@
-package tenant
+package tenant_test
 
 import (
 	"context"
@@ -7,6 +7,11 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
+
+	// Import consolidated packages to trigger their init() registration for tests.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // mockProviderRegistry for testing
@@ -46,7 +51,7 @@ func (m *mockProvider) ListModels(context.Context) (*domain.ModelList, error) {
 }
 
 func TestRegistry_LoadTenants(t *testing.T) {
-	registry := NewRegistry()
+	registry := tenant.NewRegistry()
 	providerReg := provider.NewRegistry()
 
 	tenantConfigs := []config.TenantConfig{
@@ -122,7 +127,7 @@ func TestRegistry_LoadTenants(t *testing.T) {
 }
 
 func TestRegistry_GetTenant(t *testing.T) {
-	registry := NewRegistry()
+	registry := tenant.NewRegistry()
 	providerReg := provider.NewRegistry()
 
 	tenantConfigs := []config.TenantConfig{

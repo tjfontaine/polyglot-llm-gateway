@@ -1,4 +1,4 @@
-package tokens
+package anthrocount
 
 import (
 	"context"
@@ -6,19 +6,20 @@ import (
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/tokens"
 )
 
 // AnthropicCounter uses Anthropic's native count_tokens API.
 type AnthropicCounter struct {
 	client  *anthropic.Client
-	matcher *ModelMatcher
+	matcher *tokens.ModelMatcher
 }
 
 // NewAnthropicCounter creates a new Anthropic token counter.
 func NewAnthropicCounter(apiKey string, opts ...anthropic.ClientOption) *AnthropicCounter {
 	return &AnthropicCounter{
 		client: anthropic.NewClient(apiKey, opts...),
-		matcher: NewModelMatcher(
+		matcher: tokens.NewModelMatcher(
 			[]string{"claude-"},
 			nil,
 		),
@@ -29,7 +30,7 @@ func NewAnthropicCounter(apiKey string, opts ...anthropic.ClientOption) *Anthrop
 func NewAnthropicCounterWithClient(client *anthropic.Client) *AnthropicCounter {
 	return &AnthropicCounter{
 		client: client,
-		matcher: NewModelMatcher(
+		matcher: tokens.NewModelMatcher(
 			[]string{"claude-"},
 			nil,
 		),

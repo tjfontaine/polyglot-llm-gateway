@@ -5,16 +5,16 @@ import (
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-
-	// Import consolidated packages to trigger their init() registration.
-	// All related code (types, client, codec, provider, frontdoor) is in one package.
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // Registry creates providers from configuration.
 // Providers are created using registered ProviderFactory instances.
 // See factory.go for documentation on how to add new providers.
+//
+// Note: Provider packages (anthropic, openai) must be imported elsewhere
+// (e.g., in cmd/gateway/main.go) to trigger their init() registration.
+// This avoids import cycles since those packages now contain frontdoor code
+// that depends on server, conversation, and other packages.
 type Registry struct{}
 
 // NewRegistry creates a new provider registry.

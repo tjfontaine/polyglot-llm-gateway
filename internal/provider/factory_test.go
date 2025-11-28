@@ -1,14 +1,19 @@
-package provider
+package provider_test
 
 import (
 	"testing"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
+
+	// Import consolidated packages to trigger their init() registration for tests.
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 func TestListProviderTypes(t *testing.T) {
-	types := ListProviderTypes()
+	types := provider.ListProviderTypes()
 	if len(types) < 3 {
 		t.Errorf("expected at least 3 provider types, got %d", len(types))
 	}
@@ -28,7 +33,7 @@ func TestListProviderTypes(t *testing.T) {
 }
 
 func TestListFactories(t *testing.T) {
-	factories := ListFactories()
+	factories := provider.ListFactories()
 	if len(factories) < 3 {
 		t.Errorf("expected at least 3 factories, got %d", len(factories))
 	}
@@ -60,7 +65,7 @@ func TestGetFactory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.providerType, func(t *testing.T) {
-			f, ok := GetFactory(tt.providerType)
+			f, ok := provider.GetFactory(tt.providerType)
 			if ok != tt.wantOk {
 				t.Errorf("GetFactory(%q) returned ok=%v, want %v", tt.providerType, ok, tt.wantOk)
 			}
@@ -85,7 +90,7 @@ func TestIsRegistered(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.providerType, func(t *testing.T) {
-			got := IsRegistered(tt.providerType)
+			got := provider.IsRegistered(tt.providerType)
 			if got != tt.want {
 				t.Errorf("IsRegistered(%q) = %v, want %v", tt.providerType, got, tt.want)
 			}
@@ -126,7 +131,7 @@ func TestValidateProviderConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateProviderConfig(tt.cfg)
+			err := provider.ValidateProviderConfig(tt.cfg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateProviderConfig() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -146,7 +151,7 @@ func TestFactoryAPITypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.providerType, func(t *testing.T) {
-			f, ok := GetFactory(tt.providerType)
+			f, ok := provider.GetFactory(tt.providerType)
 			if !ok {
 				t.Fatalf("factory %q not found", tt.providerType)
 			}
