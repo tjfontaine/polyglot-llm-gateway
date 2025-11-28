@@ -135,5 +135,39 @@ export interface InteractionDetail {
   messages?: ThreadMessage[];
   // For responses
   request?: unknown;
-  response?: unknown;
+  response?: ResponseData;
+}
+
+// Responses API output types
+export interface ResponseData {
+  id?: string;
+  status?: string;
+  model?: string;
+  output?: ResponseOutputItem[];
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
+  [key: string]: unknown;
+}
+
+export interface ResponseOutputItem {
+  type: 'message' | 'function_call' | 'function_call_output' | 'file';
+  id?: string;
+  role?: string;
+  status?: string;
+  content?: ResponseContentPart[];
+  // For function_call
+  name?: string;
+  call_id?: string;
+  arguments?: string;
+  // For function_call_output
+  output?: string;
+}
+
+export interface ResponseContentPart {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
 }

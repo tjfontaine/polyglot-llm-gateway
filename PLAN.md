@@ -631,3 +631,74 @@ Implementing features from the "Gateway Implementation Roadmap: Aligning with 20
 - `internal/server/middleware.go` - Added rate limit normalization middleware
 - `internal/frontdoor/anthropic/handler.go` - Added rate limit header writing
 - `internal/frontdoor/responses/handler.go` - Complete rewrite of streaming handler with tool call support
+
+---
+
+## Phase 16: Comprehensive Testing & Web UI Improvements ✅ COMPLETED
+
+### 16.1 Anthropic Provider Tests ✅
+- [x] Added tests for 529 retry/backoff success after transient failures
+- [x] Added tests for 529 retry exhaustion with proper error
+- [x] Added tests for non-retryable errors (auth, etc.) not retrying
+- [x] Added tests for rate limit header capture in responses
+- [x] Added tests for tool call extraction from non-streaming responses
+- [x] Added tests for tool call streaming events
+- [x] Added tests for `mapStopReason` function
+
+### 16.2 Image URL Conversion Tests ✅
+- [x] Added tests for HTTP URL fetching and base64 conversion
+- [x] Added tests for data URL parsing (base64 encoded)
+- [x] Added tests for media type normalization (image/jpg → image/jpeg)
+- [x] Added tests for invalid URL schemes
+- [x] Added tests for HTTP errors
+- [x] Added tests for oversized images
+- [x] Added tests for unsupported media types
+- [x] Added tests for Content-Type header parsing
+- [x] Added unit tests for `inferMediaType`, `isSupportedMediaType`, `normalizeMediaType`, `parseDataURL`
+
+### 16.3 Rate Limit Middleware Tests ✅
+- [x] Added tests for rate limit header normalization
+- [x] Added tests for partial rate limit info (requests but not tokens)
+- [x] Added tests for no rate limits in context
+- [x] Added integration tests for SetRateLimits + middleware chain
+
+### 16.4 Responses API Handler Tests ✅
+- [x] Added tests for non-streaming response creation
+- [x] Added tests for streaming text content with SSE events
+- [x] Added tests for streaming tool calls with all events:
+  - `response.output_item.added` for function_call
+  - `response.function_call_arguments.delta`
+  - `response.function_call_arguments.done`
+  - `response.output_item.done`
+- [x] Added tests for mixed content (text + tool calls)
+- [x] Added tests for non-streaming tool calls
+- [x] Added tests for `incomplete` status mapping
+
+### 16.5 Web UI Tool Call Display ✅
+- [x] Updated `InteractionDetail` type to include typed `ResponseData`
+- [x] Added `ResponseOutputItem` and `ResponseContentPart` types
+- [x] Created `OutputItemCard` component for rendering output items
+- [x] Created `ResponseSection` component for structured response display
+- [x] Tool calls displayed with:
+  - Violet color scheme to distinguish from messages
+  - Function name and call ID
+  - Pretty-printed JSON arguments
+  - Status badge for completion status
+- [x] Tool results displayed with:
+  - Cyan color scheme
+  - Call ID reference
+  - Output content
+- [x] Added tool call indicator badge in interaction list (for `incomplete` status)
+- [x] Added token usage display when available
+
+### 16.6 Test Files Created
+- `internal/codec/images_test.go` - Image URL conversion tests
+- `internal/server/middleware_test.go` - Rate limit middleware tests
+- `internal/frontdoor/responses/handler_test.go` - Responses API handler tests
+
+### 16.7 Test Files Modified
+- `internal/provider/anthropic/provider_test.go` - Added retry/backoff, rate limits, tool call tests
+
+### 16.8 Web UI Files Modified
+- `web/control-plane/src/types/index.ts` - Added response output types
+- `web/control-plane/src/pages/Data.tsx` - Added tool call rendering components
