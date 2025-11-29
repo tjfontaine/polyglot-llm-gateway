@@ -629,9 +629,10 @@ type NewInteractionDetailView struct {
 	CreatedAt      int64             `json:"created_at"`
 	UpdatedAt      int64             `json:"updated_at"`
 
-	Request  *InteractionRequestView  `json:"request,omitempty"`
-	Response *InteractionResponseView `json:"response,omitempty"`
-	Error    *InteractionErrorView    `json:"error,omitempty"`
+	Request             *InteractionRequestView     `json:"request,omitempty"`
+	Response            *InteractionResponseView    `json:"response,omitempty"`
+	Error               *InteractionErrorView       `json:"error,omitempty"`
+	TransformationSteps []domain.TransformationStep `json:"transformation_steps,omitempty"`
 }
 
 // InteractionRequestView shows request details with raw and canonical data
@@ -823,29 +824,30 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 			}
 
 			resp := NewInteractionDetailView{
-				ID:             interaction.ID,
-				TenantID:       interaction.TenantID,
-				Frontdoor:      string(interaction.Frontdoor),
-				Provider:       interaction.Provider,
-				AppName:        interaction.AppName,
-				RequestedModel: interaction.RequestedModel,
-				ServedModel:    interaction.ServedModel,
-				ProviderModel:  interaction.ProviderModel,
-				Streaming:      interaction.Streaming,
-				Status:         string(interaction.Status),
-				Duration:       interaction.Duration.String(),
-				DurationNs:     int64(interaction.Duration),
-				Metadata:       interaction.Metadata,
-				RequestHeaders: interaction.RequestHeaders,
-				CreatedAt:      interaction.CreatedAt.Unix(),
-				UpdatedAt:      interaction.UpdatedAt.Unix(),
+				ID:                  interaction.ID,
+				TenantID:            interaction.TenantID,
+				Frontdoor:           string(interaction.Frontdoor),
+				Provider:            interaction.Provider,
+				AppName:             interaction.AppName,
+				RequestedModel:      interaction.RequestedModel,
+				ServedModel:         interaction.ServedModel,
+				ProviderModel:       interaction.ProviderModel,
+				Streaming:           interaction.Streaming,
+				Status:              string(interaction.Status),
+				Duration:            interaction.Duration.String(),
+				DurationNs:          int64(interaction.Duration),
+				Metadata:            interaction.Metadata,
+				RequestHeaders:      interaction.RequestHeaders,
+				TransformationSteps: interaction.TransformationSteps,
+				CreatedAt:           interaction.CreatedAt.Unix(),
+				UpdatedAt:           interaction.UpdatedAt.Unix(),
 			}
 
 			if interaction.Request != nil {
 				resp.Request = &InteractionRequestView{
-					Raw:            interaction.Request.Raw,
-					CanonicalJSON:  interaction.Request.CanonicalJSON,
-					UnmappedFields: interaction.Request.UnmappedFields,
+					Raw:             interaction.Request.Raw,
+					CanonicalJSON:   interaction.Request.CanonicalJSON,
+					UnmappedFields:  interaction.Request.UnmappedFields,
 					ProviderRequest: interaction.Request.ProviderRequest,
 				}
 			}

@@ -239,6 +239,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 
 	// Unmarshal transformation steps
 	if transformationStepsStr.Valid && transformationStepsStr.String != "" {
+		// Ignore errors - transformation steps  are optional metadata
 		json.Unmarshal([]byte(transformationStepsStr.String), &interaction.TransformationSteps)
 	}
 
