@@ -179,6 +179,9 @@ type MessagesResponse struct {
 	StopReason   string            `json:"stop_reason"`
 	StopSequence *string           `json:"stop_sequence,omitempty"`
 	Usage        MessagesUsage     `json:"usage"`
+
+	// RawBody contains the original response JSON for debugging
+	RawBody json.RawMessage `json:"-"`
 }
 
 // ResponseContent represents content in a response.
@@ -358,12 +361,12 @@ func ParseErrorResponse(data []byte) (*APIError, error) {
 
 // CountTokensRequest represents a request to count tokens.
 type CountTokensRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	System        SystemMessages `json:"system,omitempty"`
-	Tools         []Tool         `json:"tools,omitempty"`
-	ToolChoice    *ToolChoice    `json:"tool_choice,omitempty"`
-	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+	Model      string          `json:"model"`
+	Messages   []Message       `json:"messages"`
+	System     SystemMessages  `json:"system,omitempty"`
+	Tools      []Tool          `json:"tools,omitempty"`
+	ToolChoice *ToolChoice     `json:"tool_choice,omitempty"`
+	Thinking   *ThinkingConfig `json:"thinking,omitempty"`
 }
 
 // CountTokensResponse represents the response from counting tokens.

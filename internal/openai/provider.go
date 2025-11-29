@@ -85,24 +85,44 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 	// Use codec to convert canonical request to API request
 	apiReq := CanonicalToAPIRequest(req)
 
+	// Marshal the request body for debugging visibility
+	reqBody, marshalErr := json.Marshal(apiReq)
+
 	resp, err := p.client.CreateChatCompletion(ctx, apiReq, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Use codec to convert API response to canonical response
-	return APIResponseToCanonical(resp), nil
+	canonResp := APIResponseToCanonical(resp)
+
+	// Attach the provider request body if marshaling succeeded
+	if marshalErr == nil {
+		canonResp.ProviderRequestBody = reqBody
+	}
+
+	return canonResp, nil
 }
 
 func (p *Provider) completeWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *RequestOptions) (*domain.CanonicalResponse, error) {
 	apiReq := canonicalToResponsesRequest(req)
+
+	// Marshal the request body for debugging visibility
+	reqBody, marshalErr := json.Marshal(apiReq)
 
 	resp, err := p.client.CreateResponse(ctx, apiReq, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return responsesResponseToCanonical(resp), nil
+	canonResp := responsesResponseToCanonical(resp)
+
+	// Attach the provider request body if marshaling succeeded
+	if marshalErr == nil {
+		canonResp.ProviderRequestBody = reqBody
+	}
+
+	return canonResp, nil
 }
 
 func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-chan domain.CanonicalEvent, error) {
@@ -422,6 +442,7 @@ func responsesResponseToCanonical(resp *ResponsesResponse) *domain.CanonicalResp
 		Model:         resp.Model,
 		Choices:       choices,
 		SourceAPIType: domain.APITypeOpenAI,
+		RawResponse:   resp.RawBody,
 	}
 
 	if resp.Usage != nil {

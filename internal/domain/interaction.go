@@ -57,6 +57,9 @@ type Interaction struct {
 	// Duration is the total time taken for the interaction
 	Duration time.Duration `json:"duration_ns"`
 
+	// TransformationSteps captures the transformation flow for debugging
+	TransformationSteps []TransformationStep `json:"transformation_steps,omitempty"`
+
 	// CreatedAt is when the interaction was created
 	CreatedAt time.Time `json:"created_at"`
 
@@ -122,6 +125,40 @@ type InteractionError struct {
 	Type    string `json:"type"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
+}
+
+// TransformationStep captures details about a single transformation in the request/response flow
+type TransformationStep struct {
+	// Stage identifies the transformation stage
+	Stage string `json:"stage"` // "decode_request", "model_mapping", "encode_provider_request", etc.
+
+	// Timestamp when this transformation started
+	Timestamp time.Time `json:"timestamp"`
+
+	// Duration of this transformation
+	Duration time.Duration `json:"duration_ns"`
+
+	// Codec used for this transformation (if applicable)
+	Codec string `json:"codec,omitempty"` // "openai", "anthropic"
+
+	// Description of what happened in human-readable form
+	Description string `json:"description"`
+
+	// Details provides structured information about the transformation
+	Details map[string]interface{} `json:"details,omitempty"`
+
+	// Warnings captures any issues during transformation (e.g., unmapped fields)
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// ModelMappingMetadata contains details about model mapping and provider selection
+type ModelMappingMetadata struct {
+	OriginalModel  string `json:"original_model"`
+	MappedModel    string `json:"mapped_model"`
+	ProviderModel  string `json:"provider_model,omitempty"`
+	Reason         string `json:"reason"` // "rewrite_rule", "prefix_match", "fallback", "default"
+	RuleMatched    string `json:"rule_matched,omitempty"`
+	ProviderChosen string `json:"provider_chosen"`
 }
 
 // InteractionSummary provides a lightweight view of an interaction for listing

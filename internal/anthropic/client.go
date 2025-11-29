@@ -111,6 +111,9 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessagesRequest, opts *
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	// Store the raw response for debugging
+	result.RawBody = respBody
+
 	return &MessagesResponseWithHeaders{
 		Response:   &result,
 		RateLimits: parseRateLimitHeaders(resp.Header),

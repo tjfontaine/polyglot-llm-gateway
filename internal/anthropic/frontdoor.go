@@ -239,17 +239,18 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 
 	// Record successful interaction with full bidirectional visibility
 	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
-		Store:          h.store,
-		RawRequest:     body,
-		CanonicalReq:   canonReq,
-		RawResponse:    resp.RawResponse,
-		CanonicalResp:  resp,
-		ClientResponse: respBody,
-		RequestHeaders: r.Header,
-		Frontdoor:      domain.APITypeAnthropic,
-		Provider:       providerName,
-		AppName:        h.appName,
-		Duration:       time.Since(startTime),
+		Store:               h.store,
+		RawRequest:          body,
+		CanonicalReq:        canonReq,
+		ProviderRequestBody: resp.ProviderRequestBody,
+		RawResponse:         resp.RawResponse,
+		CanonicalResp:       resp,
+		ClientResponse:      respBody,
+		RequestHeaders:      r.Header,
+		Frontdoor:           domain.APITypeAnthropic,
+		Provider:            providerName,
+		AppName:             h.appName,
+		Duration:            time.Since(startTime),
 	})
 
 	// Write rate limit headers directly (since middleware already executed)

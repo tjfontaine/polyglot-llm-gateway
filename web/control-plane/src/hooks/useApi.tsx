@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from 'react';
-import type { Stats, Overview, InteractionSummary, InteractionDetail } from '../types';
+import type { Stats, Overview, InteractionSummary, InteractionDetailUnion } from '../types';
 
 const API_BASE = '/admin/api';
 
@@ -12,8 +12,8 @@ interface ApiContextValue {
   loadingInteractions: boolean;
   refreshStats: () => Promise<void>;
   refreshOverview: () => Promise<void>;
-  refreshInteractions: (filter?: 'conversation' | 'response' | '') => Promise<void>;
-  fetchInteractionDetail: (id: string) => Promise<InteractionDetail | null>;
+  refreshInteractions: (filter?: 'conversation' | 'response' | 'interaction' | '') => Promise<void>;
+  fetchInteractionDetail: (id: string) => Promise<InteractionDetailUnion | null>;
 }
 
 const ApiContext = createContext<ApiContextValue | null>(null);
@@ -48,7 +48,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshInteractions = useCallback(async (filter: 'conversation' | 'response' | '' = '') => {
+  const refreshInteractions = useCallback(async (filter: 'conversation' | 'response' | 'interaction' | '' = '') => {
     if (!overview?.storage.enabled) {
       setInteractions([]);
       setInteractionsTotal(0);
@@ -72,7 +72,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, [overview?.storage.enabled]);
 
-  const fetchInteractionDetail = useCallback(async (id: string): Promise<InteractionDetail | null> => {
+  const fetchInteractionDetail = useCallback(async (id: string): Promise<InteractionDetailUnion | null> => {
     try {
       const res = await fetch(`${API_BASE}/interactions/${id}`);
       if (!res.ok) throw new Error('Failed to load interaction');

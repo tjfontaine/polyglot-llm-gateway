@@ -85,6 +85,9 @@ type ChatCompletionResponse struct {
 	SystemFingerprint string   `json:"system_fingerprint,omitempty"`
 	Choices           []Choice `json:"choices"`
 	Usage             Usage    `json:"usage,omitempty"`
+
+	// RawBody contains the original response JSON for debugging
+	RawBody json.RawMessage `json:"-"`
 }
 
 // Choice represents a completion choice.
@@ -263,20 +266,20 @@ func ParseErrorResponse(data []byte) (*APIError, error) {
 
 // ResponsesRequest represents a request to OpenAI's Responses API.
 type ResponsesRequest struct {
-	Model            string                 `json:"model"`
-	Input            any                    `json:"input"` // string, []InputItem, or []Message
-	Instructions     string                 `json:"instructions,omitempty"`
-	Tools            []ResponsesTool        `json:"tools,omitempty"`
-	ToolChoice       any                    `json:"tool_choice,omitempty"`
-	MaxOutputTokens  int                    `json:"max_output_tokens,omitempty"`
-	Temperature      *float32               `json:"temperature,omitempty"`
-	TopP             *float32               `json:"top_p,omitempty"`
-	Stream           bool                   `json:"stream,omitempty"`
-	StreamOptions    *StreamOptions         `json:"stream_options,omitempty"`
-	Metadata         map[string]string      `json:"metadata,omitempty"`
-	Store            *bool                  `json:"store,omitempty"`
-	TruncationStrategy *TruncationStrategy  `json:"truncation_strategy,omitempty"`
-	ResponseFormat   *ResponseFormat        `json:"response_format,omitempty"`
+	Model              string              `json:"model"`
+	Input              any                 `json:"input"` // string, []InputItem, or []Message
+	Instructions       string              `json:"instructions,omitempty"`
+	Tools              []ResponsesTool     `json:"tools,omitempty"`
+	ToolChoice         any                 `json:"tool_choice,omitempty"`
+	MaxOutputTokens    int                 `json:"max_output_tokens,omitempty"`
+	Temperature        *float32            `json:"temperature,omitempty"`
+	TopP               *float32            `json:"top_p,omitempty"`
+	Stream             bool                `json:"stream,omitempty"`
+	StreamOptions      *StreamOptions      `json:"stream_options,omitempty"`
+	Metadata           map[string]string   `json:"metadata,omitempty"`
+	Store              *bool               `json:"store,omitempty"`
+	TruncationStrategy *TruncationStrategy `json:"truncation_strategy,omitempty"`
+	ResponseFormat     *ResponseFormat     `json:"response_format,omitempty"`
 }
 
 // ResponsesTool represents a tool in the Responses API.
@@ -293,10 +296,10 @@ type TruncationStrategy struct {
 
 // ResponsesInputItem represents an input item in the Responses API.
 type ResponsesInputItem struct {
-	Type    string                  `json:"type"` // "message", "item_reference"
-	Role    string                  `json:"role,omitempty"`
-	Content []ResponsesContentPart  `json:"content,omitempty"`
-	ID      string                  `json:"id,omitempty"` // for item_reference
+	Type    string                 `json:"type"` // "message", "item_reference"
+	Role    string                 `json:"role,omitempty"`
+	Content []ResponsesContentPart `json:"content,omitempty"`
+	ID      string                 `json:"id,omitempty"` // for item_reference
 }
 
 // ResponsesContentPart represents a content part in the Responses API.
@@ -314,16 +317,19 @@ type ImageURL struct {
 
 // ResponsesResponse represents a response from OpenAI's Responses API.
 type ResponsesResponse struct {
-	ID                 string               `json:"id"`
-	Object             string               `json:"object"` // "response"
-	CreatedAt          int64                `json:"created_at"`
-	Status             string               `json:"status"` // "completed", "failed", "in_progress", "cancelled"
-	Model              string               `json:"model"`
+	ID                 string                `json:"id"`
+	Object             string                `json:"object"` // "response"
+	CreatedAt          int64                 `json:"created_at"`
+	Status             string                `json:"status"` // "completed", "failed", "in_progress", "cancelled"
+	Model              string                `json:"model"`
 	Output             []ResponsesOutputItem `json:"output"`
-	Usage              *ResponsesUsage      `json:"usage,omitempty"`
-	Error              *ResponsesError      `json:"error,omitempty"`
-	Metadata           map[string]string    `json:"metadata,omitempty"`
-	PreviousResponseID string               `json:"previous_response_id,omitempty"`
+	Usage              *ResponsesUsage       `json:"usage,omitempty"`
+	Error              *ResponsesError       `json:"error,omitempty"`
+	Metadata           map[string]string     `json:"metadata,omitempty"`
+	PreviousResponseID string                `json:"previous_response_id,omitempty"`
+
+	// RawBody contains the original response JSON for debugging
+	RawBody json.RawMessage `json:"-"`
 }
 
 // ResponsesOutputItem represents an output item from the Responses API.

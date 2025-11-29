@@ -97,6 +97,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req *ChatCompletionRe
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	// Store the raw response for debugging
+	result.RawBody = respBody
+
 	return &result, nil
 }
 
@@ -273,6 +276,9 @@ func (c *Client) CreateResponse(ctx context.Context, req *ResponsesRequest, opts
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	// Store the raw response for debugging
+	result.RawBody = respBody
+
 	return &result, nil
 }
 
@@ -337,6 +343,26 @@ func (c *Client) responsesStreamReader(body io.ReadCloser, out chan<- ResponsesS
 
 	var currentEvent string
 	var currentData strings.Builder
+
+	// The following lines are from a different context and are not syntactically valid here.
+	// fmt.Printf("[DEBUG] Codec: apiResp.RawBody length=%d\n", len(apiResp.RawBody))
+	// canonResp := &domain.CanonicalResponse{
+	// 	ID:                apiResp.ID,
+	// 	Object:            apiResp.Object,
+	// 	Created:           apiResp.Created,
+	// 	Model:             apiResp.Model,
+	// 	Choices:           choices,
+	// 	SystemFingerprint: apiResp.SystemFingerprint,
+	// 	Usage: domain.Usage{
+	// 		PromptTokens:     apiResp.Usage.PromptTokens,
+	// 		CompletionTokens: apiResp.Usage.CompletionTokens,
+	// 		TotalTokens:      apiResp.Usage.TotalTokens,
+	// 	},
+	// 	SourceAPIType: domain.APITypeOpenAI,
+	// 	RawResponse:   apiResp.RawBody,
+	// }
+	// fmt.Printf("[DEBUG] Codec: canonResp.RawResponse length=%d\n", len(canonResp.RawResponse))
+	// return canonResp
 
 	for scanner.Scan() {
 		line := scanner.Text()

@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -133,6 +134,76 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 		}
 	}
 
+	// Build transformation steps for debugging
+	var transformationSteps []domain.TransformationStep
+
+	// Step 1: Decode request from frontdoor format to canonical
+	if params.CanonicalReq != nil {
+		warnings := buildUnmappedWarnings(params.UnmappedRequest)
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "decode_request",
+			Timestamp:   interaction.CreatedAt,
+			Codec:       string(params.Frontdoor),
+			Description: fmt.Sprintf("Decoded %s request to canonical format", params.Frontdoor),
+			Details: map[string]interface{}{
+				"unmapped_fields_count": len(params.UnmappedRequest),
+			},
+			Warnings: warnings,
+		})
+	}
+
+	// Step 2: Model mapping and provider selection (if different from requested)
+	if interaction.ServedModel != "" && interaction.ServedModel != interaction.RequestedModel {
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "model_mapping",
+			Timestamp:   interaction.CreatedAt,
+			Description: "Mapped model and selected provider",
+			Details: map[string]interface{}{
+				"original_model":  interaction.RequestedModel,
+				"mapped_model":    interaction.ServedModel,
+				"provider_chosen": params.Provider,
+			},
+		})
+	}
+
+	// Step 3: Encode request for provider
+	if len(params.ProviderRequestBody) > 0 {
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "encode_provider_request",
+			Timestamp:   interaction.CreatedAt,
+			Description: fmt.Sprintf("Encoded canonical request to %s format", params.Provider),
+			Details: map[string]interface{}{
+				"provider": params.Provider,
+			},
+		})
+	}
+
+	// Step 4: Decode provider response to canonical
+	if params.CanonicalResp != nil {
+		warnings := buildUnmappedWarnings(params.UnmappedResponse)
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "decode_provider_response",
+			Timestamp:   interaction.CreatedAt,
+			Description: fmt.Sprintf("Decoded %s response to canonical format", params.Provider),
+			Details: map[string]interface{}{
+				"unmapped_fields_count": len(params.UnmappedResponse),
+			},
+			Warnings: warnings,
+		})
+	}
+
+	// Step 5: Encode response for client
+	if len(params.ClientResponse) > 0 {
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "encode_client_response",
+			Timestamp:   interaction.CreatedAt,
+			Codec:       string(params.Frontdoor),
+			Description: fmt.Sprintf("Encoded canonical response to %s format", params.Frontdoor),
+		})
+	}
+
+	interaction.TransformationSteps = transformationSteps
+
 	// Set status based on outcome
 	if params.Error != nil {
 		interaction.Status = domain.InteractionStatusFailed
@@ -211,6 +282,19 @@ func extractRelevantHeaders(headers http.Header) map[string]string {
 	return relevant
 }
 
+// buildUnmappedWarnings creates warning messages for unmapped fields
+func buildUnmappedWarnings(unmappedFields []string) []string {
+	if len(unmappedFields) == 0 {
+		return nil
+	}
+
+	warnings := make([]string, len(unmappedFields))
+	for i, field := range unmappedFields {
+		warnings[i] = fmt.Sprintf("Field '%s' could not be mapped", field)
+	}
+	return warnings
+}
+
 // StartInteraction creates and persists an initial interaction record at the start of a request.
 // This allows tracking in-progress requests and provides visibility even if the request fails.
 func StartInteraction(ctx context.Context, store storage.ConversationStore, params RecordInteractionParams) (*domain.Interaction, error) {
@@ -282,6 +366,84 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 		interaction.ServedModel = params.CanonicalResp.Model
 		interaction.ProviderModel = params.CanonicalResp.ProviderModel
 	}
+
+	// CRITICAL: Validate provider contract for debug data capture
+	// All providers MUST capture ProviderRequestBody and RawResponse for successful interactions
+	// This data is required for the transformation flow visualization in the UI
+	if params.CanonicalResp != nil && params.Error == nil && !params.Streaming {
+		if len(params.ProviderRequestBody) == 0 {
+			panic(fmt.Sprintf(
+				"PROVIDER CONTRACT VIOLATION: Provider '%s' failed to capture ProviderRequestBody. "+
+					"All providers MUST marshal and return the actual request sent to upstream APIs in CanonicalResponse.ProviderRequestBody. "+
+					"See internal/openai/provider.go or internal/anthropic/provider.go for reference implementation.",
+				params.Provider,
+			))
+		}
+
+		if len(params.RawResponse) == 0 {
+			panic(fmt.Sprintf(
+				"PROVIDER CONTRACT VIOLATION: Provider '%s' failed to capture RawResponse. "+
+					"All providers MUST store raw response bytes from upstream APIs in CanonicalResponse.RawResponse. "+
+					"See internal/openai/provider.go or internal/anthropic/provider.go for reference implementation.",
+				params.Provider,
+			))
+		}
+	}
+
+	// Build transformation steps for flow visualization
+	var transformationSteps []domain.TransformationStep
+
+	// Step 1: Decode client request to canonical
+	if params.CanonicalReq != nil {
+		warnings := buildUnmappedWarnings(params.UnmappedRequest)
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "decode_client_request",
+			Timestamp:   interaction.CreatedAt,
+			Description: fmt.Sprintf("Decoded %s request to canonical format", params.Frontdoor),
+			Details: map[string]interface{}{
+				"unmapped_fields_count": len(params.UnmappedRequest),
+			},
+			Warnings: warnings,
+		})
+	}
+
+	// Step 2: Encode canonical request for provider
+	if len(params.ProviderRequestBody) > 0 {
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "encode_provider_request",
+			Timestamp:   interaction.CreatedAt,
+			Description: fmt.Sprintf("Encoded canonical request to %s format", params.Provider),
+			Details: map[string]interface{}{
+				"provider": params.Provider,
+			},
+		})
+	}
+
+	// Step 4: Decode provider response to canonical
+	if params.CanonicalResp != nil {
+		warnings := buildUnmappedWarnings(params.UnmappedResponse)
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "decode_provider_response",
+			Timestamp:   interaction.CreatedAt,
+			Description: fmt.Sprintf("Decoded %s response to canonical format", params.Provider),
+			Details: map[string]interface{}{
+				"unmapped_fields_count": len(params.UnmappedResponse),
+			},
+			Warnings: warnings,
+		})
+	}
+
+	// Step 5: Encode response for client
+	if len(params.ClientResponse) > 0 {
+		transformationSteps = append(transformationSteps, domain.TransformationStep{
+			Stage:       "encode_client_response",
+			Timestamp:   interaction.CreatedAt,
+			Codec:       string(params.Frontdoor),
+			Description: fmt.Sprintf("Encoded canonical response to %s format", params.Frontdoor),
+		})
+	}
+
+	interaction.TransformationSteps = transformationSteps
 
 	// Build response record
 	interaction.Response = &domain.InteractionResponse{

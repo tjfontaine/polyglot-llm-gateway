@@ -214,17 +214,18 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 
 	// Record successful interaction with full bidirectional visibility
 	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
-		Store:          h.store,
-		RawRequest:     body,
-		CanonicalReq:   req,
-		RawResponse:    resp.RawResponse,
-		CanonicalResp:  resp,
-		ClientResponse: respBody,
-		RequestHeaders: r.Header,
-		Frontdoor:      domain.APITypeOpenAI,
-		Provider:       providerName,
-		AppName:        h.appName,
-		Duration:       time.Since(startTime),
+		Store:               h.store,
+		RawRequest:          body,
+		CanonicalReq:        req,
+		ProviderRequestBody: resp.ProviderRequestBody,
+		RawResponse:         resp.RawResponse,
+		CanonicalResp:       resp,
+		ClientResponse:      respBody,
+		RequestHeaders:      r.Header,
+		Frontdoor:           domain.APITypeOpenAI,
+		Provider:            providerName,
+		AppName:             h.appName,
+		Duration:            time.Since(startTime),
 	})
 
 	w.Header().Set("Content-Type", "application/json")

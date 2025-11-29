@@ -94,6 +94,7 @@ func (s *Store) initSchema() error {
 			error_message TEXT,
 			metadata TEXT,
 			request_headers TEXT,
+			transformation_steps TEXT,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,

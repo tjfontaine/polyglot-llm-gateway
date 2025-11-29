@@ -121,6 +121,9 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 	// Use codec to convert canonical request to API request
 	apiReq := CanonicalToAPIRequest(req)
 
+	// Marshal the request body for debugging visibility
+	reqBody, marshalErr := json.Marshal(apiReq)
+
 	opts := &RequestOptions{
 		UserAgent: req.UserAgent,
 	}
@@ -133,7 +136,19 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 		respWithHeaders, lastErr = p.client.CreateMessage(ctx, apiReq, opts)
 		if lastErr == nil {
 			// Success - convert and return (including rate limit headers)
-			return APIResponseToCanonicalWithRateLimits(respWithHeaders.Response, respWithHeaders.RateLimits), nil
+			canonResp := APIResponseToCanonicalWithRateLimits(respWithHeaders.Response, respWithHeaders.RateLimits)
+
+			// Attach the provider request body if marshaling succeeded
+			if marshalErr == nil {
+				canonResp.ProviderRequestBody = reqBody
+			}
+
+			// Attach raw response if available
+			if respWithHeaders.Response != nil && respWithHeaders.Response.RawBody != nil {
+				canonResp.RawResponse = respWithHeaders.Response.RawBody
+			}
+
+			return canonResp, nil
 		}
 
 		// Check if this is a retryable overload error

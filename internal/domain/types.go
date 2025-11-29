@@ -158,6 +158,10 @@ type CanonicalResponse struct {
 	// ProviderModel tracks the actual model used by the provider (for logging/observability)
 	// This is preserved even when Model is rewritten by model mapping
 	ProviderModel string `json:"-"`
+
+	// ProviderRequestBody contains the actual request body sent to the upstream provider API.
+	// Captured for debugging and visibility into the complete transformation flow.
+	ProviderRequestBody json.RawMessage `json:"-"`
 }
 
 // RateLimitInfo contains rate limit information from upstream providers.
@@ -202,12 +206,12 @@ const (
 	EventTypeContentBlockStop  StreamEventType = "content_block_stop"
 
 	// Responses API events (per OpenAI Responses API Spec v1.1)
-	EventTypeResponseCreated        StreamEventType = "response.created"
-	EventTypeResponseOutputItemAdd  StreamEventType = "response.output_item.added"
+	EventTypeResponseCreated         StreamEventType = "response.created"
+	EventTypeResponseOutputItemAdd   StreamEventType = "response.output_item.added"
 	EventTypeResponseOutputItemDelta StreamEventType = "response.output_item.delta"
-	EventTypeResponseOutputItemDone StreamEventType = "response.output_item.done"
-	EventTypeResponseDone           StreamEventType = "response.done"
-	EventTypeResponseFailed         StreamEventType = "response.failed"
+	EventTypeResponseOutputItemDone  StreamEventType = "response.output_item.done"
+	EventTypeResponseDone            StreamEventType = "response.done"
+	EventTypeResponseFailed          StreamEventType = "response.failed"
 )
 
 // CanonicalEvent represents a streaming event.

@@ -29,6 +29,11 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		return fmt.Errorf("failed to marshal request headers: %w", err)
 	}
 
+	transformationSteps, err := json.Marshal(interaction.TransformationSteps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transformation steps: %w", err)
+	}
+
 	var requestRaw, requestCanonical, requestUnmappedFields, requestProvider sql.NullString
 	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
 	var responseFinishReason, responseUsage sql.NullString
@@ -93,8 +98,8 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		response_raw, response_canonical, response_unmapped_fields, response_client,
 		response_finish_reason, response_usage,
 		error_type, error_code, error_message,
-		metadata, request_headers, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		metadata, request_headers, transformation_steps, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = s.db.ExecContext(ctx, query,
 		interaction.ID, interaction.TenantID, string(interaction.Frontdoor), interaction.Provider,
@@ -104,7 +109,7 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		responseRaw, responseCanonical, responseUnmappedFields, responseClient,
 		responseFinishReason, responseUsage,
 		errorType, errorCode, errorMessage,
-		string(metadata), string(requestHeaders),
+		string(metadata), string(requestHeaders), string(transformationSteps),
 		interaction.CreatedAt, interaction.UpdatedAt)
 
 	if err != nil {
@@ -123,7 +128,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		response_raw, response_canonical, response_unmapped_fields, response_client,
 		response_finish_reason, response_usage,
 		error_type, error_code, error_message,
-		metadata, request_headers, created_at, updated_at
+		metadata, request_headers, transformation_steps, created_at, updated_at
 	FROM interactions WHERE id = ?`
 
 	var interaction domain.Interaction
@@ -134,7 +139,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
 	var responseFinishReason, responseUsage sql.NullString
 	var errorType, errorCode, errorMessage sql.NullString
-	var metadataStr, requestHeadersStr sql.NullString
+	var metadataStr, requestHeadersStr, transformationStepsStr sql.NullString
 	var appName, servedModel, providerModel sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
@@ -145,7 +150,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		&responseRaw, &responseCanonical, &responseUnmappedFields, &responseClient,
 		&responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,
-		&metadataStr, &requestHeadersStr,
+		&metadataStr, &requestHeadersStr, &transformationStepsStr,
 		&interaction.CreatedAt, &interaction.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -230,6 +235,11 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	// Unmarshal request headers
 	if requestHeadersStr.Valid && requestHeadersStr.String != "" {
 		json.Unmarshal([]byte(requestHeadersStr.String), &interaction.RequestHeaders)
+	}
+
+	// Unmarshal transformation steps
+	if transformationStepsStr.Valid && transformationStepsStr.String != "" {
+		json.Unmarshal([]byte(transformationStepsStr.String), &interaction.TransformationSteps)
 	}
 
 	return &interaction, nil

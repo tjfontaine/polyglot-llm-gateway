@@ -294,6 +294,7 @@ func APIResponseToCanonical(apiResp *ChatCompletionResponse) *domain.CanonicalRe
 			TotalTokens:      apiResp.Usage.TotalTokens,
 		},
 		SourceAPIType: domain.APITypeOpenAI,
+		RawResponse:   apiResp.RawBody,
 	}
 }
 

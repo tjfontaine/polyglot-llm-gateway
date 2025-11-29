@@ -112,7 +112,7 @@ export interface ThreadDetail {
 // Unified interaction types
 export interface InteractionSummary {
   id: string;
-  type: 'conversation' | 'response';
+  type: 'conversation' | 'response' | 'interaction';
   status?: string;
   model?: string;
   metadata?: Record<string, string>;
@@ -171,3 +171,58 @@ export interface ResponseContentPart {
   text?: string;
   [key: string]: unknown;
 }
+
+// Unified Interaction Types (New)
+export interface InteractionRequestView {
+  raw?: unknown;
+  canonical?: unknown;
+  unmapped_fields?: string[];
+  provider_request?: unknown;
+}
+
+export interface InteractionResponseView {
+  raw?: unknown;
+  canonical?: unknown;
+  unmapped_fields?: string[];
+  client_response?: unknown;
+  finish_reason?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
+export interface InteractionErrorView {
+  type: string;
+  code?: string;
+  message: string;
+}
+
+export interface NewInteractionDetail {
+  id: string;
+  tenant_id: string;
+  frontdoor: string;
+  provider: string;
+  app_name?: string;
+  requested_model: string;
+  served_model?: string;
+  provider_model?: string;
+  streaming: boolean;
+  status: string;
+  duration: string;
+  duration_ns: number;
+  metadata?: Record<string, string>;
+  request_headers?: Record<string, string>;
+  created_at: number;
+  updated_at: number;
+
+  request?: InteractionRequestView;
+  response?: InteractionResponseView;
+  error?: InteractionErrorView;
+
+  // Legacy fields for compatibility if needed, though we should prefer the new structure
+  type?: 'interaction';
+}
+
+export type InteractionDetailUnion = InteractionDetail | NewInteractionDetail;
