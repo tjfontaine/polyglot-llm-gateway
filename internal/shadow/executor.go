@@ -184,6 +184,16 @@ func (e *Executor) executeShadowProvider(
 		shadowReq.Model = shadowCfg.Model
 	}
 
+	// Apply max_tokens_multiplier if configured.
+	// Default (nil or 0) = unlimited (important for reasoning models).
+	// 1 = use original max_tokens.
+	// >1 = multiply original max_tokens (useful for reasoning models that need more headroom).
+	if shadowCfg.MaxTokensMultiplier != nil && *shadowCfg.MaxTokensMultiplier > 0 {
+		shadowReq.MaxTokens = int(float64(shadowReq.MaxTokens) * *shadowCfg.MaxTokensMultiplier)
+	} else {
+		shadowReq.MaxTokens = 0
+	}
+
 	// Serialize the canonical request
 	canonicalRequestJSON, _ := json.Marshal(shadowReq)
 
@@ -233,10 +243,16 @@ func (e *Executor) executeShadowProvider(
 		return e.createErrorResult(req, shadowCfg, startTime, interactionErr), nil
 	}
 
-	// Serialize the response
-	responseRawJSON, _ := json.Marshal(resp)
+	// Use the actual raw response from the provider if available,
+	// otherwise serialize the canonical response
+	var responseRawJSON []byte
+	if len(resp.RawResponse) > 0 {
+		responseRawJSON = resp.RawResponse
+	} else {
+		responseRawJSON, _ = json.Marshal(resp)
+	}
 
-	// Convert to canonical and serialize
+	// Serialize canonical response
 	canonicalRespJSON, _ := json.Marshal(resp)
 
 	// Encode response to client format (frontdoor API type)

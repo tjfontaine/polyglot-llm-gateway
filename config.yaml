@@ -43,8 +43,11 @@ apps:
       timeout: 30s
       providers:
         - name: openai
-          # Map all Claude models to gpt-5-mini
           model: gpt-5-mini
+          # max_tokens_multiplier controls shadow token limits:
+          #   0 or omitted = unlimited (default, recommended for reasoning models)
+          #   1 = same as original request
+          #   >1 = multiply original (e.g., 2 = double)
 
 providers:
   - name: openai

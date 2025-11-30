@@ -31,9 +31,9 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway
 # Runtime stage
 FROM debian:bookworm-slim AS runtime
 
-# Install certificates for outbound HTTPS requests
+# Install certificates for outbound HTTPS requests and sqlite3 for debugging
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates \
+    && apt-get install --no-install-recommends -y ca-certificates sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create an unprivileged user

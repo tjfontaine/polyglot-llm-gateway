@@ -73,8 +73,9 @@ type ShadowConfig struct {
 
 // ShadowProviderConfig configures a single shadow provider.
 type ShadowProviderConfig struct {
-	Name  string `koanf:"name"`  // Provider name (must match a configured provider)
-	Model string `koanf:"model"` // Optional: override model for this shadow
+	Name                string   `koanf:"name"`                  // Provider name (must match a configured provider)
+	Model               string   `koanf:"model"`                 // Optional: override model for this shadow
+	MaxTokensMultiplier *float64 `koanf:"max_tokens_multiplier"` // Multiplier for max_tokens (0/nil=unlimited, 1=same, >1=increase). Default 0.
 }
 
 type FrontdoorConfig struct {
