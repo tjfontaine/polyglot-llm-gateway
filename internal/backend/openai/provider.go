@@ -26,7 +26,16 @@ func WithProviderBaseURL(baseURL string) ProviderOption {
 // extractThreadKey resolves a dotted JSON path from the raw request and returns a salted key.
 // It returns ("", false) if no raw request is present or the path cannot be resolved to a string.
 func (p *Provider) extractThreadKey(req *domain.CanonicalRequest) (string, bool) {
-	if p.threadKeyPath == "" || len(req.RawRequest) == 0 {
+	// If no explicit path is configured, try canonical metadata (e.g., Anthropic CLI user_id)
+	if p.threadKeyPath == "" {
+		if uid := req.Metadata["user_id"]; uid != "" {
+			h := sha256.Sum256([]byte(p.apiKey + ":" + uid))
+			return fmt.Sprintf("%x", h[:]), true
+		}
+		return "", false
+	}
+
+	if len(req.RawRequest) == 0 {
 		return "", false
 	}
 
