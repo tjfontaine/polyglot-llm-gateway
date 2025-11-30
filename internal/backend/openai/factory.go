@@ -49,6 +49,9 @@ func CreateProviderFromConfig(cfg config.ProviderConfig) (ports.Provider, error)
 	if cfg.ResponsesThreadKeyPath != "" {
 		opts = append(opts, WithResponsesThreadKeyPath(cfg.ResponsesThreadKeyPath))
 	}
+	if cfg.ResponsesThreadPersistence {
+		opts = append(opts, WithResponsesThreadPersistence(true))
+	}
 	return NewProvider(cfg.APIKey, opts...), nil
 }
 

@@ -296,6 +296,32 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// SetThreadState stores the last response ID for a given thread key.
+func (s *Store) SetThreadState(threadKey, responseID string) error {
+	if threadKey == "" || responseID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`
+	INSERT INTO thread_state (thread_key, response_id, updated_at)
+	VALUES (?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(thread_key) DO UPDATE SET response_id=excluded.response_id, updated_at=CURRENT_TIMESTAMP;
+	`, threadKey, responseID)
+	return err
+}
+
+// GetThreadState retrieves the last response ID for a given thread key.
+func (s *Store) GetThreadState(threadKey string) (string, error) {
+	if threadKey == "" {
+		return "", nil
+	}
+	var respID string
+	err := s.db.QueryRow(`SELECT response_id FROM thread_state WHERE thread_key = ?`, threadKey).Scan(&respID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return respID, err
+}
+
 // ResponseStore implementation
 
 func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) error {

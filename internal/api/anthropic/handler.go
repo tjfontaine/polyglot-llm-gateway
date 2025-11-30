@@ -146,6 +146,16 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 	// Capture User-Agent from incoming request and pass it through
 	canonReq.UserAgent = r.Header.Get("User-Agent")
 
+	// Preserve request metadata from raw payload if present
+	if canonReq.Metadata == nil {
+		var rawMeta struct {
+			Metadata map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(body, &rawMeta); err == nil && len(rawMeta.Metadata) > 0 {
+			canonReq.Metadata = rawMeta.Metadata
+		}
+	}
+
 	// Set source API type and raw request for pass-through optimization
 	canonReq.SourceAPIType = domain.APITypeAnthropic
 	canonReq.RawRequest = body

@@ -117,6 +117,12 @@ type InteractionStore interface {
 
 	// ListInteractions lists interactions with pagination and optional filtering
 	ListInteractions(ctx context.Context, opts InteractionListOptions) ([]*domain.InteractionSummary, error)
+
+	// SetThreadState stores the last response ID for a thread key
+	SetThreadState(threadKey, responseID string) error
+
+	// GetThreadState retrieves the last response ID for a thread key
+	GetThreadState(threadKey string) (string, error)
 }
 
 // InteractionListOptions defines options for listing interactions

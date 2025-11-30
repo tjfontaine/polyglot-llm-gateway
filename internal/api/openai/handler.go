@@ -135,6 +135,16 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 	// Capture User-Agent from incoming request and pass it through
 	req.UserAgent = r.Header.Get("User-Agent")
 
+	// Preserve request metadata from raw payload if present
+	if req.Metadata == nil {
+		var rawMeta struct {
+			Metadata map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(body, &rawMeta); err == nil && len(rawMeta.Metadata) > 0 {
+			req.Metadata = rawMeta.Metadata
+		}
+	}
+
 	// Set source API type and raw request for pass-through optimization
 	req.SourceAPIType = domain.APITypeOpenAI
 	req.RawRequest = body

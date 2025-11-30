@@ -17,6 +17,7 @@ type Store struct {
 	conversations map[string]*storage.Conversation
 	responses     map[string]*storage.ResponseRecord
 	interactions  map[string]*domain.Interaction
+	threads       map[string]string
 }
 
 // New creates a new in-memory store
@@ -25,6 +26,7 @@ func New() *Store {
 		conversations: make(map[string]*storage.Conversation),
 		responses:     make(map[string]*storage.ResponseRecord),
 		interactions:  make(map[string]*domain.Interaction),
+		threads:       make(map[string]string),
 	}
 }
 
@@ -115,6 +117,26 @@ func (s *Store) DeleteConversation(ctx context.Context, id string) error {
 
 func (s *Store) Close() error {
 	return nil
+}
+
+// Thread state (in-memory only)
+func (s *Store) SetThreadState(threadKey, responseID string) error {
+	if threadKey == "" || responseID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threads[threadKey] = responseID
+	return nil
+}
+
+func (s *Store) GetThreadState(threadKey string) (string, error) {
+	if threadKey == "" {
+		return "", nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.threads[threadKey], nil
 }
 
 // ResponseStore implementation

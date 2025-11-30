@@ -106,6 +106,13 @@ func WithResponsesThreadKeyPath(path string) ProviderOption {
 	}
 }
 
+// WithResponsesThreadPersistence enables persistence of thread state when storage is available.
+func WithResponsesThreadPersistence(enable bool) ProviderOption {
+	return func(p *Provider) {
+		p.persistThreads = enable
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom OpenAI client.
 type Provider struct {
 	client          *Client
@@ -116,6 +123,7 @@ type Provider struct {
 	threadKeyPath   string
 	threadState     map[string]string
 	stateMu         sync.Mutex
+	persistThreads  bool
 }
 
 // NewProvider creates a new OpenAI provider.

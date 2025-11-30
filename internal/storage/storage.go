@@ -13,4 +13,8 @@ type (
 	ResponseRecord         = corestorage.ResponseRecord
 	Interaction            = corestorage.Interaction
 	InteractionListOptions = corestorage.InteractionListOptions
+	ThreadStateStore       interface {
+		SetThreadState(threadKey, responseID string) error
+		GetThreadState(threadKey string) (string, error)
+	}
 )
