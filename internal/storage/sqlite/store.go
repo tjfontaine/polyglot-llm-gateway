@@ -579,16 +579,29 @@ func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string,
 	for rows.Next() {
 		var evt domain.InteractionEvent
 		var apiType string
+		var rawStr, canonStr, headersStr, metaStr string
 		if err := rows.Scan(
 			&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
 			&evt.Frontdoor, &evt.Provider, &evt.AppName, &evt.ModelRequested,
 			&evt.ModelServed, &evt.ProviderModel, &evt.ThreadKey, &evt.PreviousResponseID,
-			&evt.Raw, &evt.Canonical, &evt.Headers, &evt.Metadata, &evt.CreatedAt,
+			&rawStr, &canonStr, &headersStr, &metaStr, &evt.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 		if apiType != "" {
 			evt.APIType = domain.APIType(apiType)
+		}
+		if rawStr != "" {
+			evt.Raw = json.RawMessage(rawStr)
+		}
+		if canonStr != "" {
+			evt.Canonical = json.RawMessage(canonStr)
+		}
+		if headersStr != "" {
+			evt.Headers = json.RawMessage(headersStr)
+		}
+		if metaStr != "" {
+			evt.Metadata = json.RawMessage(metaStr)
 		}
 		events = append(events, &evt)
 	}
