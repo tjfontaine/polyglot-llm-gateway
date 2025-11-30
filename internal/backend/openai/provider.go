@@ -319,19 +319,16 @@ func canonicalToResponsesRequest(req *domain.CanonicalRequest) *ResponsesRequest
 	// Build input items from messages
 	var input any
 
-	// If there's a single user message and no system prompt, use simple text input
+	// Build input as simple text when possible; otherwise use message items with "text" content to satisfy Responses API
 	if len(req.Messages) == 1 && req.Messages[0].Role == "user" && req.SystemPrompt == "" && req.Instructions == "" {
 		input = req.Messages[0].Content
 	} else {
-		// Build input items from messages
 		items := make([]ResponsesInputItem, 0, len(req.Messages))
 		for _, msg := range req.Messages {
 			item := ResponsesInputItem{
-				Type: "message",
-				Role: msg.Role,
-				Content: []ResponsesContentPart{
-					{Type: "input_text", Text: msg.Content},
-				},
+				Type:    "message",
+				Role:    msg.Role,
+				Content: []ResponsesContentPart{{Type: "text", Text: msg.Content}},
 			}
 			items = append(items, item)
 		}
@@ -368,7 +365,12 @@ func canonicalToResponsesRequest(req *domain.CanonicalRequest) *ResponsesRequest
 	if len(req.Tools) > 0 {
 		apiReq.Tools = make([]ResponsesTool, len(req.Tools))
 		for i, t := range req.Tools {
+			name := t.Name
+			if name == "" {
+				name = t.Function.Name
+			}
 			apiReq.Tools[i] = ResponsesTool{
+				Name: name,
 				Type: t.Type,
 				Function: FunctionTool{
 					Name:        t.Function.Name,

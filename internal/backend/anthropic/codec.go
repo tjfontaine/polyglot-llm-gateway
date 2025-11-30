@@ -154,11 +154,16 @@ func APIRequestToCanonical(apiReq *MessagesRequest) (*domain.CanonicalRequest, e
 		req.Temperature = *apiReq.Temperature
 	}
 
-	// Convert tools
+	// Convert tools with validation to avoid upstream errors
 	if len(apiReq.Tools) > 0 {
 		req.Tools = make([]domain.ToolDefinition, len(apiReq.Tools))
 		for i, t := range apiReq.Tools {
+			if strings.TrimSpace(t.Name) == "" {
+				return nil, domain.ErrInvalidRequest("tool name is required").WithParam(fmt.Sprintf("tools[%d].name", i))
+			}
+
 			req.Tools[i] = domain.ToolDefinition{
+				Name: t.Name,
 				Type: "function",
 				Function: domain.FunctionDef{
 					Name:        t.Name,
@@ -184,10 +189,14 @@ func collapseContentBlocks(blocks ContentBlock) (string, error) {
 		if blockType == "" {
 			blockType = "text"
 		}
-		if blockType != "text" {
+
+		// Anthropic sends "text" and may send "input_text"/"output_text" when mirroring Responses-style payloads.
+		switch blockType {
+		case "text", "input_text", "output_text":
+			result += block.Text
+		default:
 			return "", fmt.Errorf("unsupported content block type: %s", blockType)
 		}
-		result += block.Text
 	}
 
 	return result, nil

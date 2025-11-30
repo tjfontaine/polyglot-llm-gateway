@@ -284,6 +284,7 @@ type ResponsesRequest struct {
 
 // ResponsesTool represents a tool in the Responses API.
 type ResponsesTool struct {
+	Name     string       `json:"name,omitempty"`
 	Type     string       `json:"type"` // "function"
 	Function FunctionTool `json:"function,omitempty"`
 }

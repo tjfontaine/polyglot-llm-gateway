@@ -137,6 +137,7 @@ func APIRequestToCanonical(apiReq *ChatCompletionRequest) *domain.CanonicalReque
 		req.Tools = make([]domain.ToolDefinition, len(apiReq.Tools))
 		for i, t := range apiReq.Tools {
 			req.Tools[i] = domain.ToolDefinition{
+				Name: t.Function.Name,
 				Type: t.Type,
 				Function: domain.FunctionDef{
 					Name:        t.Function.Name,

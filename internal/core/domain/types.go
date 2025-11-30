@@ -58,6 +58,8 @@ type ToolCallFunction struct {
 
 // ToolDefinition represents a tool that the model can call.
 type ToolDefinition struct {
+	// Name is the identifier for the tool (required by OpenAI Responses API).
+	Name     string      `json:"name,omitempty"`
 	Type     string      `json:"type"`
 	Function FunctionDef `json:"function"`
 }
