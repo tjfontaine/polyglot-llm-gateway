@@ -319,7 +319,7 @@ func canonicalToResponsesRequest(req *domain.CanonicalRequest) *ResponsesRequest
 	// Build input items from messages
 	var input any
 
-	// Build input as simple text when possible; otherwise use message items with "text" content to satisfy Responses API
+	// Build input as simple text when possible; otherwise use message items with input_text content parts
 	if len(req.Messages) == 1 && req.Messages[0].Role == "user" && req.SystemPrompt == "" && req.Instructions == "" {
 		input = req.Messages[0].Content
 	} else {
@@ -328,7 +328,7 @@ func canonicalToResponsesRequest(req *domain.CanonicalRequest) *ResponsesRequest
 			item := ResponsesInputItem{
 				Type:    "message",
 				Role:    msg.Role,
-				Content: []ResponsesContentPart{{Type: "text", Text: msg.Content}},
+				Content: []ResponsesContentPart{{Type: "input_text", Text: msg.Content}},
 			}
 			items = append(items, item)
 		}
