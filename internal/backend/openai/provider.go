@@ -3,8 +3,12 @@ package openai
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 )
@@ -17,6 +21,56 @@ func WithProviderBaseURL(baseURL string) ProviderOption {
 	return func(p *Provider) {
 		p.baseURL = baseURL
 	}
+}
+
+// extractThreadKey resolves a dotted JSON path from the raw request and returns a salted key.
+// It returns ("", false) if no raw request is present or the path cannot be resolved to a string.
+func (p *Provider) extractThreadKey(req *domain.CanonicalRequest) (string, bool) {
+	if p.threadKeyPath == "" || len(req.RawRequest) == 0 {
+		return "", false
+	}
+
+	var payload any
+	if err := json.Unmarshal(req.RawRequest, &payload); err != nil {
+		return "", false
+	}
+
+	parts := strings.Split(p.threadKeyPath, ".")
+	cur := payload
+	for _, part := range parts {
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		val, ok := obj[part]
+		if !ok {
+			return "", false
+		}
+		cur = val
+	}
+
+	strVal, ok := cur.(string)
+	if !ok || strVal == "" {
+		return "", false
+	}
+
+	h := sha256.Sum256([]byte(p.apiKey + ":" + strVal))
+	return fmt.Sprintf("%x", h[:]), true
+}
+
+func (p *Provider) getThreadState(key string) string {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	return p.threadState[key]
+}
+
+func (p *Provider) setThreadState(key, responseID string) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	if responseID == "" {
+		return
+	}
+	p.threadState[key] = responseID
 }
 
 // WithProviderHTTPClient sets a custom HTTP client.
@@ -33,6 +87,16 @@ func WithResponsesAPI(enable bool) ProviderOption {
 	}
 }
 
+// WithResponsesThreadKeyPath enables optional thread reuse for Responses API requests.
+// The key is extracted from the raw request via a dotted JSON path (e.g., "metadata.thread_id").
+// Keys are salted with the provider API key before storage. If the path cannot be resolved,
+// thread reuse is skipped.
+func WithResponsesThreadKeyPath(path string) ProviderOption {
+	return func(p *Provider) {
+		p.threadKeyPath = path
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom OpenAI client.
 type Provider struct {
 	client          *Client
@@ -40,12 +104,16 @@ type Provider struct {
 	baseURL         string
 	httpClient      *http.Client
 	useResponsesAPI bool
+	threadKeyPath   string
+	threadState     map[string]string
+	stateMu         sync.Mutex
 }
 
 // NewProvider creates a new OpenAI provider.
 func NewProvider(apiKey string, opts ...ProviderOption) *Provider {
 	p := &Provider{
-		apiKey: apiKey,
+		apiKey:      apiKey,
+		threadState: make(map[string]string),
 	}
 
 	for _, opt := range opts {
@@ -107,6 +175,14 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 func (p *Provider) completeWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *RequestOptions) (*domain.CanonicalResponse, error) {
 	apiReq := canonicalToResponsesRequest(req)
 
+	if p.threadKeyPath != "" {
+		if key, ok := p.extractThreadKey(req); ok {
+			if prev := p.getThreadState(key); prev != "" {
+				apiReq.PreviousResponseID = prev
+			}
+		}
+	}
+
 	// Marshal the request body for debugging visibility
 	reqBody, marshalErr := json.Marshal(apiReq)
 
@@ -120,6 +196,12 @@ func (p *Provider) completeWithResponses(ctx context.Context, req *domain.Canoni
 	// Attach the provider request body if marshaling succeeded
 	if marshalErr == nil {
 		canonResp.ProviderRequestBody = reqBody
+	}
+
+	if p.threadKeyPath != "" {
+		if key, ok := p.extractThreadKey(req); ok && canonResp.ID != "" {
+			p.setThreadState(key, canonResp.ID)
+		}
 	}
 
 	return canonResp, nil
@@ -162,6 +244,14 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 
 func (p *Provider) streamWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *RequestOptions) (<-chan domain.CanonicalEvent, error) {
 	apiReq := canonicalToResponsesRequest(req)
+
+	if p.threadKeyPath != "" {
+		if key, ok := p.extractThreadKey(req); ok {
+			if prev := p.getThreadState(key); prev != "" {
+				apiReq.PreviousResponseID = prev
+			}
+		}
+	}
 	apiReq.Stream = true
 
 	stream, err := p.client.StreamResponse(ctx, apiReq, opts)
@@ -174,6 +264,12 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 		defer close(out)
 		var currentModel string
 		var currentResponseID string
+		var threadKey string
+		if p.threadKeyPath != "" {
+			if key, ok := p.extractThreadKey(req); ok {
+				threadKey = key
+			}
+		}
 
 		for result := range stream {
 			if result.Err != nil {
@@ -228,6 +324,7 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 						TotalTokens  int `json:"total_tokens"`
 					} `json:"usage"`
 					FinishReason string `json:"finish_reason"`
+					ID           string `json:"id"`
 				}
 				if err := json.Unmarshal(event.Data, &data); err == nil {
 					ev := domain.CanonicalEvent{
@@ -243,6 +340,16 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 						}
 					}
 					out <- ev
+
+					if threadKey != "" {
+						id := currentResponseID
+						if id == "" && data.ID != "" {
+							id = data.ID
+						}
+						if id != "" {
+							p.setThreadState(threadKey, id)
+						}
+					}
 				}
 
 			// Legacy event handling for backwards compatibility
@@ -281,6 +388,9 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 								CompletionTokens: data.Response.Usage.OutputTokens,
 								TotalTokens:      data.Response.Usage.TotalTokens,
 							},
+						}
+						if threadKey != "" && data.Response.ID != "" {
+							p.setThreadState(threadKey, data.Response.ID)
 						}
 					}
 				}

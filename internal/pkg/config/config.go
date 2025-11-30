@@ -77,6 +77,7 @@ type ProviderConfig struct {
 	SupportsResponses bool   `koanf:"supports_responses"` // Flag for native Responses API support
 	EnablePassthrough bool   `koanf:"enable_passthrough"` // Enable pass-through mode when frontdoor matches
 	UseResponsesAPI   bool   `koanf:"use_responses_api"`  // Use Responses API instead of Chat Completions (OpenAI)
+	ResponsesThreadKeyPath string `koanf:"responses_thread_key_path"` // Optional dotted JSON path to derive Responses threading key
 }
 
 type RoutingConfig struct {

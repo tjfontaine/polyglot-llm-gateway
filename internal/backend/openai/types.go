@@ -271,6 +271,7 @@ type ResponsesRequest struct {
 	Instructions       string              `json:"instructions,omitempty"`
 	Tools              []ResponsesTool     `json:"tools,omitempty"`
 	ToolChoice         any                 `json:"tool_choice,omitempty"`
+	PreviousResponseID string              `json:"previous_response_id,omitempty"`
 	MaxOutputTokens    int                 `json:"max_output_tokens,omitempty"`
 	Temperature        *float32            `json:"temperature,omitempty"`
 	TopP               *float32            `json:"top_p,omitempty"`
