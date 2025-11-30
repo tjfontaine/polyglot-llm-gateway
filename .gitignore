@@ -29,5 +29,8 @@ web/control-plane/dist
 internal/controlplane/dist/*
 !internal/controlplane/dist/index.html
 
+# Agent artifacts
+.serena/
+
 # Build artifacts
 bin/
