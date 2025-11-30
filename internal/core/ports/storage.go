@@ -141,3 +141,30 @@ type InteractionListOptions struct {
 	Offset        int
 	InteractionID string // Optional: restrict to a single interaction (for event listing)
 }
+
+// ShadowStore defines the interface for shadow result storage.
+type ShadowStore interface {
+	// SaveShadowResult saves a shadow execution result
+	SaveShadowResult(ctx context.Context, result *domain.ShadowResult) error
+
+	// GetShadowResult retrieves a shadow result by ID
+	GetShadowResult(ctx context.Context, id string) (*domain.ShadowResult, error)
+
+	// GetShadowResults retrieves all shadow results for an interaction
+	GetShadowResults(ctx context.Context, interactionID string) ([]*domain.ShadowResult, error)
+
+	// ListDivergentInteractions lists interactions that have shadow results with divergences
+	ListDivergentInteractions(ctx context.Context, opts *DivergenceListOptions) ([]*domain.InteractionSummary, error)
+
+	// GetDivergentShadowCount returns the count of shadow results with divergences
+	GetDivergentShadowCount(ctx context.Context) (int, error)
+}
+
+// DivergenceListOptions defines options for listing divergent interactions.
+type DivergenceListOptions struct {
+	Limit           int
+	Offset          int
+	OnlyDivergent   bool                    // Only return interactions with structural divergences
+	DivergenceTypes []domain.DivergenceType // Filter by specific divergence types
+	ProviderName    string                  // Filter by shadow provider name
+}

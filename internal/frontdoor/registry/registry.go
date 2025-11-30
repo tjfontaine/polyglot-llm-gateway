@@ -45,6 +45,12 @@ type HandlerConfig struct {
 
 	// Models is the list of models to expose via this frontdoor
 	Models []config.ModelListItem
+
+	// ShadowConfig configures shadow mode for this frontdoor
+	ShadowConfig *config.ShadowConfig
+
+	// ProviderLookup is a function to resolve providers by name (for shadow)
+	ProviderLookup func(name string) (ports.Provider, error)
 }
 
 // HandlerRegistration represents a registered HTTP handler.

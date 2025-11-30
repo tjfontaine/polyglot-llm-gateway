@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tenant"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
@@ -60,6 +61,9 @@ func (s *Server) routes() {
 	s.router.Get("/api/interactions", s.handleListInteractions)
 	s.router.Get("/api/interactions/{interaction_id}", s.handleInteractionDetail)
 	s.router.Get("/api/interactions/{interaction_id}/events", s.handleInteractionEvents)
+	s.router.Get("/api/interactions/{interaction_id}/shadows", s.handleShadowResults)
+	s.router.Get("/api/shadows/divergent", s.handleDivergentShadows)
+	s.router.Get("/api/shadows/{shadow_id}", s.handleShadowDetail)
 
 	s.router.Get("/*", s.handleApp)
 }
@@ -634,6 +638,7 @@ type NewInteractionDetailView struct {
 	Response            *InteractionResponseView    `json:"response,omitempty"`
 	Error               *InteractionErrorView       `json:"error,omitempty"`
 	TransformationSteps []domain.TransformationStep `json:"transformation_steps,omitempty"`
+	Shadows             []*domain.ShadowResult      `json:"shadows,omitempty"`
 }
 
 // InteractionRequestView shows request details with raw and canonical data
@@ -872,6 +877,14 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
+			// Retrieve shadow results if available
+			if shadowStore, ok := s.store.(storage.ShadowStore); ok {
+				shadows, err := shadowStore.GetShadowResults(r.Context(), interactionID)
+				if err == nil && len(shadows) > 0 {
+					resp.Shadows = shadows
+				}
+			}
+
 			writeJSON(w, resp)
 			return
 		}
@@ -973,4 +986,111 @@ func (s *Server) handleInteractionEvents(w http.ResponseWriter, r *http.Request)
 		"interaction_id": interactionID,
 		"events":         events,
 	})
+}
+
+// handleShadowResults returns all shadow results for an interaction
+func (s *Server) handleShadowResults(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	interactionID := chi.URLParam(r, "interaction_id")
+
+	shadowStore, ok := s.store.(ports.ShadowStore)
+	if !ok {
+		http.Error(w, "shadow store not supported", http.StatusNotImplemented)
+		return
+	}
+
+	results, err := shadowStore.GetShadowResults(r.Context(), interactionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"interaction_id": interactionID,
+		"shadows":        results,
+	})
+}
+
+// handleDivergentShadows returns interactions that have divergent shadow results
+func (s *Server) handleDivergentShadows(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	shadowStore, ok := s.store.(ports.ShadowStore)
+	if !ok {
+		http.Error(w, "shadow store not supported", http.StatusNotImplemented)
+		return
+	}
+
+	// Parse query parameters
+	limit := 100
+	offset := 0
+	providerName := ""
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	if p := r.URL.Query().Get("provider"); p != "" {
+		providerName = p
+	}
+
+	interactions, err := shadowStore.ListDivergentInteractions(r.Context(), &ports.DivergenceListOptions{
+		Limit:        limit,
+		Offset:       offset,
+		ProviderName: providerName,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get total count
+	count, err := shadowStore.GetDivergentShadowCount(r.Context())
+	if err != nil {
+		count = len(interactions)
+	}
+
+	writeJSON(w, map[string]any{
+		"interactions": interactions,
+		"total":        count,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+// handleShadowDetail returns a single shadow result by ID
+func (s *Server) handleShadowDetail(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	shadowID := chi.URLParam(r, "shadow_id")
+
+	shadowStore, ok := s.store.(ports.ShadowStore)
+	if !ok {
+		http.Error(w, "shadow store not supported", http.StatusNotImplemented)
+		return
+	}
+
+	result, err := shadowStore.GetShadowResult(r.Context(), shadowID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, result)
 }

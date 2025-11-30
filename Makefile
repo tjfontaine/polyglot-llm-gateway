@@ -1,12 +1,24 @@
-.PHONY: all build frontend backend clean run
+.PHONY: all build frontend frontend-dev backend clean run
+
+# Default to development mode
+BUILD_MODE ?= development
 
 all: build
 
 build: frontend backend
 
+# Production build (minified)
 frontend:
-	@echo "Building frontend..."
+	@echo "Building frontend ($(BUILD_MODE) mode)..."
 	cd web/control-plane && npm ci && npm run build
+	@echo "Copying frontend assets..."
+	rm -rf internal/api/controlplane/dist
+	cp -r web/control-plane/dist internal/api/controlplane/
+
+# Development build (unminified, better error messages)
+frontend-dev:
+	@echo "Building frontend (development mode)..."
+	cd web/control-plane && npm ci && npm run build:dev
 	@echo "Copying frontend assets..."
 	rm -rf internal/api/controlplane/dist
 	cp -r web/control-plane/dist internal/api/controlplane/

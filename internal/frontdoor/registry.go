@@ -53,11 +53,12 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router ports.Provi
 
 		// Use the factory pattern to create handlers
 		handlerCfg := HandlerConfig{
-			Provider: p,
-			Store:    store,
-			AppName:  cfg.Name,
-			BasePath: cfg.Path,
-			Models:   cfg.Models,
+			Provider:     p,
+			Store:        store,
+			AppName:      cfg.Name,
+			BasePath:     cfg.Path,
+			Models:       cfg.Models,
+			ShadowConfig: &cfg.Shadow,
 		}
 
 		handlers, err := createHandlersFromFactory(cfg.Frontdoor, handlerCfg)

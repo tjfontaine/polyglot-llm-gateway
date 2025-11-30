@@ -59,6 +59,22 @@ type AppConfig struct {
 	ModelRouting    ModelRoutingConfig `koanf:"model_routing"`
 	Models          []ModelListItem    `koanf:"models"`
 	EnableResponses bool               `koanf:"enable_responses"` // Optional: mount Responses API for this frontdoor
+	Shadow          ShadowConfig       `koanf:"shadow"`           // Optional: shadow mode configuration
+}
+
+// ShadowConfig configures shadow mode for an app.
+// When enabled, requests are also sent to shadow providers for comparison.
+type ShadowConfig struct {
+	Enabled           bool                   `koanf:"enabled"`
+	Providers         []ShadowProviderConfig `koanf:"providers"`
+	Timeout           string                 `koanf:"timeout"`             // Duration string like "30s"
+	StoreStreamChunks bool                   `koanf:"store_stream_chunks"` // Whether to store individual stream chunks
+}
+
+// ShadowProviderConfig configures a single shadow provider.
+type ShadowProviderConfig struct {
+	Name  string `koanf:"name"`  // Provider name (must match a configured provider)
+	Model string `koanf:"model"` // Optional: override model for this shadow
 }
 
 type FrontdoorConfig struct {

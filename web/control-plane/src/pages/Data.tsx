@@ -8,6 +8,7 @@ import {
   Clock4,
   Compass,
   Database,
+  Ghost,
   List,
   Loader2,
   MessageSquare,
@@ -20,11 +21,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { useApi, formatShortDate } from '../hooks/useApi';
-import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge } from '../components/ui';
+import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge, ShadowPanel } from '../components';
 import type { InteractionDetailUnion, NewInteractionDetail, ResponseOutputItem, ResponseData, InteractionEvent } from '../types';
-import type { InteractionEvent } from '../types';
 
 type FilterType = '' | 'conversation' | 'response' | 'interaction';
+type DetailTab = 'pipeline' | 'shadows' | 'timeline';
 
 // Helper component to render a single output item
 function OutputItemCard({ item }: { item: ResponseOutputItem }) {
@@ -222,8 +223,8 @@ function EventTimeline({ interactionId, loadEvents }: { interactionId: string; l
   }, [interactionId, loadEvents]);
 
   if (loading) return <LoadingState message="Loading timeline..." />;
-  if (error) return <EmptyState title="Timeline unavailable" description={error} />;
-  if (!events.length) return <EmptyState title="No events" description="No audit events recorded for this interaction." />;
+  if (error) return <EmptyState icon={AlertCircle} title="Timeline unavailable" description={error} />;
+  if (!events.length) return <EmptyState icon={Clock4} title="No events" description="No audit events recorded for this interaction." />;
 
   return (
     <div className="space-y-3">
@@ -261,7 +262,221 @@ function EventTimeline({ interactionId, loadEvents }: { interactionId: string; l
   );
 }
 
+// Component for the pipeline flow content (extracted from UnifiedInteractionDetail)
+function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetail }) {
+  return (
+    <div className="flex-1 space-y-6 overflow-y-auto px-5 py-6 max-h-[calc(100vh-450px)]">
+      {/* Request Headers */}
+      {interaction.request_headers && Object.keys(interaction.request_headers).length > 0 && (
+        <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+            <List size={14} className="text-violet-300" />
+            <span className="font-semibold text-violet-200">Request Headers</span>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs font-mono">
+            {Object.entries(interaction.request_headers).map(([key, value]) => (
+              <Fragment key={key}>
+                <div className="text-slate-400 text-right">{key}:</div>
+                <div className="text-slate-200 break-all">{value}</div>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* STEP 1: Client Request (Raw) */}
+      {interaction.request?.raw && (
+        <>
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/20 text-amber-200 font-bold text-[10px]">1</span>
+              <Shield size={14} className="text-amber-300" />
+              <span className="font-semibold text-amber-200">Client Request</span>
+              <span className="text-slate-500">(Raw from {interaction.frontdoor})</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+              {JSON.stringify(interaction.request.raw, null, 2)}
+            </pre>
+          </div>
+          <div className="flex items-center justify-center gap-2 py-2">
+            <div className="h-8 w-0.5 bg-gradient-to-b from-amber-500/40 to-violet-500/40"></div>
+            <ArrowDown size={16} className="text-violet-300" />
+            <span className="text-xs text-slate-400">Decode to Canonical</span>
+          </div>
+        </>
+      )}
+
+      {/* STEP 2: Canonical Request */}
+      {interaction.request?.canonical && (
+        <>
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-500/20 text-violet-200 font-bold text-[10px]">2</span>
+              <ArrowLeftRight size={14} className="text-violet-300" />
+              <span className="font-semibold text-violet-200">Canonical Request</span>
+              <span className="text-slate-500">(Normalized format)</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+              {JSON.stringify(interaction.request.canonical, null, 2)}
+            </pre>
+            {interaction.request.unmapped_fields && interaction.request.unmapped_fields.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+                <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
+                <div className="flex flex-wrap gap-1">
+                  {interaction.request.unmapped_fields.map((field) => (
+                    <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
+                      {field}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-center gap-2 py-2">
+            <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-blue-500/40"></div>
+            <ArrowDown size={16} className="text-blue-300" />
+            <span className="text-xs text-slate-400">Encode for Provider</span>
+          </div>
+        </>
+      )}
+
+      {/* STEP 3: Provider Request */}
+      {interaction.request?.provider_request && (
+        <>
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-500/20 text-blue-200 font-bold text-[10px]">3</span>
+              <ServerCog size={14} className="text-blue-300" />
+              <span className="font-semibold text-blue-200">Provider Request</span>
+              <span className="text-slate-500">(Sent to {interaction.provider})</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+              {JSON.stringify(interaction.request.provider_request, null, 2)}
+            </pre>
+          </div>
+          <div className="flex items-center justify-center gap-2 py-4">
+            <div className="flex-1 border-t-2 border-dashed border-emerald-500/40"></div>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
+              <Zap size={14} className="text-emerald-300" />
+              <span className="text-xs font-medium text-emerald-200">API Call to {interaction.provider}</span>
+              <Zap size={14} className="text-emerald-300" />
+            </div>
+            <div className="flex-1 border-t-2 border-dashed border-emerald-500/40"></div>
+          </div>
+        </>
+      )}
+
+      {/* STEP 4: Provider Response */}
+      {interaction.response?.raw && (
+        <>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-200 font-bold text-[10px]">4</span>
+              <ServerCog size={14} className="text-emerald-300" />
+              <span className="font-semibold text-emerald-200">Provider Response</span>
+              <span className="text-slate-500">(Raw from {interaction.provider})</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+              {JSON.stringify(interaction.response.raw, null, 2)}
+            </pre>
+          </div>
+          <div className="flex items-center justify-center gap-2 py-2">
+            <div className="h-8 w-0.5 bg-gradient-to-b from-emerald-500/40 to-violet-500/40"></div>
+            <ArrowDown size={16} className="text-violet-300" />
+            <span className="text-xs text-slate-400">Decode to Canonical</span>
+          </div>
+        </>
+      )}
+
+      {/* STEP 5: Canonical Response */}
+      {interaction.response?.canonical && (
+        <>
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-500/20 text-violet-200 font-bold text-[10px]">5</span>
+              <ArrowLeftRight size={14} className="text-violet-300" />
+              <span className="font-semibold text-violet-200">Canonical Response</span>
+              <span className="text-slate-500">(Normalized format)</span>
+            </div>
+            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+              {JSON.stringify(interaction.response.canonical, null, 2)}
+            </pre>
+            {interaction.response.unmapped_fields && interaction.response.unmapped_fields.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+                <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
+                <div className="flex flex-wrap gap-1">
+                  {interaction.response.unmapped_fields.map((field) => (
+                    <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
+                      {field}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-center gap-2 py-2">
+            <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-cyan-500/40"></div>
+            <ArrowDown size={16} className="text-cyan-300" />
+            <span className="text-xs text-slate-400">Encode for Client</span>
+          </div>
+        </>
+      )}
+
+      {/* STEP 6: Client Response */}
+      {interaction.response?.client_response && (
+        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-200 font-bold text-[10px]">6</span>
+            <CheckCircle size={14} className="text-cyan-300" />
+            <span className="font-semibold text-cyan-200">Client Response</span>
+            <span className="text-slate-500">(Returned to client)</span>
+          </div>
+          <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
+            {JSON.stringify(interaction.response.client_response, null, 2)}
+          </pre>
+          {interaction.response.usage && (
+            <div className="mt-3 rounded-lg border border-slate-500/30 bg-slate-800/30 px-3 py-2">
+              <div className="text-xs font-medium text-slate-300 mb-2">Token Usage</div>
+              <div className="grid grid-cols-3 gap-4 text-xs">
+                <div>
+                  <div className="text-slate-500">Prompt</div>
+                  <div className="text-slate-200 font-mono">{interaction.response.usage.prompt_tokens ?? interaction.response.usage.input_tokens}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Completion</div>
+                  <div className="text-slate-200 font-mono">{interaction.response.usage.completion_tokens ?? interaction.response.usage.output_tokens}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Total</div>
+                  <div className="text-emerald-200 font-mono font-semibold">{interaction.response.usage.total_tokens}</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error State */}
+      {interaction.error && (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-red-300 mb-3">
+            <AlertCircle size={14} />
+            <span className="font-semibold">Error</span>
+          </div>
+          <div className="text-sm text-red-200">
+            <div className="font-mono font-medium">{interaction.error.type}</div>
+            {interaction.error.code && <div className="text-xs mt-1 text-red-300">Code: {interaction.error.code}</div>}
+            <div className="mt-2 text-red-100">{interaction.error.message}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: NewInteractionDetail; loadEvents: (id: string) => Promise<{ interaction_id: string; events: InteractionEvent[] }> }) {
+  const [activeTab, setActiveTab] = useState<DetailTab>('pipeline');
+
   return (
     <div className="flex h-full flex-col">
       {/* Detail Header */}
@@ -324,238 +539,60 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
         </div>
       </div>
 
-      {/* Transformation Flow Header */}
-      <div className="border-b border-white/10 px-5 py-3 bg-slate-900/30">
-        <div className="flex items-center gap-2">
-          <ArrowLeftRight size={16} className="text-violet-300" />
-          <span className="text-sm font-medium text-white">Request/Response Transformation Flow</span>
-          <span className="text-xs text-slate-400 ml-2">(Complete journey from client to provider and back)</span>
+      {/* Tab Bar */}
+      <div className="border-b border-white/10 px-5 py-2 bg-slate-900/30">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setActiveTab('pipeline')}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${activeTab === 'pipeline'
+              ? 'bg-violet-500/20 text-violet-200 border border-violet-400/30'
+              : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+          >
+            <ArrowLeftRight size={14} />
+            Pipeline
+          </button>
+          <button
+            onClick={() => setActiveTab('shadows')}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${activeTab === 'shadows'
+              ? 'bg-amber-500/20 text-amber-200 border border-amber-400/30'
+              : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+          >
+            <Ghost size={14} />
+            Shadows
+          </button>
+          <button
+            onClick={() => setActiveTab('timeline')}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${activeTab === 'timeline'
+              ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/30'
+              : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+          >
+            <Clock4 size={14} />
+            Timeline
+          </button>
         </div>
       </div>
 
-      {/* Detail Content - Linear Flow */}
-      <div className="flex-1 space-y-6 overflow-y-auto px-5 py-6 max-h-[calc(100vh-400px)]">
-        {/* Request Headers */}
-        {interaction.request_headers && Object.keys(interaction.request_headers).length > 0 && (
-          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-              <List size={14} className="text-violet-300" />
-              <span className="font-semibold text-violet-200">Request Headers</span>
-            </div>
-            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs font-mono">
-              {Object.entries(interaction.request_headers).map(([key, value]) => (
-                <Fragment key={key}>
-                  <div className="text-slate-400 text-right">{key}:</div>
-                  <div className="text-slate-200 break-all">{value}</div>
-                </Fragment>
-              ))}
-            </div>
-          </div>
-        )}
+      {/* Tab Content */}
+      {activeTab === 'pipeline' && <PipelineFlowContent interaction={interaction} />}
 
-        {/* STEP 1: Client Request (Raw) */}
-        {interaction.request?.raw && (
-          <>
-            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/20 text-amber-200 font-bold text-[10px]">1</span>
-                <Shield size={14} className="text-amber-300" />
-                <span className="font-semibold text-amber-200">Client Request</span>
-                <span className="text-slate-500">(Raw from {interaction.frontdoor})</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-                {JSON.stringify(interaction.request.raw, null, 2)}
-              </pre>
-            </div>
+      {activeTab === 'shadows' && (
+        <ShadowPanel interactionId={interaction.id} primary={interaction} />
+      )}
 
-            {/* Flow Arrow */}
-            <div className="flex items-center justify-center gap-2 py-2">
-              <div className="h-8 w-0.5 bg-gradient-to-b from-amber-500/40 to-violet-500/40"></div>
-              <ArrowDown size={16} className="text-violet-300" />
-              <span className="text-xs text-slate-400">Decode to Canonical</span>
-            </div>
-          </>
-        )}
-
-        {/* STEP 2: Canonical Request */}
-        {interaction.request?.canonical && (
-          <>
-            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-500/20 text-violet-200 font-bold text-[10px]">2</span>
-                <ArrowLeftRight size={14} className="text-violet-300" />
-                <span className="font-semibold text-violet-200">Canonical Request</span>
-                <span className="text-slate-500">(Normalized format)</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-                {JSON.stringify(interaction.request.canonical, null, 2)}
-              </pre>
-              {interaction.request.unmapped_fields && interaction.request.unmapped_fields.length > 0 && (
-                <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
-                  <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
-                  <div className="flex flex-wrap gap-1">
-                    {interaction.request.unmapped_fields.map((field) => (
-                      <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
-                        {field}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Flow Arrow */}
-            <div className="flex items-center justify-center gap-2 py-2">
-              <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-blue-500/40"></div>
-              <ArrowDown size={16} className="text-blue-300" />
-              <span className="text-xs text-slate-400">Encode for Provider</span>
-            </div>
-          </>
-        )}
-
-        {/* STEP 3: Provider Request */}
-        {interaction.request?.provider_request && (
-          <>
-            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-500/20 text-blue-200 font-bold text-[10px]">3</span>
-                <ServerCog size={14} className="text-blue-300" />
-                <span className="font-semibold text-blue-200">Provider Request</span>
-                <span className="text-slate-500">(Sent to {interaction.provider})</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-                {JSON.stringify(interaction.request.provider_request, null, 2)}
-              </pre>
-            </div>
-
-            {/* Flow Arrow - API Call */}
-            <div className="flex items-center justify-center gap-2 py-4">
-              <div className="flex-1 border-t-2 border-dashed border-emerald-500/40"></div>
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
-                <Zap size={14} className="text-emerald-300" />
-                <span className="text-xs font-medium text-emerald-200">API Call to {interaction.provider}</span>
-                <Zap size={14} className="text-emerald-300" />
-              </div>
-              <div className="flex-1 border-t-2 border-dashed border-emerald-500/40"></div>
-            </div>
-          </>
-        )}
-
-        {/* STEP 4: Provider Response */}
-        {interaction.response?.raw && (
-          <>
-            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-200 font-bold text-[10px]">4</span>
-                <ServerCog size={14} className="text-emerald-300" />
-                <span className="font-semibold text-emerald-200">Provider Response</span>
-                <span className="text-slate-500">(Raw from {interaction.provider})</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-                {JSON.stringify(interaction.response.raw, null, 2)}
-              </pre>
-            </div>
-
-            {/* Flow Arrow */}
-            <div className="flex items-center justify-center gap-2 py-2">
-              <div className="h-8 w-0.5 bg-gradient-to-b from-emerald-500/40 to-violet-500/40"></div>
-              <ArrowDown size={16} className="text-violet-300" />
-              <span className="text-xs text-slate-400">Decode to Canonical</span>
-            </div>
-          </>
-        )}
-
-        {/* STEP 5: Canonical Response */}
-        {interaction.response?.canonical && (
-          <>
-            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
-              <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-500/20 text-violet-200 font-bold text-[10px]">5</span>
-                <ArrowLeftRight size={14} className="text-violet-300" />
-                <span className="font-semibold text-violet-200">Canonical Response</span>
-                <span className="text-slate-500">(Normalized format)</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-                {JSON.stringify(interaction.response.canonical, null, 2)}
-              </pre>
-              {interaction.response.unmapped_fields && interaction.response.unmapped_fields.length > 0 && (
-                <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
-                  <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
-                  <div className="flex flex-wrap gap-1">
-                    {interaction.response.unmapped_fields.map((field) => (
-                      <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
-                        {field}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Flow Arrow */}
-            <div className="flex items-center justify-center gap-2 py-2">
-              <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-cyan-500/40"></div>
-              <ArrowDown size={16} className="text-cyan-300" />
-              <span className="text-xs text-slate-400">Encode for Client</span>
-            </div>
-          </>
-        )}
-
-        {/* STEP 6: Client Response */}
-        {interaction.response?.client_response && (
-          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-200 font-bold text-[10px]">6</span>
-              <CheckCircle size={14} className="text-cyan-300" />
-              <span className="font-semibold text-cyan-200">Client Response</span>
-              <span className="text-slate-500">(Returned to client)</span>
-            </div>
-            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-              {JSON.stringify(interaction.response.client_response, null, 2)}
-            </pre>
-            {interaction.response.usage && (
-              <div className="mt-3 rounded-lg border border-slate-500/30 bg-slate-800/30 px-3 py-2">
-                <div className="text-xs font-medium text-slate-300 mb-2">Token Usage</div>
-                <div className="grid grid-cols-3 gap-4 text-xs">
-                  <div>
-                    <div className="text-slate-500">Prompt</div>
-                    <div className="text-slate-200 font-mono">{interaction.response.usage.prompt_tokens ?? interaction.response.usage.input_tokens}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500">Completion</div>
-                    <div className="text-slate-200 font-mono">{interaction.response.usage.completion_tokens ?? interaction.response.usage.output_tokens}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500">Total</div>
-                    <div className="text-emerald-200 font-mono font-semibold">{interaction.response.usage.total_tokens}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Error State */}
-        {interaction.error && (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-red-300 mb-3">
-              <AlertCircle size={14} />
-              <span className="font-semibold">Error</span>
-            </div>
-            <div className="text-sm text-red-200">
-              <div className="font-mono font-medium">{interaction.error.type}</div>
-              {interaction.error.code && <div className="text-xs mt-1 text-red-300">Code: {interaction.error.code}</div>}
-              <div className="mt-2 text-red-100">{interaction.error.message}</div>
-            </div>
-          </div>
-        )}
-      </div>
+      {activeTab === 'timeline' && (
+        <div className="p-5">
+          <EventTimeline interactionId={interaction.id} loadEvents={loadEvents} />
+        </div>
+      )}
     </div>
   );
 }
 
 export function Data() {
-  const { overview, interactions, interactionsTotal, loadingInteractions, interactionsError, refreshInteractions, fetchInteractionDetail } = useApi();
+  const { overview, interactions, interactionsTotal, loadingInteractions, interactionsError, refreshInteractions, fetchInteractionDetail, fetchInteractionEvents } = useApi();
   const [selectedInteraction, setSelectedInteraction] = useState<InteractionDetailUnion | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [filter, setFilter] = useState<FilterType>('');

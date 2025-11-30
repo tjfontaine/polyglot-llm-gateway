@@ -37,19 +37,14 @@ apps:
   - name: claude
     frontdoor: anthropic
     path: /claude
-    model_routing:
-      fallback:
-        provider: openai
-        model: gpt-5-mini
-      rewrites:
-        - model_prefix: claude-haiku-4-5
-          provider: openai
+    provider: anthropic
+    shadow:
+      enabled: true
+      timeout: 30s
+      providers:
+        - name: openai
+          # Map all Claude models to gpt-5-mini
           model: gpt-5-mini
-          rewrite_response_model: true
-        - model_prefix: claude-sonnet-
-          provider: openai
-          model: gpt-5-mini
-          rewrite_response_model: true
 
 providers:
   - name: openai
@@ -60,7 +55,7 @@ providers:
     responses_thread_key_path: "metadata.user_id"
     # Persist thread state through the configured storage backend
     responses_thread_persistence: true
-  
+
   - name: anthropic
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY}
@@ -69,8 +64,8 @@ routing:
   rules:
     - model_prefix: "claude"
       provider: anthropic
-    
+
     - model_prefix: "gpt"
       provider: openai
-  
+
   default_provider: openai

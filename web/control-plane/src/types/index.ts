@@ -247,3 +247,76 @@ export interface InteractionEvent {
   metadata?: unknown;
   created_at: string;
 }
+
+// Shadow Mode Types
+export type DivergenceType =
+  | 'missing_field'
+  | 'extra_field'
+  | 'type_mismatch'
+  | 'array_length'
+  | 'null_mismatch';
+
+export interface Divergence {
+  type: DivergenceType;
+  path: string;
+  description: string;
+  primary?: unknown;
+  shadow?: unknown;
+}
+
+export interface ShadowRequest {
+  canonical?: unknown;
+  provider_request?: unknown;
+}
+
+export interface ShadowResponse {
+  raw?: unknown;
+  canonical?: unknown;
+  client_response?: unknown;
+  finish_reason?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
+export interface ShadowError {
+  type: string;
+  code?: string;
+  message: string;
+}
+
+export interface ShadowResult {
+  id: string;
+  interaction_id: string;
+  provider_name: string;
+  provider_model?: string;
+  request?: ShadowRequest;
+  response?: ShadowResponse;
+  error?: ShadowError;
+  duration_ns: number;
+  tokens_in?: number;
+  tokens_out?: number;
+  divergences?: Divergence[];
+  has_structural_divergence: boolean;
+  created_at: number;
+}
+
+export interface ShadowResultsResponse {
+  interaction_id: string;
+  shadows: ShadowResult[];
+}
+
+export interface DivergentInteraction {
+  interaction_id: string;
+  shadow_count: number;
+  divergence_count: number;
+  divergence_types: DivergenceType[];
+  created_at: number;
+}
+
+export interface DivergentInteractionsResponse {
+  interactions: DivergentInteraction[];
+  total: number;
+}

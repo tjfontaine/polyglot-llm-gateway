@@ -13,6 +13,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/controlplane"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware/tracer"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/auth"
@@ -21,6 +22,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
 	routerpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/router"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/shadow"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
@@ -162,6 +164,32 @@ func main() {
 		}
 
 		router = routerpkg.NewProviderRouter(providers, cfg.Routing)
+	}
+
+	// Initialize Shadow Manager if storage supports it
+	if shadowStore, ok := store.(ports.ShadowStore); ok {
+		// Register codecs for shadow execution
+		shadow.RegisterCodec(domain.APITypeOpenAI, openai.NewCodec())
+		shadow.RegisterCodec(domain.APITypeAnthropic, anthropic.NewCodec())
+
+		// Create provider lookup function
+		providerLookup := func(name string) (ports.Provider, error) {
+			if providers != nil {
+				if p, ok := providers[name]; ok {
+					return p, nil
+				}
+			}
+			return nil, nil
+		}
+
+		shadowMgr := shadow.NewManager(shadow.ManagerConfig{
+			Store:          shadowStore,
+			ProviderLookup: providerLookup,
+			CodecLookup:    shadow.DefaultCodecLookup(),
+			Logger:         logger,
+		})
+		shadow.SetGlobalManager(shadowMgr)
+		logger.Info("shadow mode manager initialized")
 	}
 
 	// Initialize Frontdoor Registry

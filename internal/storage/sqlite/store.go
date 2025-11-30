@@ -129,6 +129,29 @@ func (s *Store) initSchema() error {
 			metadata TEXT,
 			created_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS shadow_results (
+			id TEXT PRIMARY KEY,
+			interaction_id TEXT NOT NULL,
+			provider_name TEXT NOT NULL,
+			provider_model TEXT,
+			request_canonical TEXT,
+			request_provider TEXT,
+			response_raw TEXT,
+			response_canonical TEXT,
+			response_client TEXT,
+			response_finish_reason TEXT,
+			response_usage TEXT,
+			error_type TEXT,
+			error_code TEXT,
+			error_message TEXT,
+			duration_ns INTEGER,
+			tokens_in INTEGER,
+			tokens_out INTEGER,
+			divergences TEXT,
+			has_structural_divergence INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL,
+			FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
@@ -139,6 +162,9 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_thread_state_updated ON thread_state(updated_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_interaction_events_interaction ON interaction_events(interaction_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_shadow_results_interaction ON shadow_results(interaction_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_shadow_results_provider ON shadow_results(provider_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_shadow_results_divergent ON shadow_results(has_structural_divergence)`,
 	}
 
 	for _, stmt := range statements {

@@ -21,6 +21,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/codec"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/shadow"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -55,7 +56,7 @@ func RegisterFrontdoor() {
 
 // createFrontdoorHandlers creates handler registrations for OpenAI frontdoor.
 func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
-	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models, cfg.ShadowConfig)
 	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
 	result := make([]registry.HandlerRegistration, len(routes))
 	for i, r := range routes {
@@ -74,15 +75,16 @@ func CreateFrontdoorHandlerRegistrations(handler *FrontdoorHandler, basePath str
 
 // FrontdoorHandler handles OpenAI Chat Completions API requests.
 type FrontdoorHandler struct {
-	provider ports.Provider
-	store    storage.ConversationStore
-	appName  string
-	models   []domain.Model
-	codec    codec.Codec
+	provider     ports.Provider
+	store        storage.ConversationStore
+	appName      string
+	models       []domain.Model
+	codec        codec.Codec
+	shadowConfig *config.ShadowConfig
 }
 
 // NewFrontdoorHandler creates a new OpenAI frontdoor handler.
-func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
+func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem, shadowCfg *config.ShadowConfig) *FrontdoorHandler {
 	exposedModels := make([]domain.Model, 0, len(models))
 	for _, model := range models {
 		exposedModels = append(exposedModels, domain.Model{
@@ -94,11 +96,12 @@ func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStor
 	}
 
 	return &FrontdoorHandler{
-		provider: provider,
-		store:    store,
-		appName:  appName,
-		models:   exposedModels,
-		codec:    backendopenai.NewCodec(),
+		provider:     provider,
+		store:        store,
+		appName:      appName,
+		models:       exposedModels,
+		codec:        backendopenai.NewCodec(),
+		shadowConfig: shadowCfg,
 	}
 }
 
@@ -143,6 +146,19 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 		if err := json.Unmarshal(body, &rawMeta); err == nil && len(rawMeta.Metadata) > 0 {
 			req.Metadata = rawMeta.Metadata
 		}
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]string{}
+	}
+
+	interactionID := req.Metadata["interaction_id"]
+	if interactionID == "" {
+		if requestID != "" {
+			interactionID = "int_" + strings.ReplaceAll(requestID, "-", "")
+		} else {
+			interactionID = "int_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+		}
+		req.Metadata["interaction_id"] = interactionID
 	}
 
 	// Set source API type and raw request for pass-through optimization
@@ -229,7 +245,8 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 	}
 
 	// Record successful interaction with full bidirectional visibility
-	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+	// Capture the actual interaction ID (which may be the provider's response ID)
+	actualInteractionID := conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
 		Store:               h.store,
 		RawRequest:          body,
 		CanonicalReq:        req,
@@ -243,6 +260,17 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 		AppName:             h.appName,
 		Duration:            time.Since(startTime),
 	})
+
+	// Trigger shadow execution asynchronously (non-blocking)
+	// Use the actual interaction ID returned from recording (not the early-generated one)
+	shadow.TriggerGlobalShadow(
+		r.Context(),
+		h.shadowConfig,
+		actualInteractionID,
+		req,
+		resp,
+		domain.APITypeOpenAI,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respBody)

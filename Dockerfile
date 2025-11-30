@@ -1,12 +1,17 @@
 FROM node:22 AS frontend-builder
 
+# Build mode: 'development' (default) or 'production'
+ARG BUILD_MODE=development
+ENV NODE_ENV=${BUILD_MODE}
+
 WORKDIR /app/web/control-plane
 
 COPY web/control-plane/package.json web/control-plane/package-lock.json ./
 RUN npm ci
 
 COPY web/control-plane/ ./
-RUN npm run build
+# Use 'build:dev' for development (unminified, source maps) or 'build' for production
+RUN if [ "$BUILD_MODE" = "production" ]; then npm run build; else npm run build:dev; fi
 
 # Build stage
 FROM golang:1.25 AS builder

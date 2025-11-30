@@ -23,6 +23,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/codec"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tokens"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/shadow"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -57,7 +58,7 @@ func RegisterFrontdoor() {
 
 // createFrontdoorHandlers creates handler registrations for Anthropic frontdoor.
 func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
-	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models, cfg.ShadowConfig)
 	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
 	result := make([]registry.HandlerRegistration, len(routes))
 	for i, r := range routes {
@@ -83,10 +84,11 @@ type FrontdoorHandler struct {
 	models       []domain.Model
 	codec        codec.Codec
 	tokenCounter *tokens.Registry
+	shadowConfig *config.ShadowConfig
 }
 
 // NewFrontdoorHandler creates a new Anthropic frontdoor handler.
-func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
+func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem, shadowCfg *config.ShadowConfig) *FrontdoorHandler {
 	exposedModels := make([]domain.Model, 0, len(models))
 	for _, model := range models {
 		exposedModels = append(exposedModels, domain.Model{
@@ -112,6 +114,7 @@ func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStor
 		models:       exposedModels,
 		codec:        backendanthropic.NewCodec(),
 		tokenCounter: tokenRegistry,
+		shadowConfig: shadowCfg,
 	}
 }
 
@@ -336,7 +339,8 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 	}
 
 	// Record successful interaction with full bidirectional visibility
-	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+	// Capture the actual interaction ID (which may be the provider's message ID)
+	actualInteractionID := conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
 		Store:               h.store,
 		RawRequest:          body,
 		CanonicalReq:        canonReq,
@@ -350,6 +354,17 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 		AppName:             h.appName,
 		Duration:            time.Since(startTime),
 	})
+
+	// Trigger shadow execution asynchronously (non-blocking)
+	// Use the actual interaction ID returned from recording (not the early-generated one)
+	shadow.TriggerGlobalShadow(
+		r.Context(),
+		h.shadowConfig,
+		actualInteractionID,
+		canonReq,
+		resp,
+		domain.APITypeAnthropic,
+	)
 
 	// Write rate limit headers directly (since middleware already executed)
 	h.writeRateLimitHeaders(w, resp.RateLimits)

@@ -10,13 +10,16 @@ type (
 	ConversationStore      = corestorage.ConversationStore
 	ResponseStore          = corestorage.ResponseStore
 	InteractionStore       = corestorage.InteractionStore
+	ShadowStore            = corestorage.ShadowStore
 	Conversation           = corestorage.Conversation
 	Message                = corestorage.Message
 	ListOptions            = corestorage.ListOptions
 	ResponseRecord         = corestorage.ResponseRecord
 	Interaction            = corestorage.Interaction
 	InteractionListOptions = corestorage.InteractionListOptions
+	DivergenceListOptions  = corestorage.DivergenceListOptions
 	InteractionEvent       = domain.InteractionEvent
+	ShadowResult           = domain.ShadowResult
 	ThreadStateStore       interface {
 		SetThreadState(threadKey, responseID string) error
 		GetThreadState(threadKey string) (string, error)

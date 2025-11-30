@@ -118,6 +118,105 @@ type ResponseFormat struct {
 	JSONSchema any    `json:"json_schema,omitempty"` // Schema for json_schema type
 }
 
+// Clone creates a deep copy of the CanonicalRequest.
+// The cloned request can be safely modified without affecting the original.
+func (r *CanonicalRequest) Clone() *CanonicalRequest {
+	if r == nil {
+		return nil
+	}
+
+	clone := &CanonicalRequest{
+		TenantID:           r.TenantID,
+		Model:              r.Model,
+		Stream:             r.Stream,
+		MaxTokens:          r.MaxTokens,
+		Temperature:        r.Temperature,
+		TopP:               r.TopP,
+		SystemPrompt:       r.SystemPrompt,
+		Instructions:       r.Instructions,
+		PreviousResponseID: r.PreviousResponseID,
+		UserAgent:          r.UserAgent,
+		SourceAPIType:      r.SourceAPIType,
+	}
+
+	// Deep copy messages
+	if r.Messages != nil {
+		clone.Messages = make([]Message, len(r.Messages))
+		for i, msg := range r.Messages {
+			clone.Messages[i] = msg.Clone()
+		}
+	}
+
+	// Deep copy tools
+	if r.Tools != nil {
+		clone.Tools = make([]ToolDefinition, len(r.Tools))
+		copy(clone.Tools, r.Tools)
+	}
+
+	// Copy tool choice (may be string or struct, so just assign)
+	clone.ToolChoice = r.ToolChoice
+
+	// Deep copy metadata
+	if r.Metadata != nil {
+		clone.Metadata = make(map[string]string, len(r.Metadata))
+		for k, v := range r.Metadata {
+			clone.Metadata[k] = v
+		}
+	}
+
+	// Deep copy response format
+	if r.ResponseFormat != nil {
+		clone.ResponseFormat = &ResponseFormat{
+			Type:       r.ResponseFormat.Type,
+			JSONSchema: r.ResponseFormat.JSONSchema,
+		}
+	}
+
+	// Deep copy stop sequences
+	if r.Stop != nil {
+		clone.Stop = make([]string, len(r.Stop))
+		copy(clone.Stop, r.Stop)
+	}
+
+	// Deep copy raw request
+	if r.RawRequest != nil {
+		clone.RawRequest = make(json.RawMessage, len(r.RawRequest))
+		copy(clone.RawRequest, r.RawRequest)
+	}
+
+	return clone
+}
+
+// Clone creates a copy of the Message.
+func (m Message) Clone() Message {
+	clone := Message{
+		Role:       m.Role,
+		Content:    m.Content,
+		Name:       m.Name,
+		ToolCallID: m.ToolCallID,
+	}
+
+	// Deep copy RichContent if present
+	if m.RichContent != nil {
+		clonedContent := &MessageContent{
+			Text: m.RichContent.Text,
+		}
+		if m.RichContent.Parts != nil {
+			clonedContent.Parts = make([]ContentPart, len(m.RichContent.Parts))
+			copy(clonedContent.Parts, m.RichContent.Parts)
+		}
+		clone.RichContent = clonedContent
+	}
+
+	// Deep copy ToolCalls
+	if m.ToolCalls != nil {
+		clone.ToolCalls = make([]ToolCall, len(m.ToolCalls))
+		copy(clone.ToolCalls, m.ToolCalls)
+	}
+
+	return clone
+}
+
 // ToolCallChunk represents a partial tool execution.
 type ToolCallChunk struct {
 	Index    int    `json:"index"`
