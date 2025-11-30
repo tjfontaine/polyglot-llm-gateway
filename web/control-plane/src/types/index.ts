@@ -226,3 +226,24 @@ export interface NewInteractionDetail {
 }
 
 export type InteractionDetailUnion = InteractionDetail | NewInteractionDetail;
+
+export interface InteractionEvent {
+  id: string;
+  interaction_id: string;
+  stage: string;
+  direction: 'ingress' | 'egress' | 'internal';
+  api_type?: string;
+  frontdoor?: string;
+  provider?: string;
+  app_name?: string;
+  model_requested?: string;
+  model_served?: string;
+  provider_model?: string;
+  thread_key?: string;
+  previous_response_id?: string;
+  raw?: unknown;
+  canonical?: unknown;
+  headers?: unknown;
+  metadata?: unknown;
+  created_at: string;
+}

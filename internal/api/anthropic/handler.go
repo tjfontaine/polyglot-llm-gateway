@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
 	backendanthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
@@ -118,6 +120,7 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 	providerName := h.provider.Name()
+	eventStore, _ := h.store.(storage.InteractionStore)
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -154,6 +157,39 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 		if err := json.Unmarshal(body, &rawMeta); err == nil && len(rawMeta.Metadata) > 0 {
 			canonReq.Metadata = rawMeta.Metadata
 		}
+	}
+	if canonReq.Metadata == nil {
+		canonReq.Metadata = map[string]string{}
+	}
+
+	interactionID := canonReq.Metadata["interaction_id"]
+	if interactionID == "" {
+		if requestID != "" {
+			interactionID = "int_" + strings.ReplaceAll(requestID, "-", "")
+		} else {
+			interactionID = "int_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+		}
+		canonReq.Metadata["interaction_id"] = interactionID
+	}
+
+	if eventStore != nil {
+		canonJSON, _ := json.Marshal(canonReq)
+		metaJSON, _ := json.Marshal(map[string]string{
+			"request_id": requestID,
+		})
+		conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "frontdoor_decode",
+			Direction:      "ingress",
+			APIType:        domain.APITypeAnthropic,
+			Frontdoor:      "anthropic",
+			Provider:       providerName,
+			AppName:        h.appName,
+			ModelRequested: canonReq.Model,
+			Raw:            body,
+			Canonical:      canonJSON,
+			Metadata:       metaJSON,
+		})
 	}
 
 	// Set source API type and raw request for pass-through optimization
@@ -251,6 +287,52 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if eventStore != nil {
+		if len(resp.ProviderRequestBody) > 0 {
+			conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+				InteractionID:  interactionID,
+				Stage:          "provider_encode",
+				Direction:      "egress",
+				APIType:        domain.APITypeAnthropic,
+				Frontdoor:      "anthropic",
+				Provider:       providerName,
+				AppName:        h.appName,
+				ModelRequested: canonReq.Model,
+				Raw:            resp.ProviderRequestBody,
+			})
+		}
+		if len(resp.RawResponse) > 0 {
+			conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+				InteractionID:  interactionID,
+				Stage:          "provider_decode",
+				Direction:      "ingress",
+				APIType:        domain.APITypeAnthropic,
+				Frontdoor:      "anthropic",
+				Provider:       providerName,
+				AppName:        h.appName,
+				ModelRequested: canonReq.Model,
+				ModelServed:    resp.Model,
+				ProviderModel:  resp.ProviderModel,
+				Raw:            resp.RawResponse,
+			})
+		}
+		respCanon, _ := json.Marshal(resp)
+		conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "frontdoor_encode",
+			Direction:      "egress",
+			APIType:        domain.APITypeAnthropic,
+			Frontdoor:      "anthropic",
+			Provider:       providerName,
+			AppName:        h.appName,
+			ModelRequested: canonReq.Model,
+			ModelServed:    resp.Model,
+			ProviderModel:  resp.ProviderModel,
+			Raw:            respBody,
+			Canonical:      respCanon,
+		})
 	}
 
 	// Record successful interaction with full bidirectional visibility

@@ -159,11 +159,20 @@ describe('useApi hook', () => {
   });
 
   it('fetchInteractionDetail returns null on error', async () => {
-    const mockFetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    const mockFetch = vi.fn((url: string) => {
+      if (url.includes('/interactions/nonexistent')) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: 'not found' }),
+        });
+      }
+      return createMockFetch({
+        '/stats': mockStats,
+        '/overview': mockOverview,
+        '/interactions': { interactions: [], total: 0 },
+      })(url);
+    });
     global.fetch = mockFetch;
 
     const { result } = renderHook(() => useApi(), {

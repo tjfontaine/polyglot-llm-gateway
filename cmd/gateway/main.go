@@ -61,6 +61,7 @@ func main() {
 	// Initialize storage if configured
 	var store storage.ConversationStore
 	var threadStore storage.ThreadStateStore
+	var eventStore storage.InteractionStore
 	if cfg.Storage.Type != "" && cfg.Storage.Type != "none" {
 		switch cfg.Storage.Type {
 		case "sqlite":
@@ -77,11 +78,17 @@ func main() {
 			if ts, ok := store.(storage.ThreadStateStore); ok {
 				threadStore = ts
 			}
+			if es, ok := store.(storage.InteractionStore); ok {
+				eventStore = es
+			}
 		case "memory":
 			store = memory.New()
 			logger.Info("storage initialized", slog.String("type", "memory"))
 			if ts, ok := store.(storage.ThreadStateStore); ok {
 				threadStore = ts
+			}
+			if es, ok := store.(storage.InteractionStore); ok {
+				eventStore = es
 			}
 		default:
 			log.Fatalf("Unknown storage type: %s", cfg.Storage.Type)
@@ -115,11 +122,9 @@ func main() {
 			router = routerpkg.NewProviderRouter(tenants[0].Providers, tenants[0].Routing)
 		}
 
-		if threadStore != nil {
-			for _, tenantCfg := range cfg.Tenants {
-				if t, ok := tenantRegistry.GetTenant(tenantCfg.ID); ok {
-					attachThreadStore(threadStore, t.Providers, tenantCfg.Providers)
-				}
+		for _, tenantCfg := range cfg.Tenants {
+			if t, ok := tenantRegistry.GetTenant(tenantCfg.ID); ok {
+				attachThreadStore(threadStore, eventStore, t.Providers, tenantCfg.Providers)
 			}
 		}
 	} else {
@@ -131,9 +136,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to create providers: %v", err)
 			}
-			if threadStore != nil {
-				attachThreadStore(threadStore, providers, cfg.Providers)
-			}
+			attachThreadStore(threadStore, eventStore, providers, cfg.Providers)
 		} else {
 			// Fallback to legacy env-based config
 			logger.Info("using legacy env-based provider setup")
@@ -269,21 +272,29 @@ type threadStoreSetter interface {
 	SetThreadStore(storage.ThreadStateStore)
 }
 
-func attachThreadStore(store storage.ThreadStateStore, providers map[string]ports.Provider, configs []config.ProviderConfig) {
-	if store == nil || len(providers) == 0 {
+type eventStoreSetter interface {
+	SetEventStore(storage.InteractionStore)
+}
+
+func attachThreadStore(store storage.ThreadStateStore, eventStore storage.InteractionStore, providers map[string]ports.Provider, configs []config.ProviderConfig) {
+	if (store == nil && eventStore == nil) || len(providers) == 0 {
 		return
 	}
 
 	for _, cfg := range configs {
-		if !cfg.ResponsesThreadPersistence {
-			continue
-		}
 		prov, ok := providers[cfg.Name]
 		if !ok {
 			continue
 		}
-		if setter, ok := prov.(threadStoreSetter); ok {
-			setter.SetThreadStore(store)
+		if cfg.ResponsesThreadPersistence {
+			if setter, ok := prov.(threadStoreSetter); ok {
+				setter.SetThreadStore(store)
+			}
+		}
+		if eventStore != nil {
+			if setter, ok := prov.(eventStoreSetter); ok {
+				setter.SetEventStore(eventStore)
+			}
 		}
 	}
 }

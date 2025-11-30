@@ -9,6 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -108,6 +109,26 @@ func (s *Store) initSchema() error {
 			response_id TEXT NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS interaction_events (
+			id TEXT PRIMARY KEY,
+			interaction_id TEXT NOT NULL,
+			stage TEXT NOT NULL,
+			direction TEXT NOT NULL,
+			api_type TEXT,
+			frontdoor TEXT,
+			provider TEXT,
+			app_name TEXT,
+			model_requested TEXT,
+			model_served TEXT,
+			provider_model TEXT,
+			thread_key TEXT,
+			previous_response_id TEXT,
+			raw TEXT,
+			canonical TEXT,
+			headers TEXT,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
@@ -117,6 +138,7 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_interactions_provider ON interactions(provider)`,
 		`CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_thread_state_updated ON thread_state(updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_interaction_events_interaction ON interaction_events(interaction_id, created_at)`,
 	}
 
 	for _, stmt := range statements {
@@ -501,4 +523,75 @@ func (s *Store) ListResponses(ctx context.Context, opts storage.ListOptions) ([]
 	}
 
 	return responses, rows.Err()
+}
+
+// Interaction events (append-only)
+
+func (s *Store) AppendInteractionEvent(ctx context.Context, event *domain.InteractionEvent) error {
+	if event == nil {
+		return nil
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now()
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO interaction_events (
+			id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
+			model_requested, model_served, provider_model, thread_key, previous_response_id,
+			raw, canonical, headers, metadata, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.ID, event.InteractionID, event.Stage, event.Direction, string(event.APIType),
+		event.Frontdoor, event.Provider, event.AppName, event.ModelRequested, event.ModelServed,
+		event.ProviderModel, event.ThreadKey, event.PreviousResponseID,
+		string(event.Raw), string(event.Canonical), string(event.Headers), string(event.Metadata),
+		event.CreatedAt,
+	)
+	return err
+}
+
+func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string, opts storage.InteractionListOptions) ([]*domain.InteractionEvent, error) {
+	if interactionID == "" {
+		return []*domain.InteractionEvent{}, nil
+	}
+
+	limit := opts.Limit
+	if limit == 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
+		       model_requested, model_served, provider_model, thread_key, previous_response_id,
+		       raw, canonical, headers, metadata, created_at
+		FROM interaction_events
+		WHERE interaction_id = ?
+		ORDER BY created_at ASC
+		LIMIT ? OFFSET ?`,
+		interactionID, limit, opts.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*domain.InteractionEvent
+	for rows.Next() {
+		var evt domain.InteractionEvent
+		var apiType string
+		if err := rows.Scan(
+			&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
+			&evt.Frontdoor, &evt.Provider, &evt.AppName, &evt.ModelRequested,
+			&evt.ModelServed, &evt.ProviderModel, &evt.ThreadKey, &evt.PreviousResponseID,
+			&evt.Raw, &evt.Canonical, &evt.Headers, &evt.Metadata, &evt.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if apiType != "" {
+			evt.APIType = domain.APIType(apiType)
+		}
+		events = append(events, &evt)
+	}
+
+	return events, rows.Err()
 }

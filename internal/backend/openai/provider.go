@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
+
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
@@ -119,6 +122,19 @@ func (p *Provider) setThreadState(key, responseID string) {
 	}
 }
 
+func (p *Provider) logEvent(ctx context.Context, interactionID string, evt *domain.InteractionEvent) {
+	if p.eventStore == nil || evt == nil {
+		return
+	}
+	if evt.InteractionID == "" {
+		evt.InteractionID = interactionID
+	}
+	if evt.ID == "" {
+		evt.ID = "evt_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	}
+	conversation.LogEvent(ctx, p.eventStore, evt)
+}
+
 // WithProviderHTTPClient sets a custom HTTP client.
 func WithProviderHTTPClient(httpClient *http.Client) ProviderOption {
 	return func(p *Provider) {
@@ -157,6 +173,13 @@ func WithThreadStateStore(store storage.ThreadStateStore) ProviderOption {
 	}
 }
 
+// WithEventStore attaches an InteractionStore for audit logging.
+func WithEventStore(store storage.InteractionStore) ProviderOption {
+	return func(p *Provider) {
+		p.eventStore = store
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom OpenAI client.
 type Provider struct {
 	client          *Client
@@ -169,6 +192,7 @@ type Provider struct {
 	stateMu         sync.RWMutex
 	persistThreads  bool
 	threadStore     storage.ThreadStateStore
+	eventStore      storage.InteractionStore
 }
 
 // NewProvider creates a new OpenAI provider.
@@ -200,6 +224,13 @@ func (p *Provider) SetThreadStore(store storage.ThreadStateStore) {
 	p.stateMu.Lock()
 	defer p.stateMu.Unlock()
 	p.threadStore = store
+}
+
+// SetEventStore attaches an interaction event store for audit logging.
+func (p *Provider) SetEventStore(store storage.InteractionStore) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.eventStore = store
 }
 
 func (p *Provider) Name() string {
@@ -242,18 +273,40 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 }
 
 func (p *Provider) completeWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *RequestOptions) (*domain.CanonicalResponse, error) {
+	interactionID := req.Metadata["interaction_id"]
+	if interactionID == "" {
+		interactionID = "int_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	}
+
 	apiReq := canonicalToResponsesRequest(req)
+	var threadKey string
+	var previousID string
 
 	if p.threadKeyPath != "" {
 		if key, ok := p.extractThreadKey(req); ok {
+			threadKey = key
 			if prev := p.getThreadState(key); prev != "" {
 				apiReq.PreviousResponseID = prev
+				previousID = prev
 			}
 		}
 	}
 
 	// Marshal the request body for debugging visibility
 	reqBody, marshalErr := json.Marshal(apiReq)
+
+	if threadKey != "" {
+		p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+			Stage:              "thread_resolve",
+			Direction:          "internal",
+			APIType:            domain.APITypeOpenAI,
+			Provider:           p.Name(),
+			ModelRequested:     req.Model,
+			ThreadKey:          threadKey,
+			PreviousResponseID: previousID,
+			Raw:                reqBody,
+		})
+	}
 
 	resp, err := p.client.CreateResponse(ctx, apiReq, opts)
 	if err != nil {
@@ -270,7 +323,38 @@ func (p *Provider) completeWithResponses(ctx context.Context, req *domain.Canoni
 	if p.threadKeyPath != "" {
 		if key, ok := p.extractThreadKey(req); ok && canonResp.ID != "" {
 			p.setThreadState(key, canonResp.ID)
+			p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+				Stage:          "thread_update",
+				Direction:      "internal",
+				APIType:        domain.APITypeOpenAI,
+				Provider:       p.Name(),
+				ModelRequested: req.Model,
+				ThreadKey:      key,
+				Raw:            reqBody,
+				Metadata:       []byte(fmt.Sprintf(`{"new_response_id":"%s"}`, canonResp.ID)),
+			})
 		}
+	}
+
+	p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+		Stage:          "provider_encode",
+		Direction:      "egress",
+		APIType:        domain.APITypeOpenAI,
+		Provider:       p.Name(),
+		ModelRequested: req.Model,
+		Raw:            reqBody,
+	})
+	if canonResp.RawResponse != nil {
+		p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+			Stage:          "provider_decode",
+			Direction:      "ingress",
+			APIType:        domain.APITypeOpenAI,
+			Provider:       p.Name(),
+			ModelRequested: req.Model,
+			ModelServed:    canonResp.Model,
+			ProviderModel:  canonResp.ProviderModel,
+			Raw:            canonResp.RawResponse,
+		})
 	}
 
 	return canonResp, nil
@@ -312,16 +396,43 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 }
 
 func (p *Provider) streamWithResponses(ctx context.Context, req *domain.CanonicalRequest, opts *RequestOptions) (<-chan domain.CanonicalEvent, error) {
+	interactionID := req.Metadata["interaction_id"]
+	if interactionID == "" {
+		interactionID = "int_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	}
+
 	apiReq := canonicalToResponsesRequest(req)
 
+	var previousID string
 	if p.threadKeyPath != "" {
 		if key, ok := p.extractThreadKey(req); ok {
 			if prev := p.getThreadState(key); prev != "" {
 				apiReq.PreviousResponseID = prev
+				p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+					Stage:              "thread_resolve",
+					Direction:          "internal",
+					APIType:            domain.APITypeOpenAI,
+					Provider:           p.Name(),
+					ModelRequested:     req.Model,
+					ThreadKey:          key,
+					PreviousResponseID: prev,
+				})
+				previousID = prev
 			}
 		}
 	}
 	apiReq.Stream = true
+
+	if reqBytes, err := json.Marshal(apiReq); err == nil {
+		p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+			Stage:          "provider_encode",
+			Direction:      "egress",
+			APIType:        domain.APITypeOpenAI,
+			Provider:       p.Name(),
+			ModelRequested: req.Model,
+			Raw:            reqBytes,
+		})
+	}
 
 	stream, err := p.client.StreamResponse(ctx, apiReq, opts)
 	if err != nil {
@@ -349,6 +460,19 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 			event := result.Event
 			if event == nil {
 				continue
+			}
+
+			if len(event.Data) > 0 {
+				p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+					Stage:          "provider_decode",
+					Direction:      "ingress",
+					APIType:        domain.APITypeOpenAI,
+					Provider:       p.Name(),
+					ModelRequested: req.Model,
+					ModelServed:    currentModel,
+					ProviderModel:  currentModel,
+					Raw:            event.Data,
+				})
 			}
 
 			// Parse different event types (per OpenAI Responses API Spec v1.1)
@@ -410,6 +534,19 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 					}
 					out <- ev
 
+					if len(event.Data) > 0 {
+						p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+							Stage:          "provider_decode",
+							Direction:      "ingress",
+							APIType:        domain.APITypeOpenAI,
+							Provider:       p.Name(),
+							ModelRequested: req.Model,
+							ModelServed:    currentModel,
+							ProviderModel:  currentModel,
+							Raw:            event.Data,
+						})
+					}
+
 					if threadKey != "" {
 						id := currentResponseID
 						if id == "" && data.ID != "" {
@@ -417,6 +554,16 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 						}
 						if id != "" {
 							p.setThreadState(threadKey, id)
+							p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+								Stage:              "thread_update",
+								Direction:          "internal",
+								APIType:            domain.APITypeOpenAI,
+								Provider:           p.Name(),
+								ModelRequested:     req.Model,
+								ThreadKey:          threadKey,
+								PreviousResponseID: previousID,
+								Metadata:           []byte(fmt.Sprintf(`{"new_response_id":"%s"}`, id)),
+							})
 						}
 					}
 				}
@@ -458,8 +605,30 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 								TotalTokens:      data.Response.Usage.TotalTokens,
 							},
 						}
+						if len(event.Data) > 0 {
+							p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+								Stage:          "provider_decode",
+								Direction:      "ingress",
+								APIType:        domain.APITypeOpenAI,
+								Provider:       p.Name(),
+								ModelRequested: req.Model,
+								ModelServed:    data.Response.Model,
+								ProviderModel:  data.Response.Model,
+								Raw:            event.Data,
+							})
+						}
 						if threadKey != "" && data.Response.ID != "" {
 							p.setThreadState(threadKey, data.Response.ID)
+							p.logEvent(ctx, interactionID, &domain.InteractionEvent{
+								Stage:              "thread_update",
+								Direction:          "internal",
+								APIType:            domain.APITypeOpenAI,
+								Provider:           p.Name(),
+								ModelRequested:     req.Model,
+								ThreadKey:          threadKey,
+								PreviousResponseID: previousID,
+								Metadata:           []byte(fmt.Sprintf(`{"new_response_id":"%s"}`, data.Response.ID)),
+							})
 						}
 					}
 				}

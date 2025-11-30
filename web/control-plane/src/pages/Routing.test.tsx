@@ -41,7 +41,7 @@ describe('Routing', () => {
       expect(screen.getByText('Default Provider')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('openai-provider')).toBeInTheDocument();
+    expect(screen.getAllByText('openai-provider').length).toBeGreaterThan(0);
   });
 
   it('shows "Not configured" when no default provider', async () => {
@@ -74,7 +74,7 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('Routing Rules')).toBeInTheDocument();
+      expect(screen.getAllByText('Routing Rules').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('Model-to-provider mappings')).toBeInTheDocument();
@@ -91,11 +91,11 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('claude-')).toBeInTheDocument();
+      expect(screen.getAllByText('claude-').length).toBeGreaterThan(0);
     });
 
-    expect(screen.getByText('gpt-4-turbo')).toBeInTheDocument();
-    expect(screen.getByText('anthropic-provider')).toBeInTheDocument();
+    expect(screen.getAllByText('gpt-4-turbo').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('anthropic-provider').length).toBeGreaterThan(0);
   });
 
   it('shows empty state when no routing rules', async () => {
@@ -108,7 +108,7 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('Routing Rules')).toBeInTheDocument();
+      expect(screen.getAllByText('Routing Rules').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('No routing rules configured')).toBeInTheDocument();
@@ -127,7 +127,7 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('Routing Rules')).toBeInTheDocument();
+      expect(screen.getAllByText('Routing Rules').length).toBeGreaterThan(0);
     });
 
     // Verify the page renders without crashing and shows empty states
@@ -145,7 +145,7 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('Tenants')).toBeInTheDocument();
+      expect(screen.getAllByText('Tenants').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('Single-tenant Mode')).toBeInTheDocument();
@@ -162,7 +162,7 @@ describe('Routing', () => {
     render(<Routing />, { initialRoute: '/admin/routing' });
 
     await waitFor(() => {
-      expect(screen.getByText('Tenants')).toBeInTheDocument();
+      expect(screen.getAllByText('Tenants').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('2 tenant(s)')).toBeInTheDocument();

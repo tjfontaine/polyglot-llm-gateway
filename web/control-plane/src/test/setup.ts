@@ -1,14 +1,19 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeAll, afterAll } from 'vitest';
+import { server } from './server';
+
+// Ensure React treats the environment as act-enabled to silence warnings from async effects
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 // Cleanup after each test
 afterEach(() => {
   cleanup();
+  server.resetHandlers();
 });
 
-// Mock fetch globally
-global.fetch = vi.fn();
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
 
 // Mock IntersectionObserver
 class MockIntersectionObserver {
@@ -39,14 +44,14 @@ Object.defineProperty(window, 'ResizeObserver', {
 // Mock matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: vi.fn().mockImplementation((query) => ({
+  value: (query: string) => ({
     matches: false,
     media: query,
     onchange: null,
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }),
 });

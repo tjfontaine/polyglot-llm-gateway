@@ -109,6 +109,12 @@ type InteractionStore interface {
 	// SaveInteraction saves an interaction record
 	SaveInteraction(ctx context.Context, interaction *domain.Interaction) error
 
+	// AppendInteractionEvent appends an auditable pipeline event for an interaction.
+	AppendInteractionEvent(ctx context.Context, event *domain.InteractionEvent) error
+
+	// ListInteractionEvents returns events for an interaction ordered by time.
+	ListInteractionEvents(ctx context.Context, interactionID string, opts InteractionListOptions) ([]*domain.InteractionEvent, error)
+
 	// GetInteraction retrieves an interaction by ID
 	GetInteraction(ctx context.Context, id string) (*domain.Interaction, error)
 
@@ -127,10 +133,11 @@ type InteractionStore interface {
 
 // InteractionListOptions defines options for listing interactions
 type InteractionListOptions struct {
-	TenantID  string
-	Frontdoor domain.APIType // Filter by frontdoor type
-	Provider  string         // Filter by provider
-	Status    string         // Filter by status
-	Limit     int
-	Offset    int
+	TenantID      string
+	Frontdoor     domain.APIType // Filter by frontdoor type
+	Provider      string         // Filter by provider
+	Status        string         // Filter by status
+	Limit         int
+	Offset        int
+	InteractionID string // Optional: restrict to a single interaction (for event listing)
 }

@@ -18,6 +18,7 @@ type Store struct {
 	responses     map[string]*storage.ResponseRecord
 	interactions  map[string]*domain.Interaction
 	threads       map[string]string
+	events        []*domain.InteractionEvent
 }
 
 // New creates a new in-memory store
@@ -27,6 +28,7 @@ func New() *Store {
 		responses:     make(map[string]*storage.ResponseRecord),
 		interactions:  make(map[string]*domain.Interaction),
 		threads:       make(map[string]string),
+		events:        []*domain.InteractionEvent{},
 	}
 }
 
@@ -228,6 +230,39 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 	interaction.UpdatedAt = now
 	s.interactions[interaction.ID] = interaction
 	return nil
+}
+
+func (s *Store) AppendInteractionEvent(ctx context.Context, event *domain.InteractionEvent) error {
+	if event == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string, opts storage.InteractionListOptions) ([]*domain.InteractionEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*domain.InteractionEvent
+	for _, evt := range s.events {
+		if interactionID != "" && evt.InteractionID != interactionID {
+			continue
+		}
+		result = append(result, evt)
+	}
+
+	start := opts.Offset
+	if start > len(result) {
+		start = len(result)
+	}
+	end := start + opts.Limit
+	if opts.Limit == 0 || end > len(result) {
+		end = len(result)
+	}
+	return result[start:end], nil
 }
 
 func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interaction, error) {

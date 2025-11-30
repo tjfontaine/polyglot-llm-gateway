@@ -59,6 +59,7 @@ func (s *Server) routes() {
 	s.router.Get("/api/responses/{response_id}", s.handleResponseDetail)
 	s.router.Get("/api/interactions", s.handleListInteractions)
 	s.router.Get("/api/interactions/{interaction_id}", s.handleInteractionDetail)
+	s.router.Get("/api/interactions/{interaction_id}/events", s.handleInteractionEvents)
 
 	s.router.Get("/*", s.handleApp)
 }
@@ -945,4 +946,31 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 	}
 
 	http.Error(w, "interaction not found", http.StatusNotFound)
+}
+
+func (s *Server) handleInteractionEvents(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+	interactionID := chi.URLParam(r, "interaction_id")
+	iStore, ok := s.store.(storage.InteractionStore)
+	if !ok {
+		http.Error(w, "interaction events not supported", http.StatusNotImplemented)
+		return
+	}
+
+	events, err := iStore.ListInteractionEvents(r.Context(), interactionID, storage.InteractionListOptions{
+		Limit:  500,
+		Offset: 0,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"interaction_id": interactionID,
+		"events":         events,
+	})
 }

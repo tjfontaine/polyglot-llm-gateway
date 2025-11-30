@@ -1,243 +1,90 @@
-# **Polyglot LLM Gateway: Deep Dive & Refactoring Plan**
+# Auditable Pipeline Plan (Anthropic → IR → Threaded IR → OpenAI Responses → Back)
 
-## **1\. Executive Summary**
+## Objectives
+- Make the request/response path fully auditable and debuggable end-to-end.
+- Preserve exact payloads at each boundary (ingress/egress), with explicit stage/direction metadata.
+- Support threaded Responses flows (previous_response_id + thread state) without losing context.
+- Feed a single, coherent event stream into the control plane (no split int/resp/conversation views).
 
-The polyglot-llm-gateway implements a robust "Hourglass Architecture" using a Canonical Intermediate Representation (IR) to translate between OpenAI and Anthropic formats. It features advanced capabilities like model routing, response persistence (SQLite), and a control plane.
+## Target Pipeline (happy-path)
+1) **Ingress (Anthropic frontdoor)**  
+   - Read raw request bytes; attach request_id, tenant/app/provider/model metadata.  
+   - Decode → CanonicalRequest (IR).  
+   - Emit event: `stage=frontdoor_decode`, `direction=ingress`, `raw_request`, `canonical_request`.
+2) **Thread key resolution (optional)**  
+   - Derive thread_key (configured path or metadata.user_id).  
+   - Lookup thread_state (previous_response_id) if threading enabled.  
+   - Mutate canonical/provider payload accordingly.  
+   - Emit event: `stage=thread_resolve`, `thread_key`, `previous_response_id`.
+3) **Provider encode + send (OpenAI Responses)**  
+   - Encode CanonicalRequest → provider request (Responses).  
+   - Emit event: `stage=provider_encode`, `direction=egress`, `provider_request`.
+4) **Provider response / stream**  
+   - For non-stream: decode provider response → CanonicalResponse.  
+   - For stream: decode each event → CanonicalEvent; accumulate Usage/FinishReason.  
+   - Emit event(s): `stage=provider_decode`, `direction=ingress`, `provider_response` (or stream chunks).
+5) **Thread state update**  
+   - When a final response_id is known, persist `thread_state[thread_key]=response_id`.  
+   - Emit event: `stage=thread_update`, `thread_key`, `response_id`.
+6) **Client encode (Anthropic)**  
+   - Encode CanonicalResponse → Anthropic format.  
+   - Emit event: `stage=frontdoor_encode`, `direction=egress`, `client_response`.
 
-Status: Production-ready for single-tenant use.  
-Gaps: Requires hardening for multi-tenant security (SSRF), high-concurrency optimization (lock contention), and structural reorganization to decouple protocol handlers from backend providers.
+## Proposed Carrying Type (for storage & control plane)
+`InteractionEvent` (append-only)
+- `id` (uuid)
+- `interaction_id` (stable per end-user “call”; for Responses reuse resp_id, otherwise int_* UUID)
+- `stage` (frontdoor_decode | thread_resolve | provider_encode | provider_decode | thread_update | frontdoor_encode | error)
+- `direction` (ingress | egress | internal)
+- `api_type` (anthropic | openai | responses | canonical)
+- `provider` / `frontdoor` / `app` / `tenant`
+- `model_requested` / `model_served` / `provider_model`
+- `thread_key` (nullable), `previous_response_id` (nullable)
+- `raw` (json/text) – exact payload at that stage
+- `canonical` (json) – if available
+- `headers` (filtered) – optional
+- `metadata` (json) – request_id, user_id, etc.
+- `created_at`
 
-## **2\. Directory Restructuring Plan**
+Notes:
+- This replaces the need to juggle int/resp/conversation tables for audit views; control plane can reconstruct timelines from events grouped by `interaction_id`.
+- Keep `thread_state` table as is for fast lookup/updates.
 
-The proposed structure adheres to the **Standard Go Project Layout**, but emphasizes **Package-Oriented Design** for providers. Each provider (OpenAI, Anthropic, etc.) is a self-contained package within internal/backend/ containing its client, adapter logic, and internal types.
+## Storage Layout
+- **interaction_events** (new) – append-only, wide columns as above. Indexed by interaction_id, stage, created_at.
+- **thread_state** (keep) – thread_key → latest response_id (already present).
+- Legacy tables (interactions/responses/conversations) can remain for compatibility; new UI reads from interaction_events. Optionally dual-write during rollout.
 
-### **2.1 Proposed Tree Structure**
+## Recording Rules
+- Always emit at least: frontdoor_decode, provider_encode, provider_decode, frontdoor_encode.  
+- If threading is enabled: emit thread_resolve (lookup) and thread_update (persist).  
+- On error at any stage: emit `stage=error` with the error payload and stop sequence.
+- Streaming: buffer chunk metadata to include model/usage; emit one provider_decode per meaningful chunk plus a final aggregate event with finish_reason/usage.
+- Redaction: allow a config hook to strip/retain headers or fields before storage.
 
-poly-llm-gateway/  
-├── cmd/  
-│   ├── gateway/              \# Main entrypoint (wires everything together)  
-│   └── keygen/               \# Utility for API key hashing  
-├── internal/  
-│   ├── core/                 \# Pure domain logic (no external deps)  
-│   │   ├── domain/           \# Canonical types (Request, Response, Event)  
-│   │   ├── errors/           \# Canonical error types  
-│   │   └── ports/            \# Interfaces (Provider, Store, TokenCounter)  
-│   ├── api/                  \# INBOUND: HTTP Handlers (Frontdoors)  
-│   │   ├── server/           \# Server setup & wiring  
-│   │   ├── middleware/       \# Auth, RateLimit, OTel, Logging  
-│   │   ├── openai/           \# Handler for /v1/chat/completions (decodes to Canonical)  
-│   │   ├── anthropic/        \# Handler for /v1/messages (decodes to Canonical)  
-│   │   ├── responses/        \# Handler for /v1/responses (Unified API)  
-│   │   └── controlplane/     \# Control Plane API Handlers  
-│   ├── backend/              \# OUTBOUND: Provider Implementations  
-│   │   ├── openai/           \# Self-contained OpenAI implementation  
-│   │   │   ├── client.go     \# HTTP Client logic  
-│   │   │   ├── provider.go   \# Implements core.ports.Provider  
-│   │   │   └── types.go      \# Internal OpenAI-specific types  
-│   │   ├── anthropic/        \# Self-contained Anthropic implementation  
-│   │   │   ├── client.go  
-│   │   │   ├── provider.go  
-│   │   │   └── types.go  
-│   │   └── passthrough/      \# Wrapper for raw passthrough  
-│   ├── router/               \# Routing & Policy Logic  
-│   │   ├── dispatcher.go     \# Merged Router \+ ModelMapper logic  
-│   │   └── policy.go         \# Rule evaluation  
-│   ├── storage/              \# Persistence adapters  
-│   │   ├── memory/  
-│   │   └── sqlite/  
-│   └── pkg/                  \# Shared stateless utilities  
-│       ├── codec/            \# Protocol translation logic (OpenAI \<-\> Canonical)  
-│       ├── tokens/           \# Token counting & estimation logic  
-│       ├── safehttp/         \# SSRF-protected HTTP client  
-│       ├── config/           \# Configuration loading  
-│       ├── auth/             \# Authentication logic  
-│       └── tenant/           \# Tenant management logic  
-└── web/  
-    └── control-plane/        \# React Dashboard
+## Control Plane Consumption
+- Query: `SELECT * FROM interaction_events WHERE interaction_id=? ORDER BY created_at`.  
+- Present as a timeline with per-stage payload tabs (raw/canonical), thread metadata, and mapped models.  
+- For threading, show: thread_key, previous_response_id used, updated response_id.
 
-### **2.2 File Migration Map**
+## Rollout Plan
+1) Schema: create `interaction_events` table + indexes; keep existing tables.  
+2) Code: introduce an `eventLogger` component used by frontdoors and providers; wire Anthropic/OpenAI paths first.  
+3) Dual-write: emit both legacy interaction record and new events until stable.  
+4) UI: control plane switches to reading event timelines; fall back to legacy if no events found.  
+5) Cleanup: optional migration/archival of legacy tables once consumers are off them.
 
-This map details exactly where each existing file should move.
+## Validation Checklist
+- Unit tests per stage (encode/decode, thread resolve/update, event emission).  
+- Integration: Anthropic → Responses round-trip producing ordered events with correct models/thread ids.  
+- Streaming: ensures final usage/finish_reason is captured in the last event.  
+- DB: verify WAL, indexes, and size growth; add retention/compaction hooks if needed.
 
-| Current Path | New Path | Notes |
-| :---- | :---- | :---- |
-| cmd/gateway/main.go | cmd/gateway/main.go | Update imports |
-| cmd/keygen/main.go | cmd/keygen/main.go | No changes |
-| internal/domain/content.go | internal/core/domain/content.go | **DONE** |
-| internal/domain/errors.go | internal/core/domain/errors.go | **DONE** (package remains domain) |
-| internal/domain/errors\_test.go | internal/core/domain/errors\_test.go | **DONE** |
-| internal/domain/interaction.go | internal/core/domain/interaction.go | **DONE** |
-| internal/domain/interfaces.go | internal/core/ports/interfaces.go | **DONE** |
-| internal/domain/responses.go | internal/core/domain/responses.go | **DONE** |
-| internal/domain/tokens.go | internal/core/domain/tokens.go | **DONE** |
-| internal/domain/types.go | internal/core/domain/types.go | **DONE** |
-| internal/pkg/config/config.go | internal/pkg/config/config.go | **DONE** |
-| internal/pkg/config/config\_test.go | internal/pkg/config/config\_test.go | **DONE** |
-| internal/auth/auth.go | internal/pkg/auth/auth.go | **DONE** |
-| internal/auth/auth\_test.go | internal/pkg/auth/auth\_test.go | **DONE** |
-| internal/tenant/tenant.go | internal/pkg/tenant/tenant.go | **DONE** |
-| internal/tenant/registry.go | internal/pkg/tenant/registry.go | **DONE** |
-| internal/tenant/registry\_test.go | internal/pkg/tenant/registry\_test.go | **DONE** |
-| internal/server/server.go | internal/api/server/server.go | **DONE** |
-| internal/server/authmiddleware.go | internal/api/middleware/auth.go | **DONE** |
-| internal/server/logging.go | internal/api/middleware/logging.go | **DONE** |
-| internal/server/ratelimit.go | internal/api/middleware/ratelimit.go | **DONE** |
-| internal/server/requestid.go | internal/api/middleware/requestid.go | **DONE** |
-| internal/server/timeout.go | internal/api/middleware/timeout.go | **DONE** |
-| internal/server/middleware\_test.go | internal/api/middleware/middleware\_test.go | **DONE** |
-| internal/api/middleware/tracer/tracer.go | internal/api/middleware/tracer.go | **DONE** (kept in tracer/tracer.go with package tracer; wiring fixed) |
-| internal/backend/openai/frontdoor.go | internal/api/openai/handler.go | Rename to handler.go |
-| internal/backend/anthropic/frontdoor.go | internal/api/anthropic/handler.go | Rename to handler.go |
-| internal/backend/anthropic/frontdoor\_test.go | internal/api/anthropic/handler\_test.go |  |
-| internal/api/responses/handler.go | internal/api/responses/handler.go | **DONE** |
-| internal/api/responses/handler\_test.go | internal/api/responses/handler\_test.go | **DONE** |
-| internal/controlplane/server.go | internal/api/controlplane/server.go | **DONE** |
-| internal/controlplane/dist/ | internal/api/controlplane/dist/ | **DONE** |
-| internal/backend/openai/client.go | internal/backend/openai/client.go |  |
-| internal/backend/openai/provider.go | internal/backend/openai/provider.go |  |
-| internal/backend/openai/types.go | internal/backend/openai/types.go |  |
-| internal/backend/openai/factory.go | internal/backend/openai/factory.go | **DONE** (explicit RegisterProviderFactories) |
-| internal/backend/anthropic/client.go | internal/backend/anthropic/client.go |  |
-| internal/backend/anthropic/provider.go | internal/backend/anthropic/provider.go |  |
-| internal/backend/anthropic/types.go | internal/backend/anthropic/types.go |  |
-| internal/backend/anthropic/factory.go | internal/backend/anthropic/factory.go | **DONE** (explicit RegisterProviderFactory) |
-| internal/provider/passthrough.go | internal/backend/passthrough/provider.go | **DONE** |
-| internal/provider/registry.go | internal/provider/registry.go | Keep registry; use explicit registration helpers (no init side effects) |
-| internal/provider/registry/registry.go | internal/provider/registry/registry.go | Keep registry; discovery via explicit Register* |
-| internal/frontdoor/registry.go | internal/frontdoor/registry.go | Keep registry; explicit frontdoor registration |
-| internal/frontdoor/registry/registry.go | internal/frontdoor/registry/registry.go | Keep registry; discovery via explicit Register* |
-| internal/policy/router.go | internal/router/router.go | **DONE** (policy router removed) |
-| internal/provider/model\_mapping.go | internal/router/mapping.go | **DONE** (logic moved) |
-| internal/storage/storage.go | internal/core/ports/storage.go | **DONE** (alias retained for compatibility) |
-| internal/storage/memory/store.go | internal/storage/memory/store.go |  |
-| internal/storage/sqlite/store.go | internal/storage/sqlite/store.go |  |
-| internal/codec/codec.go | internal/pkg/codec/codec.go | **DONE** (moved) |
-| internal/backend/openai/codec.go | internal/backend/openai/codec.go | **DONE** |
-| internal/backend/anthropic/codec.go | internal/backend/anthropic/codec.go | **DONE** |
-| internal/codec/images.go | internal/pkg/codec/images.go | **DONE** (moved; SafeTransport) |
-| internal/codec/errors.go | internal/pkg/codec/errors.go | **DONE** (moved) |
-| internal/pkg/tokens/registry.go | internal/pkg/tokens/registry.go | **DONE** |
-| internal/pkg/tokens/openai.go | internal/pkg/tokens/openai.go | **DONE** |
-| internal/pkg/tokens/anthropic.go | internal/pkg/tokens/anthropic.go | **DONE** |
-
-### **2.3 Key Structural Principles**
-
-1. **Backend Isolation:** internal/backend/\<provider\> contains *everything* needed to talk to that provider. It does not know about the HTTP server or frontdoor handlers. It only knows about internal/core/domain.  
-   * **Benefit:** To add "Gemini", you create internal/backend/gemini/ and implement the Provider interface. No other code needs to change except cmd/gateway/main.go to wire it up.  
-2. **API Layer Separation:** internal/api/\<protocol\> handles the *ingress*. It imports internal/pkg/codec to decode requests into Canonical format, then calls the backend.  
-   * **Benefit:** You can expose an OpenAI-compatible endpoint that routes to an Anthropic backend without the two packages importing each other directly.  
-3. **Shared Codec:** internal/pkg/codec holds the translation logic (e.g., "convert Canonical Request to OpenAI JSON"). This is used by both the **API** layer (to decode incoming requests) and the **Backend** layer (to encode outgoing requests for passthrough or specific formatting).
-
-## **3\. Critical Findings & Action Items**
-
-### **3.1 Security: SSRF in Image Fetcher (CRITICAL)**
-
-Location: internal/pkg/codec/images.go (moved from internal/codec/images.go)  
-Issue: The gateway fetches remote images for format conversion without validating the destination IP.  
-**Fix:** Implement a SafeTransport that rejects private IP ranges.
-
-// internal/pkg/safehttp/transport.go  
-package safehttp
-
-import (  
-	"context"  
-	"fmt"  
-	"net"  
-	"net/http"  
-	"time"  
-)
-
-var SafeTransport \= \&http.Transport{  
-	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {  
-		// Enforce timeout  
-		dialer := \&net.Dialer{Timeout: 5 \* time.Second}  
-		conn, err := dialer.DialContext(ctx, network, addr)  
-		if err \!= nil {  
-			return nil, err  
-		}
-
-		// Check IP against private ranges  
-		host, \_, \_ := net.SplitHostPort(conn.RemoteAddr().String())  
-		ip := net.ParseIP(host)  
-		  
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {  
-			conn.Close()  
-			return nil, fmt.Errorf("access to private IP %s is denied", ip)  
-		}  
-		return conn, nil  
-	},  
-}
-
-// Usage in internal/pkg/codec/images.go  
-func NewImageFetcher() \*ImageFetcher {  
-    return \&ImageFetcher{  
-        client: \&http.Client{  
-            Transport: safehttp.SafeTransport,  
-            Timeout:   10 \* time.Second,  
-        },  
-    }  
-}
-
-### **3.2 Performance: SQLite Concurrency Bottleneck**
-
-Location: internal/storage/sqlite/store.go  
-Issue: Default SQLite mode blocks readers during writes.  
-**Fix:** Enable Write-Ahead Logging (WAL) during initialization.
-
-// internal/storage/sqlite/store.go  
-func New(dbPath string) (\*Store, error) {  
-	db, err := sql.Open("sqlite", dbPath)  
-	if err \!= nil {  
-		return nil, err  
-	}  
-	  
-	// Enable WAL mode for high concurrency  
-	if \_, err := db.Exec("PRAGMA journal\_mode=WAL; PRAGMA synchronous=NORMAL;"); err \!= nil {  
-		db.Close()  
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)  
-	}  
-    // ...  
-}
-
-### **3.3 Architecture: Unify Routing Logic**
-
-Current State: Double dispatch between policy.Router and ModelMappingProvider.  
-Target State: A single Router component in internal/router that returns a RouteDecision.  
-// internal/router/router.go  
-type RouteDecision struct {  
-    Provider      ports.Provider  
-    UpstreamModel string  
-    ShouldRewrite bool  
-}
-
-func (r \*Router) Decide(ctx context.Context, model string) (\*RouteDecision, error) {  
-    // 1\. Check Rewrite Rules  
-    // 2\. Check Prefix Rules  
-    // 3\. Fallback  
-    // Return explicit decision  
-}
-
-## **4\. Implementation Roadmap for Agent**
-
-1. **Refactor Directory Structure (DONE):**  
-   * Interfaces now at `internal/core/ports`; legacy empty dirs cleaned up.  
-   * Imports updated; go tests pass.  
-2. **Telemetry Wiring (DONE):**  
-   * Tracer lives at `internal/api/middleware/tracer/tracer.go` (package `tracer`); main imports fixed.  
-3. **Security Fix (DONE):**  
-   * `internal/pkg/safehttp` in place; `internal/pkg/codec/images.go` uses `SafeTransport`.  
-4. **Storage Optimization (DONE):**  
-   * WAL pragma applied in `internal/storage/sqlite/store.go`.  
-5. **Routing Consolidation (DONE):**  
-   * Router logic merged into `internal/router`; legacy `internal/policy` removed.  
-6. **Provider Wiring (MOSTLY DONE):**  
-   * Factories registered explicitly; verify `registration.RegisterBuiltins()` wires all frontdoors/providers; add tests as needed.  
-7. **Control Plane & Null Safety (PARTIAL):**  
-   * Admin UI assets rebuilt and copied to `internal/api/controlplane/dist`.  
-   * TODO: Add/verify tests covering null arrays for new components consuming API data.
-
-## **5\. Verification Plan**
-
-* **SSRF Test:** Attempt to send a request with an image URL pointing to http://localhost:8080/api/stats. Ensure it returns a 400/403 error.  
-* **Concurrency Test:** Run benchmark against SQLite storage. Ensure no database is locked errors.  
-* **Regression Test:** Run go test ./.... Ensure logic tests pass after the massive file movement.
+## Open Questions / Clarifications
+1) Should we dual-write to legacy tables or gate the new event log behind a feature flag?  
+2) Any fields to redact before storage (headers, system prompts, user content)?  
+3) Streaming granularity: store every chunk or only deltas + final summary?  
+4) Control plane needs: timeline only, or also diff views (raw vs canonical) and thread lineage?  
+5) Do we need migration of existing records into interaction_events, or only forward-fill?  
+6) How do we want to key interaction_id for non-Responses (e.g., use request_id vs generated int_uuid)?  
+7) Any SLA on storage growth/retention (TTL, compaction cadence)?

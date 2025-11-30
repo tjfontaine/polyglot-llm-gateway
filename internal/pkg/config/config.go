@@ -70,15 +70,15 @@ type FrontdoorConfig struct {
 }
 
 type ProviderConfig struct {
-	Name              string `koanf:"name"`
-	Type              string `koanf:"type"`
-	APIKey            string `koanf:"api_key"`
-	BaseURL           string `koanf:"base_url"`           // Custom API endpoint
-	SupportsResponses bool   `koanf:"supports_responses"` // Flag for native Responses API support
-	EnablePassthrough bool   `koanf:"enable_passthrough"` // Enable pass-through mode when frontdoor matches
-	UseResponsesAPI   bool   `koanf:"use_responses_api"`  // Use Responses API instead of Chat Completions (OpenAI)
-	ResponsesThreadKeyPath string `koanf:"responses_thread_key_path"` // Optional dotted JSON path to derive Responses threading key
-	ResponsesThreadPersistence bool `koanf:"responses_thread_persistence"` // Persist thread state across restarts when storage is available
+	Name                       string `koanf:"name"`
+	Type                       string `koanf:"type"`
+	APIKey                     string `koanf:"api_key"`
+	BaseURL                    string `koanf:"base_url"`                     // Custom API endpoint
+	SupportsResponses          bool   `koanf:"supports_responses"`           // Flag for native Responses API support
+	EnablePassthrough          bool   `koanf:"enable_passthrough"`           // Enable pass-through mode when frontdoor matches
+	UseResponsesAPI            bool   `koanf:"use_responses_api"`            // Use Responses API instead of Chat Completions (OpenAI)
+	ResponsesThreadKeyPath     string `koanf:"responses_thread_key_path"`    // Optional dotted JSON path to derive Responses threading key
+	ResponsesThreadPersistence bool   `koanf:"responses_thread_persistence"` // Persist thread state across restarts when storage is available
 }
 
 type RoutingConfig struct {

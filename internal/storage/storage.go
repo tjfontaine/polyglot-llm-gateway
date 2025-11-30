@@ -1,6 +1,9 @@
 package storage
 
-import corestorage "github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+import (
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	corestorage "github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+)
 
 // Re-export storage interfaces and types from core/ports for backward compatibility.
 type (
@@ -13,6 +16,7 @@ type (
 	ResponseRecord         = corestorage.ResponseRecord
 	Interaction            = corestorage.Interaction
 	InteractionListOptions = corestorage.InteractionListOptions
+	InteractionEvent       = domain.InteractionEvent
 	ThreadStateStore       interface {
 		SetThreadState(threadKey, responseID string) error
 		GetThreadState(threadKey string) (string, error)

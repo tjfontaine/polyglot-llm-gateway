@@ -45,6 +45,10 @@ providers:
   - name: openai
     type: openai
     api_key: ${OPENAI_API_KEY}
+    use_responses_api: true
+    # Optional Responses threading (reuses previous_response_id when metadata.user_id is present)
+    responses_thread_key_path: "metadata.user_id"
+    responses_thread_persistence: true
 
   - name: anthropic
     type: anthropic

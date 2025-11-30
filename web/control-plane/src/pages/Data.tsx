@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import {
   AlertCircle,
   ArrowDown,
@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { useApi, formatShortDate } from '../hooks/useApi';
 import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge } from '../components/ui';
-import type { InteractionDetailUnion, NewInteractionDetail, ResponseOutputItem, ResponseData } from '../types';
+import type { InteractionDetailUnion, NewInteractionDetail, ResponseOutputItem, ResponseData, InteractionEvent } from '../types';
+import type { InteractionEvent } from '../types';
 
 type FilterType = '' | 'conversation' | 'response' | 'interaction';
 
@@ -198,7 +199,69 @@ function ResponseSection({ response }: { response: ResponseData }) {
   );
 }
 
-function UnifiedInteractionDetail({ interaction }: { interaction: NewInteractionDetail }) {
+function EventTimeline({ interactionId, loadEvents }: { interactionId: string; loadEvents: (id: string) => Promise<{ interaction_id: string; events: InteractionEvent[] }> }) {
+  const [events, setEvents] = useState<InteractionEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await loadEvents(interactionId);
+        setEvents(res.events || []);
+      } catch (err) {
+        console.error(err);
+        setError('Unable to load events');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchEvents();
+  }, [interactionId, loadEvents]);
+
+  if (loading) return <LoadingState message="Loading timeline..." />;
+  if (error) return <EmptyState title="Timeline unavailable" description={error} />;
+  if (!events.length) return <EmptyState title="No events" description="No audit events recorded for this interaction." />;
+
+  return (
+    <div className="space-y-3">
+      {events.map(evt => (
+        <div key={evt.id} className="rounded-lg border border-white/5 bg-slate-900/60 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-1">
+            <span className="font-mono text-white">{evt.stage}</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] uppercase tracking-wide text-slate-300">{evt.direction}</span>
+            {evt.model_requested && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">req: {evt.model_requested}</span>}
+            {evt.model_served && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">served: {evt.model_served}</span>}
+            {evt.thread_key && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-200">thread: {evt.thread_key}</span>}
+            {evt.previous_response_id && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-100">prev: {evt.previous_response_id}</span>}
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {evt.raw && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Raw</div>
+                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded p-2 overflow-auto max-h-60">
+                  {JSON.stringify(evt.raw, null, 2)}
+                </pre>
+              </div>
+            )}
+            {evt.canonical && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Canonical</div>
+                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded p-2 overflow-auto max-h-60">
+                  {JSON.stringify(evt.canonical, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: NewInteractionDetail; loadEvents: (id: string) => Promise<{ interaction_id: string; events: InteractionEvent[] }> }) {
   return (
     <div className="flex h-full flex-col">
       {/* Detail Header */}
@@ -772,7 +835,10 @@ export function Data() {
             <>
               {/* Unified Interaction View */}
               {(selectedInteraction as any).request !== undefined && (selectedInteraction as any).messages === undefined && (
-                <UnifiedInteractionDetail interaction={selectedInteraction as NewInteractionDetail} />
+                <UnifiedInteractionDetail
+                  interaction={selectedInteraction as NewInteractionDetail}
+                  loadEvents={fetchInteractionEvents}
+                />
               )}
 
               {/* Legacy Conversation View */}

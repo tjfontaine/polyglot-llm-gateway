@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
 )
 
@@ -118,5 +121,116 @@ func TestResponsesThreadingPersistsAcrossProviders(t *testing.T) {
 	}
 	if prev != resp1.ID {
 		t.Fatalf("previous_response_id = %s, want %s", prev, resp1.ID)
+	}
+}
+
+func TestResponsesAuditEventsLogged(t *testing.T) {
+	ctx := context.Background()
+	store := memory.New()
+
+	var requests [][]byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		defer r.Body.Close()
+		requests = append(requests, body)
+
+		resp := ResponsesResponse{
+			ID:        fmt.Sprintf("resp_%d", len(requests)),
+			Object:    "response",
+			CreatedAt: time.Now().Unix(),
+			Status:    "completed",
+			Model:     "gpt-4o-mini",
+			Output: []ResponsesOutputItem{{
+				Type: "message",
+				Role: "assistant",
+				Content: []ResponsesContentPart{{
+					Type: "output_text",
+					Text: "hello",
+				}},
+			}},
+			Usage: &ResponsesUsage{
+				InputTokens:  4,
+				OutputTokens: 6,
+				TotalTokens:  10,
+			},
+		}
+
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("failed to write response: %v", err)
+		}
+	}))
+	defer ts.Close()
+
+	provider := NewProvider(
+		"sk-test",
+		WithProviderBaseURL(ts.URL),
+		WithProviderHTTPClient(ts.Client()),
+		WithResponsesAPI(true),
+		WithResponsesThreadKeyPath("metadata.user_id"),
+		WithResponsesThreadPersistence(true),
+		WithThreadStateStore(store),
+		WithEventStore(store),
+	)
+
+	rawReq := []byte(`{"model":"gpt-4o-mini","input":"hi","metadata":{"user_id":"audit-user"}}`)
+	req := &domain.CanonicalRequest{
+		Model:         "gpt-4o-mini",
+		Messages:      []domain.Message{{Role: "user", Content: "hi"}},
+		RawRequest:    rawReq,
+		Metadata:      map[string]string{"user_id": "audit-user", "interaction_id": "int_audit"},
+		SourceAPIType: domain.APITypeOpenAI,
+	}
+
+	resp, err := provider.Complete(ctx, req)
+	if err != nil {
+		t.Fatalf("completion failed: %v", err)
+	}
+	if resp.ID == "" {
+		t.Fatalf("expected response id to be set")
+	}
+
+	events, err := store.ListInteractionEvents(ctx, "int_audit", storage.InteractionListOptions{})
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected events to be recorded")
+	}
+
+	var stages []string
+	for _, evt := range events {
+		stages = append(stages, evt.Stage)
+	}
+
+	wantStages := []string{"thread_resolve", "provider_encode", "provider_decode", "thread_update"}
+	for _, want := range wantStages {
+		found := false
+		for _, stage := range stages {
+			if stage == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected stage %q to be recorded; got %v", want, stages)
+		}
+	}
+
+	hash := sha256.Sum256([]byte("sk-test:audit-user"))
+	expectedThreadKey := fmt.Sprintf("%x", hash[:])
+	for _, evt := range events {
+		if evt.Stage == "thread_resolve" || evt.Stage == "thread_update" {
+			if evt.ThreadKey != expectedThreadKey {
+				t.Fatalf("unexpected thread key %q, want %q", evt.ThreadKey, expectedThreadKey)
+			}
+		}
+	}
+
+	// thread state should be persisted in the backing store
+	if stored, _ := store.GetThreadState(expectedThreadKey); stored != resp.ID {
+		t.Fatalf("thread state persisted as %q, want %q", stored, resp.ID)
 	}
 }

@@ -14,6 +14,7 @@ interface ApiContextValue {
   refreshOverview: () => Promise<void>;
   refreshInteractions: (filter?: 'conversation' | 'response' | 'interaction' | '') => Promise<void>;
   fetchInteractionDetail: (id: string) => Promise<InteractionDetailUnion | null>;
+  fetchInteractionEvents: (id: string) => Promise<any>;
 }
 
 const ApiContext = createContext<ApiContextValue | null>(null);
@@ -83,6 +84,17 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const fetchInteractionEvents = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/interactions/${id}/events`);
+      if (!res.ok) throw new Error('Failed to load interaction events');
+      return await res.json();
+    } catch (err) {
+      console.error(err);
+      return { interaction_id: id, events: [] };
+    }
+  }, []);
+
   // Initial data fetch
   useEffect(() => {
     refreshOverview();
@@ -109,6 +121,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     refreshOverview,
     refreshInteractions,
     fetchInteractionDetail,
+    fetchInteractionEvents,
   };
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

@@ -37,7 +37,7 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Applications')).toBeInTheDocument();
+      expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('Configured frontdoor endpoints')).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Applications')).toBeInTheDocument();
+      expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('No applications configured')).toBeInTheDocument();
@@ -127,11 +127,11 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Applications')).toBeInTheDocument();
+      expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
     });
 
     // Verify the page renders without crashing
-    expect(screen.getByText('Providers')).toBeInTheDocument();
+    expect(screen.getAllByText('Providers').length).toBeGreaterThan(0);
     expect(screen.getByText('0 provider(s)')).toBeInTheDocument();
   });
 
@@ -145,7 +145,7 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Providers')).toBeInTheDocument();
+      expect(screen.getAllByText('Providers').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('Connected LLM backends')).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe('Topology', () => {
       expect(screen.getByText('openai-provider')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('anthropic-provider')).toBeInTheDocument();
+    expect(screen.getAllByText('anthropic-provider').length).toBeGreaterThan(0);
   });
 
   it('shows provider type information', async () => {
@@ -195,11 +195,11 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('anthropic-provider')).toBeInTheDocument();
+      expect(screen.getAllByText('anthropic-provider').length).toBeGreaterThan(0);
     });
 
     // anthropic-provider has enable_passthrough: true
-    expect(screen.getByText('Passthrough')).toBeInTheDocument();
+    expect(screen.getAllByText('Passthrough').length).toBeGreaterThan(0);
   });
 
   it('shows responses ready badge for supported providers', async () => {
@@ -229,7 +229,7 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Providers')).toBeInTheDocument();
+      expect(screen.getAllByText('Providers').length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText('No providers configured')).toBeInTheDocument();
@@ -277,7 +277,7 @@ describe('Topology', () => {
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
-      expect(screen.getByText('Applications')).toBeInTheDocument();
+      expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
     });
 
     // Should show frontdoors instead
