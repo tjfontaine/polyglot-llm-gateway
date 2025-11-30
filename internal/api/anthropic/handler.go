@@ -1,0 +1,603 @@
+// Package anthropic provides a frontdoor handler for the Anthropic Messages API format.
+package anthropic
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
+	backendanthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/codec"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tokens"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+)
+
+// FrontdoorType is the frontdoor type identifier used in configuration.
+const FrontdoorType = "anthropic"
+
+// FrontdoorAPIType returns the canonical API type for this frontdoor.
+func FrontdoorAPIType() domain.APIType {
+	return domain.APITypeAnthropic
+}
+
+// FrontdoorRoute defines an HTTP route registration.
+type FrontdoorRoute struct {
+	Path    string
+	Method  string
+	Handler func(http.ResponseWriter, *http.Request)
+}
+
+// RegisterFrontdoor registers the Anthropic frontdoor factory.
+func RegisterFrontdoor() {
+	if registry.IsRegistered(FrontdoorType) {
+		return
+	}
+
+	registry.RegisterFactory(registry.FrontdoorFactory{
+		Type:           FrontdoorType,
+		APIType:        FrontdoorAPIType(),
+		Description:    "Anthropic Messages API format",
+		CreateHandlers: createFrontdoorHandlers,
+	})
+}
+
+// createFrontdoorHandlers creates handler registrations for Anthropic frontdoor.
+func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models)
+	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
+	result := make([]registry.HandlerRegistration, len(routes))
+	for i, r := range routes {
+		result[i] = registry.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+	}
+	return result
+}
+
+// CreateFrontdoorHandlerRegistrations creates the HTTP handler registrations for Anthropic frontdoor.
+func CreateFrontdoorHandlerRegistrations(handler *FrontdoorHandler, basePath string) []FrontdoorRoute {
+	return []FrontdoorRoute{
+		{Path: basePath + "/v1/messages", Method: http.MethodPost, Handler: handler.HandleMessages},
+		{Path: basePath + "/v1/messages/count_tokens", Method: http.MethodPost, Handler: handler.HandleCountTokens},
+		{Path: basePath + "/v1/models", Method: http.MethodGet, Handler: handler.HandleListModels},
+	}
+}
+
+// FrontdoorHandler handles Anthropic Messages API requests.
+type FrontdoorHandler struct {
+	provider     ports.Provider
+	store        storage.ConversationStore
+	appName      string
+	models       []domain.Model
+	codec        codec.Codec
+	tokenCounter *tokens.Registry
+}
+
+// NewFrontdoorHandler creates a new Anthropic frontdoor handler.
+func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem) *FrontdoorHandler {
+	exposedModels := make([]domain.Model, 0, len(models))
+	for _, model := range models {
+		exposedModels = append(exposedModels, domain.Model{
+			ID:      model.ID,
+			Object:  model.Object,
+			OwnedBy: model.OwnedBy,
+			Created: model.Created,
+		})
+	}
+
+	// Set up token counter registry with:
+	// 1. Provider (checked first if it implements TokenCountProvider)
+	// 2. OpenAI tiktoken counter for GPT models
+	// 3. Fallback estimator for unknown models
+	tokenRegistry := tokens.NewRegistry()
+	tokenRegistry.SetProvider(provider)
+	tokenRegistry.Register(tokens.NewOpenAICounter())
+
+	return &FrontdoorHandler{
+		provider:     provider,
+		store:        store,
+		appName:      appName,
+		models:       exposedModels,
+		codec:        backendanthropic.NewCodec(),
+		tokenCounter: tokenRegistry,
+	}
+}
+
+func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+	providerName := h.provider.Name()
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error("failed to read request body",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Use codec to decode request to canonical format
+	canonReq, err := h.codec.DecodeRequest(body)
+	if err != nil {
+		logger.Error("failed to decode anthropic messages request",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Capture User-Agent from incoming request and pass it through
+	canonReq.UserAgent = r.Header.Get("User-Agent")
+
+	// Set source API type and raw request for pass-through optimization
+	canonReq.SourceAPIType = domain.APITypeAnthropic
+	canonReq.RawRequest = body
+
+	middleware.AddLogField(r.Context(), "requested_model", canonReq.Model)
+	middleware.AddLogField(r.Context(), "frontdoor", "anthropic")
+	middleware.AddLogField(r.Context(), "app", h.appName)
+	middleware.AddLogField(r.Context(), "provider", providerName)
+
+	if canonReq.Stream {
+		h.handleStream(w, r, canonReq, body, startTime)
+		return
+	}
+
+	resp, err := h.provider.Complete(r.Context(), canonReq)
+	if err != nil {
+		logger.Error("messages completion failed",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+			slog.String("requested_model", canonReq.Model),
+			slog.String("provider", providerName),
+		)
+		middleware.AddError(r.Context(), err)
+
+		// Record failed interaction
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:          h.store,
+			RawRequest:     body,
+			CanonicalReq:   canonReq,
+			RequestHeaders: r.Header,
+			Frontdoor:      domain.APITypeAnthropic,
+			Provider:       providerName,
+			AppName:        h.appName,
+			Error:          err,
+			Duration:       time.Since(startTime),
+		})
+
+		codec.WriteError(w, err, domain.APITypeAnthropic)
+		return
+	}
+
+	// Build log fields
+	logFields := []any{
+		slog.String("request_id", requestID),
+		slog.String("frontdoor", "anthropic"),
+		slog.String("app", h.appName),
+		slog.String("provider", providerName),
+		slog.String("requested_model", canonReq.Model),
+		slog.String("served_model", resp.Model),
+	}
+	if len(resp.Choices) > 0 {
+		logFields = append(logFields, slog.String("finish_reason", resp.Choices[0].FinishReason))
+	}
+	if resp.ProviderModel != "" && resp.ProviderModel != resp.Model {
+		logFields = append(logFields, slog.String("provider_model", resp.ProviderModel))
+	}
+	logger.Info("messages completion", logFields...)
+
+	middleware.AddLogField(r.Context(), "served_model", resp.Model)
+	if resp.ProviderModel != "" {
+		middleware.AddLogField(r.Context(), "provider_model", resp.ProviderModel)
+	}
+
+	// Set rate limit info in context for middleware to write as headers
+	if resp.RateLimits != nil {
+		ctx := middleware.SetRateLimits(r.Context(), &middleware.RateLimitInfo{
+			RequestsLimit:     resp.RateLimits.RequestsLimit,
+			RequestsRemaining: resp.RateLimits.RequestsRemaining,
+			RequestsReset:     resp.RateLimits.RequestsReset,
+			TokensLimit:       resp.RateLimits.TokensLimit,
+			TokensRemaining:   resp.RateLimits.TokensRemaining,
+			TokensReset:       resp.RateLimits.TokensReset,
+		})
+		r = r.WithContext(ctx)
+	}
+
+	// Use raw response if available (pass-through mode), otherwise encode
+	var respBody []byte
+	if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
+		// Pass-through: use raw response directly
+		respBody = resp.RawResponse
+		logger.Debug("using pass-through response",
+			slog.String("request_id", requestID),
+		)
+	} else {
+		// Standard path: encode canonical response to Anthropic format
+		respBody, err = h.codec.EncodeResponse(resp)
+		if err != nil {
+			logger.Error("failed to encode response",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Record successful interaction with full bidirectional visibility
+	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+		Store:               h.store,
+		RawRequest:          body,
+		CanonicalReq:        canonReq,
+		ProviderRequestBody: resp.ProviderRequestBody,
+		RawResponse:         resp.RawResponse,
+		CanonicalResp:       resp,
+		ClientResponse:      respBody,
+		RequestHeaders:      r.Header,
+		Frontdoor:           domain.APITypeAnthropic,
+		Provider:            providerName,
+		AppName:             h.appName,
+		Duration:            time.Since(startTime),
+	})
+
+	// Write rate limit headers directly (since middleware already executed)
+	h.writeRateLimitHeaders(w, resp.RateLimits)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBody)
+}
+
+// writeRateLimitHeaders writes normalized rate limit headers from the provider response.
+func (h *FrontdoorHandler) writeRateLimitHeaders(w http.ResponseWriter, rl *domain.RateLimitInfo) {
+	if rl == nil {
+		return
+	}
+
+	if rl.RequestsLimit > 0 {
+		w.Header().Set("x-ratelimit-limit-requests", fmt.Sprintf("%d", rl.RequestsLimit))
+	}
+	if rl.RequestsRemaining > 0 {
+		w.Header().Set("x-ratelimit-remaining-requests", fmt.Sprintf("%d", rl.RequestsRemaining))
+	}
+	if rl.RequestsReset != "" {
+		w.Header().Set("x-ratelimit-reset-requests", rl.RequestsReset)
+	}
+	if rl.TokensLimit > 0 {
+		w.Header().Set("x-ratelimit-limit-tokens", fmt.Sprintf("%d", rl.TokensLimit))
+	}
+	if rl.TokensRemaining > 0 {
+		w.Header().Set("x-ratelimit-remaining-tokens", fmt.Sprintf("%d", rl.TokensRemaining))
+	}
+	if rl.TokensReset != "" {
+		w.Header().Set("x-ratelimit-reset-tokens", rl.TokensReset)
+	}
+}
+
+func (h *FrontdoorHandler) HandleListModels(w http.ResponseWriter, r *http.Request) {
+	middleware.AddLogField(r.Context(), "frontdoor", "anthropic")
+	middleware.AddLogField(r.Context(), "app", h.appName)
+	middleware.AddLogField(r.Context(), "provider", h.provider.Name())
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if len(h.models) > 0 {
+		json.NewEncoder(w).Encode(domain.ModelList{Object: "list", Data: h.models})
+		return
+	}
+
+	list, err := h.provider.ListModels(r.Context())
+	if err != nil {
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if list.Object == "" {
+		list.Object = "list"
+	}
+
+	json.NewEncoder(w).Encode(list)
+}
+
+// HandleCountTokens handles the /v1/messages/count_tokens endpoint.
+// This endpoint supports:
+// 1. Native pass-through for providers that support CountTokens (e.g., Anthropic)
+// 2. Estimation for other providers via the token counter registry
+func (h *FrontdoorHandler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+
+	middleware.AddLogField(r.Context(), "frontdoor", "anthropic")
+	middleware.AddLogField(r.Context(), "app", h.appName)
+	middleware.AddLogField(r.Context(), "provider", h.provider.Name())
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Error("failed to read request body",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Check if provider supports CountTokens natively
+	type countTokensProvider interface {
+		CountTokens(ctx context.Context, body []byte) ([]byte, error)
+	}
+
+	if ctp, ok := h.provider.(countTokensProvider); ok {
+		// Pass through to native provider
+		respBody, err := ctp.CountTokens(r.Context(), body)
+		if err != nil {
+			// Check if this is a "not supported" error - if so, fall back to estimation
+			if strings.Contains(err.Error(), "count_tokens not supported") {
+				logger.Debug("count_tokens not supported by provider, falling back to estimation",
+					slog.String("request_id", requestID),
+				)
+				// Fall through to estimation below
+			} else {
+				// Real error from provider
+				logger.Error("count_tokens failed",
+					slog.String("request_id", requestID),
+					slog.String("error", err.Error()),
+				)
+				middleware.AddError(r.Context(), err)
+				codec.WriteError(w, err, domain.APITypeAnthropic)
+				return
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(respBody)
+			return
+		}
+	}
+
+	// Fallback: use token counter registry (with tiktoken for OpenAI models)
+	canonReq, err := h.codec.DecodeRequest(body)
+	if err != nil {
+		logger.Error("failed to decode count_tokens request",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Convert to token count request
+	tokenReq := h.canonicalToTokenRequest(canonReq)
+
+	// Use token counter registry (will use tiktoken for OpenAI models, estimation for others)
+	tokenResp, err := h.tokenCounter.CountTokens(r.Context(), tokenReq)
+	if err != nil {
+		logger.Error("token counting failed",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+		)
+		middleware.AddError(r.Context(), err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return Anthropic-format response
+	respBody := fmt.Sprintf(`{"input_tokens": %d}`, tokenResp.InputTokens)
+
+	logMethod := "count_tokens"
+	if tokenResp.Estimated {
+		logMethod = "count_tokens (estimated)"
+	}
+	logger.Info(logMethod,
+		slog.String("request_id", requestID),
+		slog.String("model", canonReq.Model),
+		slog.Int("input_tokens", tokenResp.InputTokens),
+		slog.Bool("estimated", tokenResp.Estimated),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(respBody))
+}
+
+// canonicalToTokenRequest converts a canonical request to a token count request.
+func (h *FrontdoorHandler) canonicalToTokenRequest(req *domain.CanonicalRequest) *domain.TokenCountRequest {
+	tokenReq := &domain.TokenCountRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+	}
+
+	// Extract system message if present
+	for _, msg := range req.Messages {
+		if msg.Role == "system" {
+			tokenReq.System = msg.Content
+			break
+		}
+	}
+
+	return tokenReq
+}
+
+func (h *FrontdoorHandler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
+	logger := slog.Default()
+	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+	providerName := h.provider.Name()
+
+	events, err := h.provider.Stream(r.Context(), req)
+	if err != nil {
+		logger.Error("failed to start stream",
+			slog.String("request_id", requestID),
+			slog.String("error", err.Error()),
+			slog.String("requested_model", req.Model),
+			slog.String("provider", providerName),
+		)
+		middleware.AddError(r.Context(), err)
+
+		// Record failed streaming interaction
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:          h.store,
+			RawRequest:     rawRequest,
+			CanonicalReq:   req,
+			RequestHeaders: r.Header,
+			Frontdoor:      domain.APITypeAnthropic,
+			Provider:       providerName,
+			AppName:        h.appName,
+			Streaming:      true,
+			Error:          err,
+			Duration:       time.Since(startTime),
+		})
+
+		codec.WriteError(w, err, domain.APITypeAnthropic)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		middleware.AddError(r.Context(), fmt.Errorf("streaming not supported"))
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	var builder strings.Builder
+	var servedModel string
+	var providerModel string
+	var finishReason string
+	var usage *domain.Usage
+	var streamErr error
+
+	for event := range events {
+		if event.Error != nil {
+			// Context cancellation is expected when client disconnects - log at info level
+			if errors.Is(event.Error, context.Canceled) {
+				logger.Info("stream canceled by client",
+					slog.String("request_id", requestID),
+				)
+			} else {
+				logger.Error("stream event error",
+					slog.String("request_id", requestID),
+					slog.String("error", event.Error.Error()),
+				)
+				streamErr = event.Error
+			}
+			break
+		}
+
+		// Capture served model from streaming events
+		if event.Model != "" {
+			servedModel = event.Model
+		}
+		// Capture provider model (the actual model used, before any rewriting)
+		if event.ProviderModel != "" {
+			providerModel = event.ProviderModel
+		}
+		// Capture finish reason and usage
+		if event.FinishReason != "" {
+			finishReason = event.FinishReason
+		}
+		if event.Usage != nil {
+			usage = event.Usage
+		}
+
+		builder.WriteString(event.ContentDelta)
+
+		// Use codec to encode stream chunk
+		data, err := h.codec.EncodeStreamChunk(&event, nil)
+		if err != nil {
+			logger.Error("failed to encode stream chunk",
+				slog.String("request_id", requestID),
+				slog.String("error", err.Error()),
+			)
+			break
+		}
+
+		fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Send message_stop event
+	fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
+	flusher.Flush()
+
+	// Use served model from provider if available, otherwise use requested model
+	if servedModel == "" {
+		servedModel = req.Model
+	}
+
+	// Build the canonical response for recording
+	recordResp := &domain.CanonicalResponse{
+		Model:         servedModel,
+		ProviderModel: providerModel,
+		Choices: []domain.Choice{
+			{
+				Index: 0,
+				Message: domain.Message{
+					Role:    "assistant",
+					Content: builder.String(),
+				},
+				FinishReason: finishReason,
+			},
+		},
+	}
+	if usage != nil {
+		recordResp.Usage = *usage
+	}
+
+	middleware.AddLogField(r.Context(), "served_model", servedModel)
+	if providerModel != "" {
+		middleware.AddLogField(r.Context(), "provider_model", providerModel)
+	}
+
+	// Record streaming interaction
+	conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+		Store:          h.store,
+		RawRequest:     rawRequest,
+		CanonicalReq:   req,
+		CanonicalResp:  recordResp,
+		RequestHeaders: r.Header,
+		Frontdoor:      domain.APITypeAnthropic,
+		Provider:       providerName,
+		AppName:        h.appName,
+		Streaming:      true,
+		Error:          streamErr,
+		Duration:       time.Since(startTime),
+		FinishReason:   finishReason,
+	})
+
+	// Build log fields
+	logFields := []any{
+		slog.String("request_id", requestID),
+		slog.String("frontdoor", "anthropic"),
+		slog.String("app", h.appName),
+		slog.String("provider", providerName),
+		slog.String("requested_model", req.Model),
+		slog.String("served_model", servedModel),
+	}
+	if providerModel != "" && providerModel != servedModel {
+		logFields = append(logFields, slog.String("provider_model", providerModel))
+	}
+
+	logger.Info("messages stream completed", logFields...)
+}

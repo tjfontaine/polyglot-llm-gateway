@@ -19,8 +19,8 @@ RUN go mod download
 
 # Copy source and build the gateway binary
 COPY . .
-RUN rm -rf internal/controlplane/dist
-COPY --from=frontend-builder /app/web/control-plane/dist internal/controlplane/dist
+RUN rm -rf internal/api/controlplane/dist
+COPY --from=frontend-builder /app/web/control-plane/dist internal/api/controlplane/dist
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway
 
 # Runtime stage

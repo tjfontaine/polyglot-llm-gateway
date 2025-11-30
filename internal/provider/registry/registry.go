@@ -23,8 +23,9 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 )
 
 // ProviderFactory defines how to create a provider of a specific type.
@@ -43,7 +44,7 @@ type ProviderFactory struct {
 
 	// Create instantiates a new provider from configuration.
 	// This is called by the registry to create provider instances.
-	Create func(cfg config.ProviderConfig) (domain.Provider, error)
+	Create func(cfg config.ProviderConfig) (ports.Provider, error)
 
 	// ValidateConfig performs provider-specific configuration validation.
 	// Optional: if nil, no additional validation is performed.
@@ -132,7 +133,7 @@ func ValidateProviderConfig(cfg config.ProviderConfig) error {
 }
 
 // CreateFromFactory creates a provider using the registered factory.
-func CreateFromFactory(cfg config.ProviderConfig) (domain.Provider, error) {
+func CreateFromFactory(cfg config.ProviderConfig) (ports.Provider, error) {
 	f, ok := GetFactory(cfg.Type)
 	if !ok {
 		return nil, fmt.Errorf("unknown provider type: %s (registered types: %v)", cfg.Type, ListProviderTypes())

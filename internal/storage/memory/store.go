@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 

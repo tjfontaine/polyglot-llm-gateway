@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
 )
 
@@ -44,10 +44,10 @@ func TestRecordInteraction(t *testing.T) {
 		CanonicalResp:  canonResp,
 		ClientResponse: []byte(`{"id": "resp-123", "choices": [{"message": {"role": "assistant", "content": "Hi there!"}}]}`),
 		RequestHeaders: http.Header{
-			"User-Agent":        []string{"test-client/1.0"},
-			"X-Request-Id":      []string{"req-abc123"},
-			"Content-Type":      []string{"application/json"},
-			"Authorization":     []string{"Bearer secret"}, // Should not be captured
+			"User-Agent":    []string{"test-client/1.0"},
+			"X-Request-Id":  []string{"req-abc123"},
+			"Content-Type":  []string{"application/json"},
+			"Authorization": []string{"Bearer secret"}, // Should not be captured
 		},
 		Frontdoor: domain.APITypeOpenAI,
 		Provider:  "openai",

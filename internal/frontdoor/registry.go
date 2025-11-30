@@ -4,16 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	responses_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/responses"
+	responses_frontdoor "github.com/tjfontaine/polyglot-llm-gateway/internal/api/responses"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
+	routerpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/router"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
-
-	// Import consolidated packages to trigger their frontdoor init() registration.
-	// The anthropic and openai packages contain both provider and frontdoor code.
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
-	_ "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // Registry creates and registers frontdoor handlers.
@@ -28,12 +24,12 @@ func NewRegistry() *Registry {
 
 // CreateHandlers creates frontdoor handlers based on configuration.
 // It uses the registered FrontdoorFactory for each specified frontdoor type.
-func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Provider, providers map[string]domain.Provider, store storage.ConversationStore) ([]HandlerRegistration, error) {
+func (r *Registry) CreateHandlers(configs []config.AppConfig, router ports.Provider, providers map[string]ports.Provider, store storage.ConversationStore) ([]HandlerRegistration, error) {
 	var registrations []HandlerRegistration
 
 	for _, cfg := range configs {
 		// Determine which provider to use
-		var p domain.Provider = router
+		var p ports.Provider = router
 		if cfg.Provider != "" {
 			if specificProvider, ok := providers[cfg.Provider]; ok {
 				p = specificProvider
@@ -48,7 +44,7 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 		}
 
 		if len(cfg.ModelRouting.PrefixProviders) > 0 || len(cfg.ModelRouting.Rewrites) > 0 || cfg.ModelRouting.Fallback != nil {
-			mapper, err := provider.NewModelMappingProvider(p, providers, cfg.ModelRouting)
+			mapper, err := routerpkg.NewMappingProvider(p, providers, cfg.ModelRouting)
 			if err != nil {
 				return nil, err
 			}
@@ -75,7 +71,7 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router domain.Prov
 }
 
 // CreateResponsesHandlers creates Responses API handlers
-func (r *Registry) CreateResponsesHandlers(basePath string, store storage.ConversationStore, provider domain.Provider) []HandlerRegistration {
+func (r *Registry) CreateResponsesHandlers(basePath string, store storage.ConversationStore, provider ports.Provider) []HandlerRegistration {
 	handler := responses_frontdoor.NewHandler(store, provider)
 
 	return []HandlerRegistration{

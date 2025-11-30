@@ -3,17 +3,18 @@ package provider
 import (
 	"context"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 )
 
 // ModelOverrideProvider wraps a provider and overrides the model in requests
 type ModelOverrideProvider struct {
-	inner domain.Provider
+	inner ports.Provider
 	model string
 }
 
 // NewModelOverrideProvider creates a new ModelOverrideProvider
-func NewModelOverrideProvider(inner domain.Provider, model string) *ModelOverrideProvider {
+func NewModelOverrideProvider(inner ports.Provider, model string) *ModelOverrideProvider {
 	return &ModelOverrideProvider{
 		inner: inner,
 		model: model,

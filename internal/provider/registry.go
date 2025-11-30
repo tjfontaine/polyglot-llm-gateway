@@ -3,8 +3,9 @@ package provider
 import (
 	"fmt"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	passthrough "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/passthrough"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 )
 
 // Registry creates providers from configuration.
@@ -24,7 +25,7 @@ func NewRegistry() *Registry {
 
 // CreateProvider creates a provider instance from configuration.
 // It uses the registered ProviderFactory for the specified provider type.
-func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, error) {
+func (r *Registry) CreateProvider(cfg config.ProviderConfig) (ports.Provider, error) {
 	// Use the factory pattern to create providers
 	baseProvider, err := createFromFactory(cfg)
 	if err != nil {
@@ -33,19 +34,19 @@ func (r *Registry) CreateProvider(cfg config.ProviderConfig) (domain.Provider, e
 
 	// Wrap with pass-through if enabled
 	if cfg.EnablePassthrough {
-		var passthroughOpts []PassthroughOption
-		passthroughOpts = append(passthroughOpts, WithPassthroughAPIKey(cfg.APIKey))
+		var opts []passthrough.Option
+		opts = append(opts, passthrough.WithAPIKey(cfg.APIKey))
 		if cfg.BaseURL != "" {
-			passthroughOpts = append(passthroughOpts, WithPassthroughBaseURL(cfg.BaseURL))
+			opts = append(opts, passthrough.WithBaseURL(cfg.BaseURL))
 		}
-		return NewPassthroughProvider(baseProvider, passthroughOpts...), nil
+		return passthrough.NewPassthroughProvider(baseProvider, opts...), nil
 	}
 
 	return baseProvider, nil
 }
 
-func (r *Registry) CreateProviders(configs []config.ProviderConfig) (map[string]domain.Provider, error) {
-	providers := make(map[string]domain.Provider)
+func (r *Registry) CreateProviders(configs []config.ProviderConfig) (map[string]ports.Provider, error) {
+	providers := make(map[string]ports.Provider)
 	for _, cfg := range configs {
 		p, err := r.CreateProvider(cfg)
 		if err != nil {

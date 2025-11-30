@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 )
 
 type recordingProvider struct {
@@ -36,7 +37,7 @@ func TestModelMappingProviderRewrite(t *testing.T) {
 	openai := &recordingProvider{name: "openai"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai": openai,
 	}, config.ModelRoutingConfig{
 		Rewrites: []config.ModelRewriteRule{
@@ -61,7 +62,7 @@ func TestModelMappingProviderPrefixRewrite(t *testing.T) {
 	openai := &recordingProvider{name: "openai"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai": openai,
 	}, config.ModelRoutingConfig{
 		Rewrites: []config.ModelRewriteRule{
@@ -86,7 +87,7 @@ func TestModelMappingProviderPrefixRouting(t *testing.T) {
 	openai := &recordingProvider{name: "openai"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai": openai,
 	}, config.ModelRoutingConfig{
 		PrefixProviders: map[string]string{
@@ -111,7 +112,7 @@ func TestModelMappingProviderFallbackRewrite(t *testing.T) {
 	openai := &recordingProvider{name: "openai"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai": openai,
 	}, config.ModelRoutingConfig{
 		Fallback: &config.ModelRewriteRule{
@@ -136,7 +137,7 @@ func TestModelMappingProviderFallbackRewrite(t *testing.T) {
 func TestModelMappingProviderFallback(t *testing.T) {
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{}, config.ModelRoutingConfig{})
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{}, config.ModelRoutingConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error creating mapper: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestModelMappingProviderFallback(t *testing.T) {
 
 func TestModelMappingProviderResponseRewrite(t *testing.T) {
 	upstream := &recordingProvider{name: "openai"}
-	mapper, err := NewModelMappingProvider(upstream, map[string]domain.Provider{}, config.ModelRoutingConfig{
+	mapper, err := NewModelMappingProvider(upstream, map[string]ports.Provider{}, config.ModelRoutingConfig{
 		Rewrites: []config.ModelRewriteRule{{
 			ModelExact:           "alias-model",
 			Model:                "provider-model",
@@ -176,7 +177,7 @@ func TestModelMappingProviderResponseRewrite(t *testing.T) {
 
 func TestModelMappingProviderListModelsRewrite(t *testing.T) {
 	upstream := &recordingProvider{name: "provider-model"}
-	mapper, err := NewModelMappingProvider(upstream, map[string]domain.Provider{}, config.ModelRoutingConfig{
+	mapper, err := NewModelMappingProvider(upstream, map[string]ports.Provider{}, config.ModelRoutingConfig{
 		Rewrites: []config.ModelRewriteRule{{
 			ModelExact:           "alias-model",
 			Model:                "provider-model",
@@ -202,7 +203,7 @@ func TestModelMappingProviderFallbackOnly(t *testing.T) {
 	openai := &recordingProvider{name: "openai"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai": openai,
 	}, config.ModelRoutingConfig{
 		// Only fallback, no rewrites
@@ -235,7 +236,7 @@ func TestModelMappingProviderMultiplePrefixRules(t *testing.T) {
 	anthropic := &recordingProvider{name: "anthropic"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai":    openai,
 		"anthropic": anthropic,
 	}, config.ModelRoutingConfig{
@@ -280,7 +281,7 @@ func TestModelMappingProviderExactMatchPrecedence(t *testing.T) {
 	anthropic := &recordingProvider{name: "anthropic"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai":    openai,
 		"anthropic": anthropic,
 	}, config.ModelRoutingConfig{
@@ -321,7 +322,7 @@ func TestModelMappingProviderExactMatchPrecedence(t *testing.T) {
 // Test response model rewriting
 func TestModelMappingProviderResponseModelRewrite(t *testing.T) {
 	upstream := &recordingProvider{name: "upstream"}
-	mapper, err := NewModelMappingProvider(upstream, map[string]domain.Provider{}, config.ModelRoutingConfig{
+	mapper, err := NewModelMappingProvider(upstream, map[string]ports.Provider{}, config.ModelRoutingConfig{
 		Rewrites: []config.ModelRewriteRule{{
 			ModelPrefix:          "alias-",
 			Model:                "real-model",
@@ -354,7 +355,7 @@ func TestModelMappingProviderCountTokens(t *testing.T) {
 		recordingProvider: recordingProvider{name: "upstream"},
 		countResult:       []byte(`{"input_tokens": 42}`),
 	}
-	mapper, err := NewModelMappingProvider(upstream, map[string]domain.Provider{}, config.ModelRoutingConfig{})
+	mapper, err := NewModelMappingProvider(upstream, map[string]ports.Provider{}, config.ModelRoutingConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error creating mapper: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestModelMappingProviderCountTokens(t *testing.T) {
 // Test CountTokens returns error when provider doesn't support it
 func TestModelMappingProviderCountTokensUnsupported(t *testing.T) {
 	upstream := &recordingProvider{name: "upstream"} // doesn't implement CountTokens
-	mapper, err := NewModelMappingProvider(upstream, map[string]domain.Provider{}, config.ModelRoutingConfig{})
+	mapper, err := NewModelMappingProvider(upstream, map[string]ports.Provider{}, config.ModelRoutingConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error creating mapper: %v", err)
 	}
@@ -399,7 +400,7 @@ func TestModelMappingProviderSlashPrefixRouting(t *testing.T) {
 	anthropic := &recordingProvider{name: "anthropic"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai":    openai,
 		"anthropic": anthropic,
 	}, config.ModelRoutingConfig{
@@ -443,7 +444,7 @@ func TestModelMappingProviderCombinedConfig(t *testing.T) {
 	anthropic := &recordingProvider{name: "anthropic"}
 	router := &recordingProvider{name: "router"}
 
-	mapper, err := NewModelMappingProvider(router, map[string]domain.Provider{
+	mapper, err := NewModelMappingProvider(router, map[string]ports.Provider{
 		"openai":    openai,
 		"anthropic": anthropic,
 	}, config.ModelRoutingConfig{

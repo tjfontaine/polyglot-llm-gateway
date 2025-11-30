@@ -4,9 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/policy"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
+	routerpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/router"
 )
 
 // TestIntegration_FullRoutingChain tests the full routing chain from
@@ -31,13 +32,13 @@ func TestIntegration_FullRoutingChain(t *testing.T) {
 		},
 	}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai":    openaiProvider,
 		"anthropic": anthropicProvider,
 	}
 
 	// Create policy router
-	router := policy.NewRouter(providers, config.RoutingConfig{
+	router := routerpkg.NewProviderRouter(providers, config.RoutingConfig{
 		Rules: []config.RoutingRule{
 			{ModelPrefix: "claude", Provider: "anthropic"},
 			{ModelPrefix: "gpt", Provider: "openai"},
@@ -156,12 +157,12 @@ func TestIntegration_FallbackChain(t *testing.T) {
 		apiType: domain.APITypeOpenAI,
 	}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai": openaiProvider,
 	}
 
 	// Router with no rules (so everything goes to default)
-	router := policy.NewRouter(providers, config.RoutingConfig{
+	router := routerpkg.NewProviderRouter(providers, config.RoutingConfig{
 		DefaultProvider: "openai",
 	})
 
@@ -206,16 +207,16 @@ func TestIntegration_FallbackChain(t *testing.T) {
 // TestIntegration_StreamingWithRewrite tests that streaming works with model rewrites
 func TestIntegration_StreamingWithRewrite(t *testing.T) {
 	openaiProvider := &trackingProvider{
-		name:    "openai",
-		apiType: domain.APITypeOpenAI,
+		name:          "openai",
+		apiType:       domain.APITypeOpenAI,
 		streamContent: []string{"Hello", " ", "World"},
 	}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai": openaiProvider,
 	}
 
-	router := policy.NewRouter(providers, config.RoutingConfig{
+	router := routerpkg.NewProviderRouter(providers, config.RoutingConfig{
 		DefaultProvider: "openai",
 	})
 

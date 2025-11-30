@@ -219,6 +219,12 @@ go build ./...
 go test ./...
 ```
 
+### Registration & Routing (advanced)
+
+Providers and frontdoors register explicitly via helper functions—no init() side effects. The gateway entrypoint calls `registration.RegisterBuiltins()` to wire built-in OpenAI/Anthropic providers and frontdoors. If you add a new provider/frontdoor, expose `RegisterProviderFactory()` / `RegisterFrontdoor()` and invoke them from `registration.RegisterBuiltins()` (or directly in `cmd/gateway`).
+
+Routing is handled in `internal/router`: use `router.NewProviderRouter` for basic routing and `router.NewMappingProvider` when you need model rewrites/prefix mapping. The legacy `policy.Router` has been removed.
+
 ## Use Cases
 
 - **API Consolidation**: Single endpoint for multiple LLM providers

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tenant"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 func TestRecordPersistsWithCancelledContext(t *testing.T) {

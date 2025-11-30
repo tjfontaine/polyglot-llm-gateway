@@ -2,27 +2,17 @@
 //
 // # Adding a New Provider
 //
-// To add a new provider (e.g., Google Gemini), you must implement the following
-// components and register them with the factory:
+// To add a new provider (e.g., Google Gemini), implement the provider + codec
+// and expose an explicit registration function that calls
+// registry.RegisterFactory. Wire that registration from cmd/gateway (or tests)
+// so we avoid init() side effects.
 //
-//  1. API Types: Create `internal/api/<provider>/types.go` with the provider's
-//     request/response types.
+// Example registration in a provider package:
 //
-//  2. Codec: Create `internal/codec/<provider>/codec.go` implementing the
-//     `codec.Codec` interface for request/response translation.
-//
-//  3. Provider: Create `internal/provider/<provider>/provider.go` implementing
-//     the `domain.Provider` interface (and optionally `domain.CapableProvider`).
-//
-//  4. Factory: Create `internal/provider/<provider>/factory.go` with:
-//     - Self-registration in init() using registry.RegisterFactory
-//     - CreateFromConfig and ValidateConfig functions
-//
-//  5. Import: Add a blank import in this package's imports.go to trigger init()
-//
-// Example factory.go in provider package:
-//
-//	func init() {
+//	func RegisterProviderFactory() {
+//	    if registry.IsRegistered(ProviderType) {
+//	        return
+//	    }
 //	    registry.RegisterFactory(registry.ProviderFactory{
 //	        Type:           ProviderType,
 //	        APIType:        domain.APITypeGemini,
@@ -34,8 +24,8 @@
 package provider
 
 import (
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
 )
 
@@ -64,6 +54,6 @@ var ValidateProviderConfig = registry.ValidateProviderConfig
 var ClearFactories = registry.ClearFactories
 
 // createFromFactory creates a provider using the registered factory.
-func createFromFactory(cfg config.ProviderConfig) (domain.Provider, error) {
+func createFromFactory(cfg config.ProviderConfig) (ports.Provider, error) {
 	return registry.CreateFromFactory(cfg)
 }

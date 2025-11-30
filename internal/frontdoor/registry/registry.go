@@ -23,15 +23,16 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // HandlerConfig contains the configuration needed to create frontdoor handlers.
 type HandlerConfig struct {
 	// Provider is the backend provider to route requests to
-	Provider domain.Provider
+	Provider ports.Provider
 
 	// Store is the conversation store for persistence
 	Store storage.ConversationStore

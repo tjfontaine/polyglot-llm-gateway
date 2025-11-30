@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
@@ -86,7 +86,7 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 	}
 
 	// Add request ID and other metadata
-	if reqID, ok := persistCtx.Value(server.RequestIDKey).(string); ok && reqID != "" {
+	if reqID, ok := persistCtx.Value(middleware.RequestIDKey).(string); ok && reqID != "" {
 		interaction.Metadata["request_id"] = reqID
 	}
 
@@ -318,7 +318,7 @@ func StartInteraction(ctx context.Context, store storage.ConversationStore, para
 	}
 
 	// Add request ID
-	if reqID, ok := ctx.Value(server.RequestIDKey).(string); ok && reqID != "" {
+	if reqID, ok := ctx.Value(middleware.RequestIDKey).(string); ok && reqID != "" {
 		interaction.Metadata["request_id"] = reqID
 	}
 
@@ -375,7 +375,7 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 			panic(fmt.Sprintf(
 				"PROVIDER CONTRACT VIOLATION: Provider '%s' failed to capture ProviderRequestBody. "+
 					"All providers MUST marshal and return the actual request sent to upstream APIs in CanonicalResponse.ProviderRequestBody. "+
-					"See internal/openai/provider.go or internal/anthropic/provider.go for reference implementation.",
+					"See internal/backend/openai/provider.go or internal/backend/anthropic/provider.go for reference implementation.",
 				params.Provider,
 			))
 		}
@@ -384,7 +384,7 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 			panic(fmt.Sprintf(
 				"PROVIDER CONTRACT VIOLATION: Provider '%s' failed to capture RawResponse. "+
 					"All providers MUST store raw response bytes from upstream APIs in CanonicalResponse.RawResponse. "+
-					"See internal/openai/provider.go or internal/anthropic/provider.go for reference implementation.",
+					"See internal/backend/openai/provider.go or internal/backend/anthropic/provider.go for reference implementation.",
 				params.Provider,
 			))
 		}

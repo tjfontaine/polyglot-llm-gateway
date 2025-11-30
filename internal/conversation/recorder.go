@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tenant"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 )
 
 // Record stores a canonical request/response pair in the conversation store.
@@ -52,7 +52,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 		meta["served_model"] = resp.Model
 	}
 
-	if reqID, ok := persistCtx.Value(server.RequestIDKey).(string); ok && reqID != "" {
+	if reqID, ok := persistCtx.Value(middleware.RequestIDKey).(string); ok && reqID != "" {
 		meta["request_id"] = reqID
 	}
 
@@ -115,8 +115,8 @@ func tenantIDFromContext(ctx context.Context) string {
 
 func buildPersistenceContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	base := context.Background()
-	if reqID, ok := ctx.Value(server.RequestIDKey).(string); ok && reqID != "" {
-		base = context.WithValue(base, server.RequestIDKey, reqID)
+	if reqID, ok := ctx.Value(middleware.RequestIDKey).(string); ok && reqID != "" {
+		base = context.WithValue(base, middleware.RequestIDKey, reqID)
 	}
 	if tenantVal := ctx.Value("tenant"); tenantVal != nil {
 		base = context.WithValue(base, "tenant", tenantVal)

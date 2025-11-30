@@ -3,7 +3,7 @@ package frontdoor
 import (
 	"testing"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 )
 
 func TestListFrontdoorTypes(t *testing.T) {

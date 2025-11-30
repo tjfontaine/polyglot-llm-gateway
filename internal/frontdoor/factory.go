@@ -2,24 +2,17 @@
 //
 // # Adding a New Frontdoor
 //
-// To add a new frontdoor (e.g., for Google Gemini API format), you must implement
-// the following components and register them with the factory:
+// To add a new frontdoor (e.g., for Google Gemini API format), implement the
+// handler + codec and expose an explicit registration function that calls
+// registry.RegisterFactory. Wire that function from cmd/gateway (or tests) so
+// registration is explicit instead of relying on init() side effects.
 //
-//  1. Handler: Create `internal/frontdoor/<api>/handler.go` with HTTP handlers
-//     that decode API-specific requests to canonical format.
+// Example factory.go in a frontdoor package:
 //
-//  2. Codec: Create `internal/codec/<api>/codec.go` implementing the
-//     `codec.Codec` interface for request/response translation.
-//
-//  3. Factory: Create `internal/frontdoor/<api>/factory.go` with:
-//     - Self-registration in init() using registry.RegisterFactory
-//     - CreateHandlers function that creates handler registrations
-//
-//  4. Import: Add a blank import in this package's registry.go to trigger init()
-//
-// Example factory.go in frontdoor package:
-//
-//	func init() {
+//	func RegisterFrontdoor() {
+//	    if registry.IsRegistered(FrontdoorType) {
+//	        return
+//	    }
 //	    registry.RegisterFactory(registry.FrontdoorFactory{
 //	        Type:           FrontdoorType,
 //	        APIType:        APIType(),

@@ -8,8 +8,8 @@ frontend:
 	@echo "Building frontend..."
 	cd web/control-plane && npm ci && npm run build
 	@echo "Copying frontend assets..."
-	rm -rf internal/controlplane/dist
-	cp -r web/control-plane/dist internal/controlplane/
+	rm -rf internal/api/controlplane/dist
+	cp -r web/control-plane/dist internal/api/controlplane/
 
 backend:
 	@echo "Building backend..."
@@ -20,7 +20,7 @@ clean:
 	rm -rf bin/
 	rm -rf web/control-plane/dist
 	rm -rf web/control-plane/node_modules
-	rm -rf internal/controlplane/dist
+	rm -rf internal/api/controlplane/dist
 
 run: build
 	./bin/gateway

@@ -7,16 +7,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 )
 
-// mockProvider implements domain.Provider for testing
+// mockProvider implements ports.Provider for testing
 type mockProvider struct {
-	name       string
-	apiType    domain.APIType
-	lastReq    *domain.CanonicalRequest
-	response   *domain.CanonicalResponse
+	name              string
+	apiType           domain.APIType
+	lastReq           *domain.CanonicalRequest
+	response          *domain.CanonicalResponse
 	countTokensResult []byte
 }
 
@@ -64,7 +65,7 @@ func TestRegistry_CreateHandlers_WithModelRouting(t *testing.T) {
 	anthropicProvider := &mockProvider{name: "anthropic", apiType: domain.APITypeAnthropic}
 	routerProvider := &mockProvider{name: "router", apiType: domain.APITypeOpenAI}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai":    openaiProvider,
 		"anthropic": anthropicProvider,
 	}
@@ -118,7 +119,7 @@ func TestRegistry_CreateHandlers_WithFallback(t *testing.T) {
 	anthropicProvider := &mockProvider{name: "anthropic", apiType: domain.APITypeAnthropic}
 	routerProvider := &mockProvider{name: "router", apiType: domain.APITypeOpenAI}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai":    openaiProvider,
 		"anthropic": anthropicProvider,
 	}
@@ -155,7 +156,7 @@ func TestRegistry_CreateHandlers_OpenAIFrontdoor(t *testing.T) {
 	openaiProvider := &mockProvider{name: "openai", apiType: domain.APITypeOpenAI}
 	routerProvider := &mockProvider{name: "router", apiType: domain.APITypeOpenAI}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai": openaiProvider,
 	}
 
@@ -219,7 +220,7 @@ func TestRegistry_CreateHandlers_UnknownProviderInRewrite(t *testing.T) {
 
 	routerProvider := &mockProvider{name: "router", apiType: domain.APITypeOpenAI}
 
-	providers := map[string]domain.Provider{}
+	providers := map[string]ports.Provider{}
 
 	configs := []config.AppConfig{
 		{
@@ -257,13 +258,13 @@ func TestRegistry_ResponsesHandlers(t *testing.T) {
 	// Should have response create, get, cancel, and thread handlers
 	// Note: threads/{thread_id}/messages has both POST and GET handlers
 	expectedPaths := map[string][]string{
-		"/test/v1/responses":                    {http.MethodPost},
-		"/test/v1/responses/{response_id}":      {http.MethodGet},
+		"/test/v1/responses":                      {http.MethodPost},
+		"/test/v1/responses/{response_id}":        {http.MethodGet},
 		"/test/v1/responses/{response_id}/cancel": {http.MethodPost},
-		"/test/v1/threads":                      {http.MethodPost},
-		"/test/v1/threads/{thread_id}":          {http.MethodGet},
-		"/test/v1/threads/{thread_id}/messages": {http.MethodPost, http.MethodGet},
-		"/test/v1/threads/{thread_id}/runs":     {http.MethodPost},
+		"/test/v1/threads":                        {http.MethodPost},
+		"/test/v1/threads/{thread_id}":            {http.MethodGet},
+		"/test/v1/threads/{thread_id}/messages":   {http.MethodPost, http.MethodGet},
+		"/test/v1/threads/{thread_id}/runs":       {http.MethodPost},
 	}
 
 	// Count expected handlers (sum of all methods)
@@ -313,7 +314,7 @@ func TestRegistry_IntegrationWithModelRewrite(t *testing.T) {
 	anthropicProvider := &mockProvider{name: "anthropic", apiType: domain.APITypeAnthropic}
 	routerProvider := &mockProvider{name: "router", apiType: domain.APITypeOpenAI}
 
-	providers := map[string]domain.Provider{
+	providers := map[string]ports.Provider{
 		"openai":    openaiProvider,
 		"anthropic": anthropicProvider,
 	}

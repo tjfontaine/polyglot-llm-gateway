@@ -10,23 +10,24 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/auth"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/controlplane"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/controlplane"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware/tracer"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/policy"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/auth"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tenant"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/server"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
+	routerpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/router"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/telemetry"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/tenant"
 
 	// Import consolidated packages for legacy provider creation
-	anthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
-	openai "github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
+	anthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
+	openai "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/openai"
 )
 
 func main() {
@@ -40,7 +41,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Initialize OpenTelemetry
-	shutdown, err := telemetry.InitTracer("polyglot-llm-gateway", logger)
+	shutdown, err := tracer.InitTracer("polyglot-llm-gateway", logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize tracer: %v", err)
 	}
@@ -54,6 +55,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	registration.RegisterBuiltins()
 
 	// Initialize storage if configured
 	var store storage.ConversationStore
@@ -82,9 +85,9 @@ func main() {
 	providerRegistry := provider.NewRegistry()
 
 	// Multi-tenant mode or single-tenant mode
-	var router domain.Provider
+	var router ports.Provider
 	var authenticator *auth.Authenticator
-	var providers map[string]domain.Provider
+	var providers map[string]ports.Provider
 	var tenants []*tenant.Tenant
 
 	if len(cfg.Tenants) > 0 {
@@ -102,7 +105,7 @@ func main() {
 
 		// Use first tenant's router as default (will be overridden per-request)
 		if len(tenants) > 0 {
-			router = policy.NewRouter(tenants[0].Providers, tenants[0].Routing)
+			router = routerpkg.NewProviderRouter(tenants[0].Providers, tenants[0].Routing)
 		}
 	} else {
 		// Single-tenant mode (backwards compatible)
@@ -118,7 +121,7 @@ func main() {
 			logger.Info("using legacy env-based provider setup")
 			openaiP := openai.NewProvider(cfg.OpenAI.APIKey)
 			anthropicP := anthropic.NewProvider(cfg.Anthropic.APIKey)
-			providers = map[string]domain.Provider{
+			providers = map[string]ports.Provider{
 				"openai":    openaiP,
 				"anthropic": anthropicP,
 			}
@@ -137,7 +140,7 @@ func main() {
 			}
 		}
 
-		router = policy.NewRouter(providers, cfg.Routing)
+		router = routerpkg.NewProviderRouter(providers, cfg.Routing)
 	}
 
 	// Initialize Frontdoor Registry

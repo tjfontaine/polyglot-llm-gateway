@@ -7,17 +7,17 @@ This file applies to the entire repository unless a more specific `AGENTS.md` is
 - **Purpose:** A Go-based gateway that normalizes LLM requests into a canonical shape, routes them to configured providers, and optionally serves a React/Vite control-plane UI.
 - **Key server layers:**
   - `internal/frontdoor/*` map external protocols (OpenAI, Anthropic, Responses API) into canonical requests.
-  - `internal/policy` selects providers based on routing rules from config.
+  - `internal/router` selects providers based on routing rules and model rewrites.
   - `internal/provider/*` translate canonical requests into provider-specific API calls; streaming is handled through `CanonicalEvent` channels.
   - `internal/storage/*` persist conversation data when Responses APIs are enabled (SQLite or in-memory).
-  - `internal/auth` and `internal/tenant` enable multi-tenant mode with bearer key hashing.
-  - `internal/server` wires chi middleware, auth, and OpenTelemetry instrumentation.
-  - `internal/controlplane` serves the admin API and React UI for observing gateway state.
-- **Control plane:** `web/control-plane` is a React 19 + Vite app whose built assets are copied into `internal/controlplane/dist` by the `Makefile`.
+  - `internal/pkg/auth` and `internal/pkg/tenant` enable multi-tenant mode with bearer key hashing.
+  - `internal/api/server` wires chi middleware, auth, and OpenTelemetry instrumentation.
+  - `internal/api/controlplane` serves the admin API and React UI for observing gateway state.
+- **Control plane:** `web/control-plane` is a React 19 + Vite app whose built assets are copied into `internal/api/controlplane/dist` by the `Makefile`.
 
 ## Control Plane Architecture
 
-### Backend API (`internal/controlplane`)
+### Backend API (`internal/api/controlplane`)
 The control plane server exposes read-only admin APIs under `/admin/api/`:
 - `GET /api/stats` — Runtime statistics (uptime, goroutines, memory)
 - `GET /api/overview` — Gateway configuration summary (apps, providers, routing, tenants)
@@ -77,6 +77,10 @@ src/
 - **Read-only**: The control plane never modifies gateway state; it's purely observational
 - **Filter, don't fragment**: Use filters within a single view rather than creating multiple similar pages
 
+### Backend Registration & Routing
+- Providers/frontdoors register via explicit functions (no init side effects). `cmd/gateway` calls `registration.RegisterBuiltins()` to wire OpenAI/Anthropic. New providers/frontdoors should expose `RegisterProviderFactory()` / `RegisterFrontdoor()` and be invoked from that helper or directly in `cmd/gateway`.
+- Routing and model mapping live in `internal/router` (legacy `internal/policy` removed). Use `router.NewProviderRouter` for routing and `router.NewMappingProvider` when model rewrites/prefix mapping are needed.
+
 ### Frontend Null Safety
 The Go backend may return `null` for empty slices (e.g., `routing.rules`, `tenants`, `providers`). Always use optional chaining when accessing nested properties from API responses:
 
@@ -94,7 +98,7 @@ Tests in `src/test/mocks.ts` include `mockNullArraysOverview` to verify null-saf
 
 ## Domain Model Architecture
 
-The gateway's core design principle is **canonicalization through the domain model**. All data flows through canonical types defined in `internal/domain`, enabling seamless translation between different API formats.
+The gateway's core design principle is **canonicalization through the domain model**. All data flows through canonical types defined in `internal/core/domain`, enabling seamless translation between different API formats.
 
 ### Core Architecture Pattern
 
@@ -129,7 +133,7 @@ Every data type follows the same pattern:
 | Errors | ← API-specific error | `APIError` | ← Provider error |
 | Token Counts | API-specific format → | `TokenCountRequest` | → Estimation/API |
 
-### Canonical Types (`internal/domain`)
+### Canonical Types (`internal/core/domain`)
 
 **`CanonicalRequest`** - Normalized request format:
 ```go
@@ -195,8 +199,8 @@ type Codec interface {
 ```
 
 Each API type has its consolidated package containing types, client, codec, provider, and frontdoor:
-- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
-- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
+- `internal/backend/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
+- `internal/backend/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
 
 ### Request Flow Example
 
@@ -331,15 +335,18 @@ func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) { 
 package gemini
 
 import (
-    "github.com/tjfontaine/polyglot-llm-gateway/internal/config"
-    "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
     providerregistry "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
 )
 
 const ProviderType = "gemini"
 
-// Register this provider at package initialization.
-func init() {
+// RegisterProviderFactory registers the Gemini provider explicitly.
+func RegisterProviderFactory() {
+    if providerregistry.IsRegistered(ProviderType) {
+        return
+    }
     providerregistry.RegisterFactory(providerregistry.ProviderFactory{
         Type:           ProviderType,
         APIType:        domain.APITypeGemini,
@@ -383,7 +390,7 @@ package gemini
 
 import (
     "net/http"
-    "github.com/tjfontaine/polyglot-llm-gateway/internal/domain"
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
     "github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
     // ... other imports
 )
@@ -396,8 +403,10 @@ func FrontdoorAPIType() domain.APIType {
     return domain.APITypeGemini
 }
 
-// Register this frontdoor at package initialization.
-func init() {
+func RegisterFrontdoor() {
+    if registry.IsRegistered(FrontdoorType) {
+        return
+    }
     registry.RegisterFactory(registry.FrontdoorFactory{
         Type:           FrontdoorType,
         APIType:        FrontdoorAPIType(),
@@ -437,22 +446,8 @@ func (h *FrontdoorHandler) HandleGenerateContent(w http.ResponseWriter, r *http.
 3. The `provider/registry.go` no longer imports the consolidated packages directly - instead, `cmd/gateway/main.go` imports them to trigger registration
 4. Tests that need factory registration use external test packages (e.g., `package gemini_test`) to avoid cycles
 
-#### 4. Register Package Import
-The package must be imported in `cmd/gateway/main.go` to trigger both provider and frontdoor init() registration:
-```go
-import (
-    // ... existing imports ...
-    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
-)
-```
-
-Also add a blank import in `internal/frontdoor/registry.go` for frontdoor discovery:
-```go
-import (
-    // ... existing imports ...
-    _ "github.com/tjfontaine/polyglot-llm-gateway/internal/gemini"
-)
-```
+#### 4. Wire Registration
+Call the explicit registration functions (e.g., `gemini.RegisterProviderFactory()` and `gemini.RegisterFrontdoor()`) from `cmd/gateway` or the shared helper `internal/registration.RegisterBuiltins()` used by main/tests. Avoid init-based side effects and blank-import wiring.
 
 #### 5. Add Error Mapping
 Add `ToCanonical()` method for provider errors and update `codec/errors.go` formatter.
@@ -467,14 +462,14 @@ After adding a new provider/frontdoor:
 
 The factory pattern ensures compile-time validation and makes the required components explicit.
 
-## Server Layer & Middleware (`internal/server`)
+## Server Layer & Middleware (`internal/api/server`)
 
 The server package provides the HTTP infrastructure for the gateway, including middleware components that form the request processing pipeline.
 
 ### Package Structure
 
 ```
-internal/server/
+internal/api/server/
 ├── server.go         # Server setup and middleware chain configuration
 ├── doc.go            # Package documentation
 ├── requestid.go      # Request ID generation middleware
@@ -530,13 +525,13 @@ When adding new middleware:
 
 ## Coding Conventions
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
-- **Configuration-driven behavior:** Respect the config structs in `internal/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` using the factory pattern instead of hardcoding wiring.
+- **Configuration-driven behavior:** Respect the config structs in `internal/pkg/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` using the factory pattern instead of hardcoding wiring.
 - **Factory pattern:** New providers and frontdoors must register themselves via `RegisterFactory()` in their respective package init() functions.
-- **Canonical types first:** Work with `internal/domain` types at API boundaries. Frontdoors should fully populate `CanonicalRequest`/`CanonicalResponse` and let providers handle translation details.
+- **Canonical types first:** Work with `internal/core/domain` types at API boundaries. Frontdoors should fully populate `CanonicalRequest`/`CanonicalResponse` and let providers handle translation details.
 - **Error handling:** API clients should convert provider-specific errors to `domain.APIError` using `ToCanonical()`. Frontdoors should use `codec.WriteError()` to format errors for their API type.
 - **Streaming:** When adding streaming support, emit `CanonicalEvent` values and propagate provider errors via the channel before closing it.
 - **Tests & fixtures:** Integration-style provider tests rely on go-vcr cassettes under `testdata/fixtures`. Use `VCR_MODE=record` with real API keys to refresh cassettes; default `go test` replays without network access.
-- **Logging/telemetry:** Use the structured `slog` logger already configured in `cmd/gateway/main.go` and preserve OpenTelemetry middleware hooks in `internal/server` when adding new routes.
+- **Logging/telemetry:** Use the structured `slog` logger already configured in `cmd/gateway/main.go` and preserve OpenTelemetry middleware hooks in `internal/api/server` when adding new routes.
 - **Frontend:** Keep React components type-safe (TypeScript) and run linting before committing UI changes.
 
 ## Testing Expectations
@@ -554,11 +549,11 @@ When adding new middleware:
 ## Dependency & Build Notes
 - **Go version:** Module targets Go 1.25.3; ensure toolchain compatibility.
 - **Binaries:** Backend entrypoints live in `cmd/gateway` (server) and `cmd/keygen` (API key hashing helper).
-- **Artifacts:** The frontend build output in `web/control-plane/dist` is copied into `internal/controlplane/dist`; do not commit `node_modules`.
+- **Artifacts:** The frontend build output in `web/control-plane/dist` is copied into `internal/api/controlplane/dist`; do not commit `node_modules`.
 
 ## Review Checklist for Changes
 - Code is formatted (`gofmt`, ESLint for frontend) and lints cleanly.
 - New routes or providers are registered via the appropriate registry helpers using the factory pattern instead of manual router wiring.
 - Tests are added or updated, especially when touching routing, provider translations, or storage persistence.
-- Configuration defaults and environment variable substitution (`internal/config`) remain consistent with existing behavior.
+- Configuration defaults and environment variable substitution (`internal/pkg/config`) remain consistent with existing behavior.
 - Sensitive data (API keys) is referenced via env vars; do not hardcode secrets.
