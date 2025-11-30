@@ -78,7 +78,7 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 		UserAgent: req.UserAgent,
 	}
 
-	if p.useResponsesAPI {
+	if p.useResponsesAPI && req.SourceAPIType != domain.APITypeAnthropic {
 		return p.completeWithResponses(ctx, req, opts)
 	}
 
@@ -130,7 +130,7 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 		UserAgent: req.UserAgent,
 	}
 
-	if p.useResponsesAPI {
+	if p.useResponsesAPI && req.SourceAPIType != domain.APITypeAnthropic {
 		return p.streamWithResponses(ctx, req, opts)
 	}
 
@@ -325,10 +325,14 @@ func canonicalToResponsesRequest(req *domain.CanonicalRequest) *ResponsesRequest
 	} else {
 		items := make([]ResponsesInputItem, 0, len(req.Messages))
 		for _, msg := range req.Messages {
+			contentType := "input_text"
+			if msg.Role == "assistant" {
+				contentType = "output_text"
+			}
 			item := ResponsesInputItem{
 				Type:    "message",
 				Role:    msg.Role,
-				Content: []ResponsesContentPart{{Type: "input_text", Text: msg.Content}},
+				Content: []ResponsesContentPart{{Type: contentType, Text: msg.Content}},
 			}
 			items = append(items, item)
 		}
