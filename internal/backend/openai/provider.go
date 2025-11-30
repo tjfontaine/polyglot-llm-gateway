@@ -78,7 +78,7 @@ func (p *Provider) Complete(ctx context.Context, req *domain.CanonicalRequest) (
 		UserAgent: req.UserAgent,
 	}
 
-	if p.useResponsesAPI && req.SourceAPIType != domain.APITypeAnthropic {
+	if p.useResponsesAPI {
 		return p.completeWithResponses(ctx, req, opts)
 	}
 
@@ -130,7 +130,7 @@ func (p *Provider) Stream(ctx context.Context, req *domain.CanonicalRequest) (<-
 		UserAgent: req.UserAgent,
 	}
 
-	if p.useResponsesAPI && req.SourceAPIType != domain.APITypeAnthropic {
+	if p.useResponsesAPI {
 		return p.streamWithResponses(ctx, req, opts)
 	}
 
