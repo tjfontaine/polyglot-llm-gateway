@@ -60,6 +60,7 @@ func main() {
 
 	// Initialize storage if configured
 	var store storage.ConversationStore
+	var threadStore storage.ThreadStateStore
 	if cfg.Storage.Type != "" && cfg.Storage.Type != "none" {
 		switch cfg.Storage.Type {
 		case "sqlite":
@@ -73,9 +74,15 @@ func main() {
 			}
 			defer store.Close()
 			logger.Info("storage initialized", slog.String("type", "sqlite"), slog.String("path", dbPath))
+			if ts, ok := store.(storage.ThreadStateStore); ok {
+				threadStore = ts
+			}
 		case "memory":
 			store = memory.New()
 			logger.Info("storage initialized", slog.String("type", "memory"))
+			if ts, ok := store.(storage.ThreadStateStore); ok {
+				threadStore = ts
+			}
 		default:
 			log.Fatalf("Unknown storage type: %s", cfg.Storage.Type)
 		}
@@ -107,6 +114,14 @@ func main() {
 		if len(tenants) > 0 {
 			router = routerpkg.NewProviderRouter(tenants[0].Providers, tenants[0].Routing)
 		}
+
+		if threadStore != nil {
+			for _, tenantCfg := range cfg.Tenants {
+				if t, ok := tenantRegistry.GetTenant(tenantCfg.ID); ok {
+					attachThreadStore(threadStore, t.Providers, tenantCfg.Providers)
+				}
+			}
+		}
 	} else {
 		// Single-tenant mode (backwards compatible)
 		logger.Info("single-tenant mode (no authentication)")
@@ -115,6 +130,9 @@ func main() {
 			providers, err = providerRegistry.CreateProviders(cfg.Providers)
 			if err != nil {
 				log.Fatalf("Failed to create providers: %v", err)
+			}
+			if threadStore != nil {
+				attachThreadStore(threadStore, providers, cfg.Providers)
 			}
 		} else {
 			// Fallback to legacy env-based config
@@ -245,6 +263,29 @@ func main() {
 	// Wait for shutdown signal
 	<-sigChan
 	logger.Info("shutting down gracefully...")
+}
+
+type threadStoreSetter interface {
+	SetThreadStore(storage.ThreadStateStore)
+}
+
+func attachThreadStore(store storage.ThreadStateStore, providers map[string]ports.Provider, configs []config.ProviderConfig) {
+	if store == nil || len(providers) == 0 {
+		return
+	}
+
+	for _, cfg := range configs {
+		if !cfg.ResponsesThreadPersistence {
+			continue
+		}
+		prov, ok := providers[cfg.Name]
+		if !ok {
+			continue
+		}
+		if setter, ok := prov.(threadStoreSetter); ok {
+			setter.SetThreadStore(store)
+		}
+	}
 }
 
 func buildProviderResponsesSupport(cfg *config.Config) map[string]bool {

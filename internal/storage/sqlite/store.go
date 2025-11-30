@@ -103,6 +103,11 @@ func (s *Store) initSchema() error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS thread_state (
+			thread_key TEXT PRIMARY KEY,
+			response_id TEXT NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
@@ -111,6 +116,7 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_interactions_frontdoor ON interactions(frontdoor)`,
 		`CREATE INDEX IF NOT EXISTS idx_interactions_provider ON interactions(provider)`,
 		`CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_thread_state_updated ON thread_state(updated_at)`,
 	}
 
 	for _, stmt := range statements {

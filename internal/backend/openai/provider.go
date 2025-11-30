@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // ProviderOption configures the provider.
@@ -68,18 +69,54 @@ func (p *Provider) extractThreadKey(req *domain.CanonicalRequest) (string, bool)
 }
 
 func (p *Provider) getThreadState(key string) string {
+	if key == "" {
+		return ""
+	}
+
+	p.stateMu.RLock()
+	val := p.threadState[key]
+	usePersistent := p.persistThreads
+	store := p.threadStore
+	p.stateMu.RUnlock()
+
+	if val != "" {
+		return val
+	}
+
+	if !usePersistent || store == nil {
+		return ""
+	}
+
+	// Lazy-load from persistent store so restarts can resume threads
+	stored, err := store.GetThreadState(key)
+	if err != nil || stored == "" {
+		return ""
+	}
+
 	p.stateMu.Lock()
-	defer p.stateMu.Unlock()
-	return p.threadState[key]
+	if p.threadState[key] == "" {
+		p.threadState[key] = stored
+	}
+	p.stateMu.Unlock()
+
+	return stored
 }
 
 func (p *Provider) setThreadState(key, responseID string) {
-	p.stateMu.Lock()
-	defer p.stateMu.Unlock()
-	if responseID == "" {
+	if key == "" || responseID == "" {
 		return
 	}
+
+	p.stateMu.Lock()
 	p.threadState[key] = responseID
+	store := p.threadStore
+	usePersistent := p.persistThreads
+	p.stateMu.Unlock()
+
+	if usePersistent && store != nil {
+		// Best-effort; avoid failing the request on persistence errors
+		_ = store.SetThreadState(key, responseID)
+	}
 }
 
 // WithProviderHTTPClient sets a custom HTTP client.
@@ -113,6 +150,13 @@ func WithResponsesThreadPersistence(enable bool) ProviderOption {
 	}
 }
 
+// WithThreadStateStore attaches a persistent thread state store.
+func WithThreadStateStore(store storage.ThreadStateStore) ProviderOption {
+	return func(p *Provider) {
+		p.threadStore = store
+	}
+}
+
 // Provider implements the domain.Provider interface using our custom OpenAI client.
 type Provider struct {
 	client          *Client
@@ -122,8 +166,9 @@ type Provider struct {
 	useResponsesAPI bool
 	threadKeyPath   string
 	threadState     map[string]string
-	stateMu         sync.Mutex
+	stateMu         sync.RWMutex
 	persistThreads  bool
+	threadStore     storage.ThreadStateStore
 }
 
 // NewProvider creates a new OpenAI provider.
@@ -148,6 +193,13 @@ func NewProvider(apiKey string, opts ...ProviderOption) *Provider {
 
 	p.client = NewClient(apiKey, clientOpts...)
 	return p
+}
+
+// SetThreadStore attaches a persistent store for thread state.
+func (p *Provider) SetThreadStore(store storage.ThreadStateStore) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.threadStore = store
 }
 
 func (p *Provider) Name() string {
