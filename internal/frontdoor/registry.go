@@ -232,7 +232,7 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router ports.Provi
 }
 
 // CreateResponsesHandlers creates Responses API handlers.
-func (r *Registry) CreateResponsesHandlers(basePath string, store storage.ConversationStore, provider ports.Provider) []HandlerRegistration {
+func (r *Registry) CreateResponsesHandlers(basePath string, store ports.InteractionStore, provider ports.Provider) []HandlerRegistration {
 	handler := responses_frontdoor.NewHandler(store, provider)
 
 	return []HandlerRegistration{

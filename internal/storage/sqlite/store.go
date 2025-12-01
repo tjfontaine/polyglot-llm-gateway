@@ -93,6 +93,7 @@ func (s *Store) initSchema() error {
 			response_canonical TEXT,
 			response_unmapped_fields TEXT,
 			response_client TEXT,
+			response_provider_id TEXT,
 			response_finish_reason TEXT,
 			response_usage TEXT,
 			error_type TEXT,
@@ -101,6 +102,8 @@ func (s *Store) initSchema() error {
 			metadata TEXT,
 			request_headers TEXT,
 			transformation_steps TEXT,
+			previous_interaction_id TEXT,
+			thread_key TEXT,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
@@ -170,6 +173,44 @@ func (s *Store) initSchema() error {
 	for _, stmt := range statements {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to execute schema statement: %w", err)
+		}
+	}
+
+	// Run migrations for existing databases - add columns that may not exist
+	migrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"interactions", "previous_interaction_id", "ALTER TABLE interactions ADD COLUMN previous_interaction_id TEXT"},
+		{"interactions", "thread_key", "ALTER TABLE interactions ADD COLUMN thread_key TEXT"},
+		{"interactions", "response_provider_id", "ALTER TABLE interactions ADD COLUMN response_provider_id TEXT"},
+	}
+
+	for _, m := range migrations {
+		// Check if column exists
+		var count int
+		err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, m.table, m.column).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("failed to check column %s.%s: %w", m.table, m.column, err)
+		}
+		if count == 0 {
+			// Column doesn't exist, add it
+			if _, err := s.db.Exec(m.ddl); err != nil {
+				return fmt.Errorf("failed to add column %s.%s: %w", m.table, m.column, err)
+			}
+		}
+	}
+
+	// Create indexes after ensuring columns exist
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_interactions_thread_key ON interactions(thread_key)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_previous ON interactions(previous_interaction_id)`,
+	}
+
+	for _, stmt := range indexes {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
 

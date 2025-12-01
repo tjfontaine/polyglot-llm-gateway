@@ -9,9 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 )
 
 var errNotFound = errors.New("not found")
@@ -42,50 +43,85 @@ func (m *mockProvider) Stream(ctx context.Context, req *domain.CanonicalRequest)
 	return nil, nil
 }
 
-// mockStore implements storage.ConversationStore for testing
+// mockStore implements ports.InteractionStore for testing
 type mockStore struct {
-	responses map[string]*storage.ResponseRecord
+	interactions  map[string]*domain.Interaction
+	conversations map[string]*ports.Conversation
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
-		responses: make(map[string]*storage.ResponseRecord),
+		interactions:  make(map[string]*domain.Interaction),
+		conversations: make(map[string]*ports.Conversation),
 	}
 }
 
-func (m *mockStore) CreateConversation(ctx context.Context, conv *storage.Conversation) error {
+// ConversationStore methods
+func (m *mockStore) CreateConversation(ctx context.Context, conv *ports.Conversation) error {
+	m.conversations[conv.ID] = conv
 	return nil
 }
-func (m *mockStore) GetConversation(ctx context.Context, id string) (*storage.Conversation, error) {
-	return nil, nil
-}
-func (m *mockStore) ListConversations(ctx context.Context, opts storage.ListOptions) ([]*storage.Conversation, error) {
-	return nil, nil
-}
-func (m *mockStore) AddMessage(ctx context.Context, convID string, msg *storage.StoredMessage) error {
-	return nil
-}
-func (m *mockStore) SaveResponse(ctx context.Context, record *storage.ResponseRecord) error {
-	m.responses[record.ID] = record
-	return nil
-}
-func (m *mockStore) GetResponse(ctx context.Context, id string) (*storage.ResponseRecord, error) {
-	if r, ok := m.responses[id]; ok {
-		return r, nil
+func (m *mockStore) GetConversation(ctx context.Context, id string) (*ports.Conversation, error) {
+	if c, ok := m.conversations[id]; ok {
+		return c, nil
 	}
 	return nil, errNotFound
 }
-func (m *mockStore) ListResponses(ctx context.Context, tenantID string) ([]*storage.ResponseRecord, error) {
+func (m *mockStore) ListConversations(ctx context.Context, opts ports.ListOptions) ([]*ports.Conversation, error) {
 	return nil, nil
 }
-func (m *mockStore) UpdateResponseStatus(ctx context.Context, id, status string) error {
+func (m *mockStore) AddMessage(ctx context.Context, convID string, msg *ports.StoredMessage) error {
+	if c, ok := m.conversations[convID]; ok {
+		c.Messages = append(c.Messages, *msg)
+	}
+	return nil
+}
+func (m *mockStore) DeleteConversation(ctx context.Context, id string) error {
+	delete(m.conversations, id)
 	return nil
 }
 func (m *mockStore) Close() error {
 	return nil
 }
-func (m *mockStore) DeleteConversation(ctx context.Context, id string) error {
+
+// InteractionStore methods
+func (m *mockStore) SaveInteraction(ctx context.Context, interaction *domain.Interaction) error {
+	m.interactions[interaction.ID] = interaction
 	return nil
+}
+func (m *mockStore) GetInteraction(ctx context.Context, id string) (*domain.Interaction, error) {
+	if i, ok := m.interactions[id]; ok {
+		return i, nil
+	}
+	return nil, errNotFound
+}
+func (m *mockStore) GetInteractionByProviderResponseID(ctx context.Context, providerResponseID string) (*domain.Interaction, error) {
+	for _, i := range m.interactions {
+		if i.Response != nil && i.Response.ProviderResponseID == providerResponseID {
+			return i, nil
+		}
+	}
+	return nil, errNotFound
+}
+func (m *mockStore) UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error {
+	interaction.UpdatedAt = time.Now()
+	m.interactions[interaction.ID] = interaction
+	return nil
+}
+func (m *mockStore) ListInteractions(ctx context.Context, opts ports.InteractionListOptions) ([]*domain.InteractionSummary, error) {
+	return nil, nil
+}
+func (m *mockStore) AppendInteractionEvent(ctx context.Context, event *domain.InteractionEvent) error {
+	return nil
+}
+func (m *mockStore) ListInteractionEvents(ctx context.Context, interactionID string, opts ports.InteractionListOptions) ([]*domain.InteractionEvent, error) {
+	return nil, nil
+}
+func (m *mockStore) SetThreadState(threadKey, responseID string) error {
+	return nil
+}
+func (m *mockStore) GetThreadState(threadKey string) (string, error) {
+	return "", errNotFound
 }
 
 func TestHandleCreateResponse_NonStreaming(t *testing.T) {

@@ -22,9 +22,10 @@ import {
 } from 'lucide-react';
 import { useApi, formatShortDate } from '../hooks/useApi';
 import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge, ShadowPanel } from '../components';
-import type { InteractionDetailUnion, NewInteractionDetail, ResponseOutputItem, ResponseData, InteractionEvent } from '../types';
+import type { NewInteractionDetail, ResponseOutputItem, InteractionEvent } from '../types';
 
-type FilterType = '' | 'conversation' | 'response' | 'interaction';
+// Filter by frontdoor type or status - unified model doesn't distinguish conversation/response
+type FilterType = '' | 'openai' | 'anthropic' | 'responses';
 type DetailTab = 'pipeline' | 'shadows' | 'timeline';
 
 // Helper component to render a single output item
@@ -593,7 +594,7 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
 
 export function Data() {
   const { overview, interactions, interactionsTotal, loadingInteractions, interactionsError, refreshInteractions, fetchInteractionDetail, fetchInteractionEvents } = useApi();
-  const [selectedInteraction, setSelectedInteraction] = useState<InteractionDetailUnion | null>(null);
+  const [selectedInteraction, setSelectedInteraction] = useState<NewInteractionDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [filter, setFilter] = useState<FilterType>('');
 
@@ -620,7 +621,7 @@ export function Data() {
       <div className="space-y-6">
         <PageHeader
           title="Data Explorer"
-          subtitle="Conversations & API responses"
+          subtitle="LLM Interactions"
           icon={Database}
           iconColor="text-violet-300"
         />
@@ -635,9 +636,10 @@ export function Data() {
     );
   }
 
-  const conversationCount = interactions.filter(i => i.type === 'conversation').length;
-  const responseCount = interactions.filter(i => i.type === 'response').length;
-  const interactionCount = interactions.filter(i => i.type === 'interaction').length;
+  // Count interactions by frontdoor type
+  const openaiCount = interactions.filter(i => i.metadata?.frontdoor === 'openai').length;
+  const anthropicCount = interactions.filter(i => i.metadata?.frontdoor === 'anthropic').length;
+  const responsesCount = interactions.filter(i => i.metadata?.frontdoor === 'responses').length;
 
 
   return (
@@ -663,36 +665,36 @@ export function Data() {
               </button>
               <button
                 type="button"
-                className={`rounded - lg px - 3 py - 1.5 text - xs font - medium transition flex items - center gap - 1.5 ${filter === 'conversation'
-                  ? 'bg-sky-500/20 text-sky-100 border border-sky-400/40'
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition flex items-center gap-1.5 ${filter === 'openai'
+                  ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/40'
                   : 'text-slate-400 hover:text-white'
-                  } `}
-                onClick={() => handleFilterChange('conversation')}
+                  }`}
+                onClick={() => handleFilterChange('openai')}
               >
-                <MessageSquare size={12} />
-                Chats
+                <Terminal size={12} />
+                OpenAI
               </button>
               <button
                 type="button"
-                className={`rounded - lg px - 3 py - 1.5 text - xs font - medium transition flex items - center gap - 1.5 ${filter === 'response'
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition flex items-center gap-1.5 ${filter === 'anthropic'
+                  ? 'bg-amber-500/20 text-amber-100 border border-amber-400/40'
+                  : 'text-slate-400 hover:text-white'
+                  }`}
+                onClick={() => handleFilterChange('anthropic')}
+              >
+                <MessageSquare size={12} />
+                Anthropic
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition flex items-center gap-1.5 ${filter === 'responses'
                   ? 'bg-rose-500/20 text-rose-100 border border-rose-400/40'
                   : 'text-slate-400 hover:text-white'
-                  } `}
-                onClick={() => handleFilterChange('response')}
+                  }`}
+                onClick={() => handleFilterChange('responses')}
               >
                 <Bot size={12} />
                 Responses
-              </button>
-              <button
-                type="button"
-                className={`rounded - lg px - 3 py - 1.5 text - xs font - medium transition flex items - center gap - 1.5 ${filter === 'interaction'
-                  ? 'bg-violet-500/20 text-violet-100 border border-violet-400/40'
-                  : 'text-slate-400 hover:text-white'
-                  } `}
-                onClick={() => handleFilterChange('interaction')}
-              >
-                <ArrowLeftRight size={12} />
-                Interactions
               </button>
             </div>
             <button
@@ -713,22 +715,22 @@ export function Data() {
         </div>
       )}
 
-      {/* Stats bar */}
+      {/* Stats bar - show counts by frontdoor type */}
       <div className="flex flex-wrap gap-3">
         <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 flex items-center gap-3">
-          <MessageSquare size={16} className="text-sky-300" />
-          <span className="text-sm text-white font-medium">{conversationCount}</span>
-          <span className="text-xs text-slate-400">conversations</span>
+          <Terminal size={16} className="text-emerald-300" />
+          <span className="text-sm text-white font-medium">{openaiCount}</span>
+          <span className="text-xs text-slate-400">OpenAI</span>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 flex items-center gap-3">
+          <MessageSquare size={16} className="text-amber-300" />
+          <span className="text-sm text-white font-medium">{anthropicCount}</span>
+          <span className="text-xs text-slate-400">Anthropic</span>
         </div>
         <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 flex items-center gap-3">
           <Bot size={16} className="text-rose-300" />
-          <span className="text-sm text-white font-medium">{responseCount}</span>
-          <span className="text-xs text-slate-400">responses</span>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 flex items-center gap-3">
-          <ArrowLeftRight size={16} className="text-violet-300" />
-          <span className="text-sm text-white font-medium">{interactionCount}</span>
-          <span className="text-xs text-slate-400">interactions</span>
+          <span className="text-sm text-white font-medium">{responsesCount}</span>
+          <span className="text-xs text-slate-400">Responses</span>
         </div>
       </div>
 
@@ -755,95 +757,93 @@ export function Data() {
             )}
 
             {!loadingInteractions &&
-              interactions.map((interaction) => (
-                <button
-                  key={interaction.id}
-                  onClick={() => openInteraction(interaction.id)}
-                  className={`group flex w - full flex - col gap - 2 rounded - xl border px - 4 py - 3 text - left transition ${selectedInteraction?.id === interaction.id
-                    ? 'border-violet-400/50 bg-violet-500/10 shadow-[0_0_20px_rgba(139,92,246,0.1)]'
-                    : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
-                    } `}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {interaction.type === 'conversation' ? (
-                        <MessageSquare size={14} className="text-sky-300 flex-shrink-0" />
-                      ) : interaction.type === 'response' ? (
-                        <Bot size={14} className="text-rose-300 flex-shrink-0" />
-                      ) : (
-                        <ArrowLeftRight size={14} className="text-violet-300 flex-shrink-0" />
-                      )}
-                      <span className="truncate text-sm font-semibold text-white">
-                        {interaction.type === 'conversation'
-                          ? interaction.metadata?.title || interaction.id.slice(0, 16)
-                          : interaction.id.slice(0, 20)}
-                      </span>
+              interactions.map((interaction) => {
+                // Determine frontdoor type for icon/color
+                const frontdoor = interaction.metadata?.frontdoor || 'unknown';
+                const isOpenAI = frontdoor === 'openai';
+                const isAnthropic = frontdoor === 'anthropic';
+                const isResponses = frontdoor === 'responses';
+
+                return (
+                  <button
+                    key={interaction.id}
+                    onClick={() => openInteraction(interaction.id)}
+                    className={`group flex w-full flex-col gap-2 rounded-xl border px-4 py-3 text-left transition ${selectedInteraction?.id === interaction.id
+                      ? 'border-violet-400/50 bg-violet-500/10 shadow-[0_0_20px_rgba(139,92,246,0.1)]'
+                      : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                      }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {isOpenAI ? (
+                          <Terminal size={14} className="text-emerald-300 flex-shrink-0" />
+                        ) : isAnthropic ? (
+                          <MessageSquare size={14} className="text-amber-300 flex-shrink-0" />
+                        ) : isResponses ? (
+                          <Bot size={14} className="text-rose-300 flex-shrink-0" />
+                        ) : (
+                          <ArrowLeftRight size={14} className="text-violet-300 flex-shrink-0" />
+                        )}
+                        <span className="truncate text-sm font-semibold text-white">
+                          {interaction.id.slice(0, 20)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {interaction.status && (
+                          <StatusBadge status={interaction.status} />
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {interaction.type === 'conversation' && interaction.message_count && (
-                        <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-xs font-medium text-sky-200">
-                          {interaction.message_count} msg
+
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <Clock4 size={12} />
+                      <span>{formatShortDate(interaction.updated_at)}</span>
+                      {interaction.model && (
+                        <>
+                          <span className="text-slate-600">•</span>
+                          <span className="text-slate-300">{interaction.model}</span>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {/* Frontdoor badge */}
+                      <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${isOpenAI
+                        ? 'bg-emerald-500/20 text-emerald-200'
+                        : isAnthropic
+                          ? 'bg-amber-500/20 text-amber-200'
+                          : isResponses
+                            ? 'bg-rose-500/20 text-rose-200'
+                            : 'bg-violet-500/20 text-violet-200'
+                        }`}>
+                        {frontdoor}
+                      </span>
+                      {interaction.metadata?.provider && (
+                        <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
+                          prov: {interaction.metadata.provider}
                         </span>
                       )}
-                      {interaction.type === 'response' && interaction.status && (
-                        <StatusBadge status={interaction.status} />
+                      {interaction.metadata?.app && (
+                        <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-200">
+                          app: {interaction.metadata.app}
+                        </span>
                       )}
-                      {interaction.type === 'interaction' && interaction.status && (
-                        <StatusBadge status={interaction.status} />
+                      {interaction.previous_response_id && (
+                        <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
+                          <ArrowLeftRight size={10} className="inline mr-1" />
+                          continues
+                        </span>
+                      )}
+                      {interaction.status === 'incomplete' && (
+                        <span className="rounded-md bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-200">
+                          <Wrench size={10} className="inline mr-1" />
+                          tool use
+                        </span>
                       )}
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <Clock4 size={12} />
-                    <span>{formatShortDate(interaction.updated_at)}</span>
-                    {interaction.model && (
-                      <>
-                        <span className="text-slate-600">•</span>
-                        <span className="text-slate-300">{interaction.model}</span>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className={`rounded - md px - 2 py - 0.5 text - [10px] font - medium ${interaction.type === 'conversation'
-                      ? 'bg-sky-500/20 text-sky-200'
-                      : interaction.type === 'response'
-                        ? 'bg-rose-500/20 text-rose-200'
-                        : 'bg-violet-500/20 text-violet-200'
-                      } `}>
-                      {interaction.type}
-                    </span>
-                    {interaction.metadata?.frontdoor && (
-                      <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-300">
-                        fd: {interaction.metadata.frontdoor}
-                      </span>
-                    )}
-                    {interaction.metadata?.provider && (
-                      <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
-                        prov: {interaction.metadata.provider}
-                      </span>
-                    )}
-                    {interaction.metadata?.app && (
-                      <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-200">
-                        app: {interaction.metadata.app}
-                      </span>
-                    )}
-                    {interaction.previous_response_id && (
-                      <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
-                        <ArrowLeftRight size={10} className="inline mr-1" />
-                        continues
-                      </span>
-                    )}
-                    {interaction.type === 'response' && interaction.status === 'incomplete' && (
-                      <span className="rounded-md bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-200">
-                        <Wrench size={10} className="inline mr-1" />
-                        tool use
-                      </span>
-                    )}
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
           </div>
         </div>
 
@@ -869,135 +869,10 @@ export function Data() {
           )}
 
           {selectedInteraction && !loadingDetail && (
-            <>
-              {/* Unified Interaction View */}
-              {(selectedInteraction as any).request !== undefined && (selectedInteraction as any).messages === undefined && (
-                <UnifiedInteractionDetail
-                  interaction={selectedInteraction as NewInteractionDetail}
-                  loadEvents={fetchInteractionEvents}
-                />
-              )}
-
-              {/* Legacy Conversation View */}
-              {selectedInteraction.type === 'conversation' && (
-                <div className="flex h-full flex-col">
-                  {/* Detail Header */}
-                  <div className="border-b border-white/10 px-5 py-4">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="rounded-lg bg-sky-500/10 p-2 text-sky-300">
-                          <MessageSquare size={20} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-mono font-semibold text-white truncate">
-                            {selectedInteraction.metadata?.title || selectedInteraction.id}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="rounded-md px-2 py-0.5 text-xs font-medium bg-sky-500/20 text-sky-200">
-                              conversation
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
-                          <Clock4 size={12} />
-                          {formatShortDate(selectedInteraction.created_at)}
-                        </span>
-                        {selectedInteraction.model && (
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
-                            <ServerCog size={12} />
-                            {selectedInteraction.model}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Detail Content */}
-                  <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 max-h-[calc(100vh-500px)]">
-                    {(selectedInteraction as any).messages?.map((msg: any) => (
-                      <div
-                        key={msg.id}
-                        className={`rounded - 2xl border px - 4 py - 3 ${msg.role === 'user'
-                          ? 'border-amber-500/20 bg-amber-500/5'
-                          : 'border-emerald-500/20 bg-emerald-500/5'
-                          } `}
-                      >
-                        <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-                          <span className="inline-flex items-center gap-1.5 font-medium">
-                            {msg.role === 'user' ? (
-                              <>
-                                <Shield size={14} className="text-amber-300" />
-                                <span className="text-amber-200">User</span>
-                              </>
-                            ) : (
-                              <>
-                                <ServerCog size={14} className="text-emerald-300" />
-                                <span className="text-emerald-200">Assistant</span>
-                              </>
-                            )}
-                          </span>
-                          <span>{formatShortDate(msg.created_at)}</span>
-                        </div>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-white">
-                          {msg.content}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Legacy Response View */}
-              {selectedInteraction.type === 'response' && (
-                <div className="flex h-full flex-col">
-                  {/* Detail Header */}
-                  <div className="border-b border-white/10 px-5 py-4">
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="rounded-lg bg-rose-500/10 p-2 text-rose-300">
-                          <Bot size={20} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-mono font-semibold text-white truncate">
-                            {selectedInteraction.id}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="rounded-md px-2 py-0.5 text-xs font-medium bg-rose-500/20 text-rose-200">
-                              response
-                            </span>
-                            {(selectedInteraction as any).status && (
-                              <StatusBadge status={(selectedInteraction as any).status} />
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      {/* ... header stats ... */}
-                    </div>
-                  </div>
-
-                  {/* Detail Content */}
-                  <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 max-h-[calc(100vh-500px)]">
-                    {(selectedInteraction as any).request && (
-                      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-                        <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-                          <Shield size={14} className="text-amber-300" />
-                          <span className="font-semibold text-amber-200">Request</span>
-                        </div>
-                        <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[250px] font-mono">
-                          {JSON.stringify((selectedInteraction as any).request, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {(selectedInteraction as any).response && (
-                      <ResponseSection response={(selectedInteraction as any).response} />
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
+            <UnifiedInteractionDetail
+              interaction={selectedInteraction}
+              loadEvents={fetchInteractionEvents}
+            />
           )}
         </div>
       </div>

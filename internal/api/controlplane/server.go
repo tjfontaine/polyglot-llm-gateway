@@ -672,9 +672,15 @@ func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Check if we have an InteractionStore
+	iStore, ok := s.store.(storage.InteractionStore)
+	if !ok {
+		http.Error(w, "interaction storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	limit := 50
 	offset := 0
-	filterType := r.URL.Query().Get("type") // "conversation", "response", "interaction", or "" for all
 
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.Atoi(q); err == nil && v > 0 && v <= 200 {
@@ -690,124 +696,39 @@ func (s *Server) handleListInteractions(w http.ResponseWriter, r *http.Request) 
 
 	tenantID := tenantIDFromContext(r.Context())
 
-	// Check if we have an InteractionStore for the new unified interactions
-	if iStore, ok := s.store.(storage.InteractionStore); ok && (filterType == "" || filterType == "interaction") {
-		opts := storage.InteractionListOptions{
-			TenantID:  tenantID,
-			Frontdoor: domain.APIType(r.URL.Query().Get("frontdoor")),
-			Provider:  r.URL.Query().Get("provider"),
-			Status:    r.URL.Query().Get("status"),
-			Limit:     limit,
-			Offset:    offset,
-		}
-
-		interactions, err := iStore.ListInteractions(r.Context(), opts)
-		if err == nil && len(interactions) > 0 {
-			// Convert to API response format
-			result := make([]InteractionSummary, 0, len(interactions))
-			for _, i := range interactions {
-				result = append(result, InteractionSummary{
-					ID:        i.ID,
-					Type:      "interaction",
-					Status:    string(i.Status),
-					Model:     i.ServedModel,
-					Metadata:  i.Metadata,
-					CreatedAt: i.CreatedAt.Unix(),
-					UpdatedAt: i.UpdatedAt.Unix(),
-				})
-			}
-
-			resp := InteractionListResponse{
-				Interactions: result,
-				Total:        len(result),
-			}
-			writeJSON(w, resp)
-			return
-		}
+	opts := storage.InteractionListOptions{
+		TenantID:  tenantID,
+		Frontdoor: domain.APIType(r.URL.Query().Get("frontdoor")),
+		Provider:  r.URL.Query().Get("provider"),
+		Status:    r.URL.Query().Get("status"),
+		Limit:     limit,
+		Offset:    offset,
 	}
 
-	// Fall back to the legacy behavior of merging conversations and responses
-	opts := storage.ListOptions{
-		TenantID: tenantID,
-		Limit:    limit * 2, // Get more to allow merging and sorting
-		Offset:   0,
+	interactions, err := iStore.ListInteractions(r.Context(), opts)
+	if err != nil {
+		http.Error(w, "failed to list interactions: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	var interactions []InteractionSummary
-
-	// Get conversations if not filtered to responses only
-	if filterType == "" || filterType == "conversation" {
-		conversations, err := s.store.ListConversations(r.Context(), opts)
-		if err == nil {
-			for _, conv := range conversations {
-				updatedAt := conv.UpdatedAt
-				if updatedAt.IsZero() {
-					updatedAt = conv.CreatedAt
-				}
-				interactions = append(interactions, InteractionSummary{
-					ID:           conv.ID,
-					Type:         "conversation",
-					Metadata:     conv.Metadata,
-					MessageCount: len(conv.Messages),
-					Model:        conv.Metadata["served_model"],
-					CreatedAt:    conv.CreatedAt.Unix(),
-					UpdatedAt:    updatedAt.Unix(),
-				})
-			}
-		}
-	}
-
-	// Get responses if not filtered to conversations only
-	if filterType == "" || filterType == "response" {
-		if respStore, ok := s.store.(storage.ResponseStore); ok {
-			records, err := respStore.ListResponses(r.Context(), opts)
-			if err == nil {
-				for _, record := range records {
-					updatedAt := record.UpdatedAt
-					if updatedAt.IsZero() {
-						updatedAt = record.CreatedAt
-					}
-					interactions = append(interactions, InteractionSummary{
-						ID:                 record.ID,
-						Type:               "response",
-						Status:             record.Status,
-						Model:              record.Model,
-						Metadata:           record.Metadata,
-						PreviousResponseID: record.PreviousResponseID,
-						CreatedAt:          record.CreatedAt.Unix(),
-						UpdatedAt:          updatedAt.Unix(),
-					})
-				}
-			}
-		}
-	}
-
-	// Sort by updated_at descending
-	for i := 0; i < len(interactions); i++ {
-		for j := i + 1; j < len(interactions); j++ {
-			if interactions[j].UpdatedAt > interactions[i].UpdatedAt {
-				interactions[i], interactions[j] = interactions[j], interactions[i]
-			}
-		}
-	}
-
-	// Apply pagination
-	total := len(interactions)
-	if offset >= len(interactions) {
-		interactions = []InteractionSummary{}
-	} else {
-		end := offset + limit
-		if end > len(interactions) {
-			end = len(interactions)
-		}
-		interactions = interactions[offset:end]
+	// Convert to API response format
+	result := make([]InteractionSummary, 0, len(interactions))
+	for _, i := range interactions {
+		result = append(result, InteractionSummary{
+			ID:        i.ID,
+			Type:      "interaction",
+			Status:    string(i.Status),
+			Model:     i.ServedModel,
+			Metadata:  i.Metadata,
+			CreatedAt: i.CreatedAt.Unix(),
+			UpdatedAt: i.UpdatedAt.Unix(),
+		})
 	}
 
 	resp := InteractionListResponse{
-		Interactions: interactions,
-		Total:        total,
+		Interactions: result,
+		Total:        len(result),
 	}
-
 	writeJSON(w, resp)
 }
 
@@ -817,148 +738,83 @@ func (s *Server) handleInteractionDetail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	interactionID := chi.URLParam(r, "interaction_id")
-	tenantID := tenantIDFromContext(r.Context())
-
-	// Try to get as new unified interaction first
-	if iStore, ok := s.store.(storage.InteractionStore); ok {
-		interaction, err := iStore.GetInteraction(r.Context(), interactionID)
-		if err == nil {
-			if interaction.TenantID != "" && tenantID != "" && interaction.TenantID != tenantID {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-
-			resp := NewInteractionDetailView{
-				ID:                  interaction.ID,
-				TenantID:            interaction.TenantID,
-				Frontdoor:           string(interaction.Frontdoor),
-				Provider:            interaction.Provider,
-				AppName:             interaction.AppName,
-				RequestedModel:      interaction.RequestedModel,
-				ServedModel:         interaction.ServedModel,
-				ProviderModel:       interaction.ProviderModel,
-				Streaming:           interaction.Streaming,
-				Status:              string(interaction.Status),
-				Duration:            interaction.Duration.String(),
-				DurationNs:          int64(interaction.Duration),
-				Metadata:            interaction.Metadata,
-				RequestHeaders:      interaction.RequestHeaders,
-				TransformationSteps: interaction.TransformationSteps,
-				CreatedAt:           interaction.CreatedAt.Unix(),
-				UpdatedAt:           interaction.UpdatedAt.Unix(),
-			}
-
-			if interaction.Request != nil {
-				resp.Request = &InteractionRequestView{
-					Raw:             interaction.Request.Raw,
-					CanonicalJSON:   interaction.Request.CanonicalJSON,
-					UnmappedFields:  interaction.Request.UnmappedFields,
-					ProviderRequest: interaction.Request.ProviderRequest,
-				}
-			}
-
-			if interaction.Response != nil {
-				resp.Response = &InteractionResponseView{
-					Raw:            interaction.Response.Raw,
-					CanonicalJSON:  interaction.Response.CanonicalJSON,
-					UnmappedFields: interaction.Response.UnmappedFields,
-					ClientResponse: interaction.Response.ClientResponse,
-					FinishReason:   interaction.Response.FinishReason,
-					Usage:          interaction.Response.Usage,
-				}
-			}
-
-			if interaction.Error != nil {
-				resp.Error = &InteractionErrorView{
-					Type:    interaction.Error.Type,
-					Code:    interaction.Error.Code,
-					Message: interaction.Error.Message,
-				}
-			}
-
-			// Retrieve shadow results if available
-			if shadowStore, ok := s.store.(storage.ShadowStore); ok {
-				shadows, err := shadowStore.GetShadowResults(r.Context(), interactionID)
-				if err == nil && len(shadows) > 0 {
-					resp.Shadows = shadows
-				}
-			}
-
-			writeJSON(w, resp)
-			return
-		}
-	}
-
-	// Try to get as conversation (legacy)
-	conv, err := s.store.GetConversation(r.Context(), interactionID)
-	if err == nil {
-		if conv.TenantID != "" && tenantID != "" && conv.TenantID != tenantID {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-
-		updatedAt := conv.UpdatedAt
-		if updatedAt.IsZero() {
-			updatedAt = conv.CreatedAt
-		}
-
-		resp := InteractionDetailView{
-			ID:        conv.ID,
-			Type:      "conversation",
-			Metadata:  conv.Metadata,
-			Model:     conv.Metadata["served_model"],
-			CreatedAt: conv.CreatedAt.Unix(),
-			UpdatedAt: updatedAt.Unix(),
-			Messages:  make([]MessageView, 0, len(conv.Messages)),
-		}
-
-		for _, msg := range conv.Messages {
-			resp.Messages = append(resp.Messages, MessageView{
-				ID:        msg.ID,
-				Role:      msg.Role,
-				Content:   msg.Content,
-				CreatedAt: msg.CreatedAt.Unix(),
-			})
-		}
-
-		writeJSON(w, resp)
+	iStore, ok := s.store.(storage.InteractionStore)
+	if !ok {
+		http.Error(w, "interaction storage not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Try to get as response (legacy)
-	if respStore, ok := s.store.(storage.ResponseStore); ok {
-		record, err := respStore.GetResponse(r.Context(), interactionID)
-		if err == nil {
-			if record.TenantID != "" && tenantID != "" && record.TenantID != tenantID {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
+	interactionID := chi.URLParam(r, "interaction_id")
+	tenantID := tenantIDFromContext(r.Context())
 
-			updatedAt := record.UpdatedAt
-			if updatedAt.IsZero() {
-				updatedAt = record.CreatedAt
-			}
+	interaction, err := iStore.GetInteraction(r.Context(), interactionID)
+	if err != nil {
+		http.Error(w, "interaction not found", http.StatusNotFound)
+		return
+	}
 
-			resp := InteractionDetailView{
-				ID:                 record.ID,
-				Type:               "response",
-				Status:             record.Status,
-				Model:              record.Model,
-				Metadata:           record.Metadata,
-				PreviousResponseID: record.PreviousResponseID,
-				CreatedAt:          record.CreatedAt.Unix(),
-				UpdatedAt:          updatedAt.Unix(),
-				Request:            record.Request,
-				Response:           record.Response,
-			}
+	if interaction.TenantID != "" && tenantID != "" && interaction.TenantID != tenantID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
-			writeJSON(w, resp)
-			return
+	resp := NewInteractionDetailView{
+		ID:                  interaction.ID,
+		TenantID:            interaction.TenantID,
+		Frontdoor:           string(interaction.Frontdoor),
+		Provider:            interaction.Provider,
+		AppName:             interaction.AppName,
+		RequestedModel:      interaction.RequestedModel,
+		ServedModel:         interaction.ServedModel,
+		ProviderModel:       interaction.ProviderModel,
+		Streaming:           interaction.Streaming,
+		Status:              string(interaction.Status),
+		Duration:            interaction.Duration.String(),
+		DurationNs:          int64(interaction.Duration),
+		Metadata:            interaction.Metadata,
+		RequestHeaders:      interaction.RequestHeaders,
+		TransformationSteps: interaction.TransformationSteps,
+		CreatedAt:           interaction.CreatedAt.Unix(),
+		UpdatedAt:           interaction.UpdatedAt.Unix(),
+	}
+
+	if interaction.Request != nil {
+		resp.Request = &InteractionRequestView{
+			Raw:             interaction.Request.Raw,
+			CanonicalJSON:   interaction.Request.CanonicalJSON,
+			UnmappedFields:  interaction.Request.UnmappedFields,
+			ProviderRequest: interaction.Request.ProviderRequest,
 		}
 	}
 
-	http.Error(w, "interaction not found", http.StatusNotFound)
+	if interaction.Response != nil {
+		resp.Response = &InteractionResponseView{
+			Raw:            interaction.Response.Raw,
+			CanonicalJSON:  interaction.Response.CanonicalJSON,
+			UnmappedFields: interaction.Response.UnmappedFields,
+			ClientResponse: interaction.Response.ClientResponse,
+			FinishReason:   interaction.Response.FinishReason,
+			Usage:          interaction.Response.Usage,
+		}
+	}
+
+	if interaction.Error != nil {
+		resp.Error = &InteractionErrorView{
+			Type:    interaction.Error.Type,
+			Code:    interaction.Error.Code,
+			Message: interaction.Error.Message,
+		}
+	}
+
+	// Retrieve shadow results if available
+	if shadowStore, ok := s.store.(storage.ShadowStore); ok {
+		shadows, err := shadowStore.GetShadowResults(r.Context(), interactionID)
+		if err == nil && len(shadows) > 0 {
+			resp.Shadows = shadows
+		}
+	}
+
+	writeJSON(w, resp)
 }
 
 func (s *Server) handleInteractionEvents(w http.ResponseWriter, r *http.Request) {

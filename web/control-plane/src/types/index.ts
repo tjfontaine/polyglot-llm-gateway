@@ -64,6 +64,8 @@ export interface Overview {
   tenants: TenantEntry[];
 }
 
+// DEPRECATED: Legacy types kept for backward compatibility during transition
+// New code should use InteractionSummary and InteractionDetail
 export interface ResponseSummary {
   id: string;
   status: string;
@@ -74,6 +76,7 @@ export interface ResponseSummary {
   updated_at: number;
 }
 
+// DEPRECATED: Use InteractionDetail instead
 export interface ResponseDetail {
   id: string;
   status: string;
@@ -86,6 +89,7 @@ export interface ResponseDetail {
   updated_at: number;
 }
 
+// DEPRECATED: Use InteractionSummary instead
 export interface ThreadSummary {
   id: string;
   created_at: number;
@@ -94,6 +98,7 @@ export interface ThreadSummary {
   message_count: number;
 }
 
+// DEPRECATED: Legacy type
 export interface ThreadMessage {
   id: string;
   role: string;
@@ -101,6 +106,7 @@ export interface ThreadMessage {
   created_at: number;
 }
 
+// DEPRECATED: Use InteractionDetail instead
 export interface ThreadDetail {
   id: string;
   created_at: number;
@@ -109,10 +115,10 @@ export interface ThreadDetail {
   messages: ThreadMessage[];
 }
 
-// Unified interaction types
+// Unified interaction types - all API calls now return 'interaction' type
 export interface InteractionSummary {
   id: string;
-  type: 'conversation' | 'response' | 'interaction';
+  type: 'interaction';  // Always 'interaction' - unified model
   status?: string;
   model?: string;
   metadata?: Record<string, string>;
@@ -122,6 +128,7 @@ export interface InteractionSummary {
   updated_at: number;
 }
 
+// DEPRECATED: Use NewInteractionDetail instead - this legacy type is no longer returned by the API
 export interface InteractionDetail {
   id: string;
   type: 'conversation' | 'response';
@@ -199,6 +206,7 @@ export interface InteractionErrorView {
   message: string;
 }
 
+// The unified interaction detail - this is what the API returns
 export interface NewInteractionDetail {
   id: string;
   tenant_id: string;
@@ -221,11 +229,11 @@ export interface NewInteractionDetail {
   response?: InteractionResponseView;
   error?: InteractionErrorView;
 
-  // Legacy fields for compatibility if needed, though we should prefer the new structure
-  type?: 'interaction';
+  type: 'interaction';  // Always 'interaction' in unified model
 }
 
-export type InteractionDetailUnion = InteractionDetail | NewInteractionDetail;
+// For type compatibility - API now returns NewInteractionDetail
+export type InteractionDetailUnion = NewInteractionDetail;
 
 export interface InteractionEvent {
   id: string;

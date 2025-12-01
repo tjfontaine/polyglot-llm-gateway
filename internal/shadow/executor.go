@@ -139,14 +139,17 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) *ExecuteRes
 				results[i].HasStructuralDivergence = len(divergences) > 0
 			}
 
-			// Store the result
-			if err := e.store.SaveShadowResult(ctx, results[i]); err != nil {
+			// Store the result using a fresh context to avoid cancellation issues
+			// when the shadow execution timeout expires
+			saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := e.store.SaveShadowResult(saveCtx, results[i]); err != nil {
 				e.logger.Error("failed to save shadow result",
 					"shadow_provider", results[i].ProviderName,
 					"interaction_id", req.InteractionID,
 					"error", err)
 				result.Errors = append(result.Errors, fmt.Errorf("failed to save shadow result for %s: %w", results[i].ProviderName, err))
 			}
+			saveCancel()
 
 			result.Results = append(result.Results, results[i])
 		}

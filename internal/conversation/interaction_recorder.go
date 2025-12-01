@@ -43,6 +43,10 @@ type RecordInteractionParams struct {
 	Error        error
 	Duration     time.Duration
 	FinishReason string
+
+	// Responses API threading
+	PreviousInteractionID string
+	ThreadKey             string
 }
 
 // RecordInteraction stores a full interaction record with bidirectional visibility.
@@ -61,9 +65,16 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 	persistCtx, cancel := buildPersistenceContext(ctx, 5*time.Second)
 	defer cancel()
 
-	interactionID := "int_" + uuid.New().String()
-	if params.CanonicalResp != nil && params.CanonicalResp.ID != "" {
-		interactionID = params.CanonicalResp.ID
+	// Always use gateway-owned ID as primary key
+	// Check if frontdoor already assigned an ID via request metadata
+	interactionID := ""
+	if params.CanonicalReq != nil && params.CanonicalReq.Metadata != nil {
+		if existingID := params.CanonicalReq.Metadata["interaction_id"]; existingID != "" {
+			interactionID = existingID
+		}
+	}
+	if interactionID == "" {
+		interactionID = "int_" + uuid.New().String()
 	}
 
 	tenantID := tenantIDFromContext(persistCtx)
@@ -75,6 +86,8 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 	interaction.AppName = params.AppName
 	interaction.Streaming = params.Streaming
 	interaction.Duration = params.Duration
+	interaction.PreviousInteractionID = params.PreviousInteractionID
+	interaction.ThreadKey = params.ThreadKey
 
 	if params.CanonicalReq != nil {
 		interaction.RequestedModel = params.CanonicalReq.Model
@@ -83,6 +96,10 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 	if params.CanonicalResp != nil {
 		interaction.ServedModel = params.CanonicalResp.Model
 		interaction.ProviderModel = params.CanonicalResp.ProviderModel
+		// Store provider's response ID as metadata (NOT as our primary key)
+		if params.CanonicalResp.ID != "" {
+			interaction.Metadata["provider_response_id"] = params.CanonicalResp.ID
+		}
 	}
 
 	// Add request ID and other metadata
@@ -130,6 +147,11 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 
 			if len(params.CanonicalResp.Choices) > 0 {
 				interaction.Response.FinishReason = params.CanonicalResp.Choices[0].FinishReason
+			}
+
+			// Store provider's response ID in the response record
+			if params.CanonicalResp.ID != "" {
+				interaction.Response.ProviderResponseID = params.CanonicalResp.ID
 			}
 		}
 	}
@@ -303,7 +325,17 @@ func StartInteraction(ctx context.Context, store storage.ConversationStore, para
 		return nil, nil
 	}
 
-	interactionID := "int_" + uuid.New().String()
+	// Always use gateway-owned ID as primary key
+	// Check if frontdoor already assigned an ID via request metadata
+	interactionID := ""
+	if params.CanonicalReq != nil && params.CanonicalReq.Metadata != nil {
+		if existingID := params.CanonicalReq.Metadata["interaction_id"]; existingID != "" {
+			interactionID = existingID
+		}
+	}
+	if interactionID == "" {
+		interactionID = "int_" + uuid.New().String()
+	}
 	tenantID := tenantIDFromContext(ctx)
 
 	interaction := domain.NewInteraction(interactionID, tenantID)
@@ -312,6 +344,8 @@ func StartInteraction(ctx context.Context, store storage.ConversationStore, para
 	interaction.AppName = params.AppName
 	interaction.Streaming = params.Streaming
 	interaction.Status = domain.InteractionStatusPending
+	interaction.PreviousInteractionID = params.PreviousInteractionID
+	interaction.ThreadKey = params.ThreadKey
 
 	if params.CanonicalReq != nil {
 		interaction.RequestedModel = params.CanonicalReq.Model
@@ -365,6 +399,10 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 	if params.CanonicalResp != nil {
 		interaction.ServedModel = params.CanonicalResp.Model
 		interaction.ProviderModel = params.CanonicalResp.ProviderModel
+		// Store provider's response ID as metadata (NOT as our primary key)
+		if params.CanonicalResp.ID != "" {
+			interaction.Metadata["provider_response_id"] = params.CanonicalResp.ID
+		}
 	}
 
 	// CRITICAL: Validate provider contract for debug data capture
@@ -462,6 +500,11 @@ func CompleteInteraction(ctx context.Context, store storage.ConversationStore, i
 
 		if len(params.CanonicalResp.Choices) > 0 {
 			interaction.Response.FinishReason = params.CanonicalResp.Choices[0].FinishReason
+		}
+
+		// Store provider's response ID in the response record
+		if params.CanonicalResp.ID != "" {
+			interaction.Response.ProviderResponseID = params.CanonicalResp.ID
 		}
 	}
 

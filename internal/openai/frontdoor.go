@@ -109,6 +109,7 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 	providerName := h.provider.Name()
+	eventStore, _ := h.store.(storage.InteractionStore)
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -160,6 +161,27 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 		req.Metadata["interaction_id"] = interactionID
 	}
 
+	// Log frontdoor decode event
+	if eventStore != nil {
+		canonJSON, _ := json.Marshal(req)
+		metaJSON, _ := json.Marshal(map[string]string{
+			"request_id": requestID,
+		})
+		conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "frontdoor_decode",
+			Direction:      "ingress",
+			APIType:        domain.APITypeOpenAI,
+			Frontdoor:      "openai",
+			Provider:       providerName,
+			AppName:        h.appName,
+			ModelRequested: req.Model,
+			Raw:            body,
+			Canonical:      canonJSON,
+			Metadata:       metaJSON,
+		})
+	}
+
 	// Set source API type and raw request for pass-through optimization
 	req.SourceAPIType = domain.APITypeOpenAI
 	req.RawRequest = body
@@ -170,7 +192,7 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 	middleware.AddLogField(r.Context(), "requested_model", req.Model)
 
 	if req.Stream {
-		h.handleStream(w, r, req, body, startTime)
+		h.handleStream(w, r, req, body, startTime, interactionID)
 		return
 	}
 
@@ -243,6 +265,53 @@ func (h *FrontdoorHandler) HandleChatCompletion(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Log response events
+	if eventStore != nil {
+		if len(resp.ProviderRequestBody) > 0 {
+			conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+				InteractionID:  interactionID,
+				Stage:          "provider_encode",
+				Direction:      "egress",
+				APIType:        domain.APITypeOpenAI,
+				Frontdoor:      "openai",
+				Provider:       providerName,
+				AppName:        h.appName,
+				ModelRequested: req.Model,
+				Raw:            resp.ProviderRequestBody,
+			})
+		}
+		if len(resp.RawResponse) > 0 {
+			conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+				InteractionID:  interactionID,
+				Stage:          "provider_decode",
+				Direction:      "ingress",
+				APIType:        domain.APITypeOpenAI,
+				Frontdoor:      "openai",
+				Provider:       providerName,
+				AppName:        h.appName,
+				ModelRequested: req.Model,
+				ModelServed:    resp.Model,
+				ProviderModel:  resp.ProviderModel,
+				Raw:            resp.RawResponse,
+			})
+		}
+		respCanon, _ := json.Marshal(resp)
+		conversation.LogEvent(r.Context(), eventStore, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "frontdoor_encode",
+			Direction:      "egress",
+			APIType:        domain.APITypeOpenAI,
+			Frontdoor:      "openai",
+			Provider:       providerName,
+			AppName:        h.appName,
+			ModelRequested: req.Model,
+			ModelServed:    resp.Model,
+			ProviderModel:  resp.ProviderModel,
+			Raw:            respBody,
+			Canonical:      respCanon,
+		})
+	}
+
 	// Record successful interaction with full bidirectional visibility
 	// Capture the actual interaction ID (which may be the provider's response ID)
 	actualInteractionID := conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
@@ -301,10 +370,14 @@ func (h *FrontdoorHandler) HandleListModels(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(list)
 }
 
-func (h *FrontdoorHandler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time) {
+func (h *FrontdoorHandler) handleStream(w http.ResponseWriter, r *http.Request, req *domain.CanonicalRequest, rawRequest json.RawMessage, startTime time.Time, interactionID string) {
 	logger := slog.Default()
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
 	providerName := h.provider.Name()
+	eventStore, _ := h.store.(storage.InteractionStore)
+	// eventStore will be used for logging stream events in the future
+	_ = eventStore
+	_ = interactionID
 
 	events, err := h.provider.Stream(r.Context(), req)
 	if err != nil {

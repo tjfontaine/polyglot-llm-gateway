@@ -248,11 +248,11 @@ func main() {
 	}
 
 	// Register Responses API handlers if storage is configured
-	if store != nil {
+	if eventStore != nil {
 		basePaths := resolveResponsesBasePaths(apps, cfg.Routing)
 
 		for _, base := range basePaths {
-			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(base, store, router)
+			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(base, eventStore, router)
 			for _, reg := range responsesHandlers {
 				method := reg.Method
 				if method == "" {

@@ -120,6 +120,10 @@ type InteractionStore interface {
 	// GetInteraction retrieves an interaction by ID
 	GetInteraction(ctx context.Context, id string) (*domain.Interaction, error)
 
+	// GetInteractionByProviderResponseID retrieves an interaction by the provider's response ID.
+	// This is used by the Responses API to look up previous interactions when given a resp_<uuid>.
+	GetInteractionByProviderResponseID(ctx context.Context, providerResponseID string) (*domain.Interaction, error)
+
 	// UpdateInteraction updates an existing interaction
 	UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error
 

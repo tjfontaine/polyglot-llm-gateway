@@ -36,7 +36,7 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 
 	var requestRaw, requestCanonical, requestUnmappedFields, requestProvider sql.NullString
 	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
-	var responseFinishReason, responseUsage sql.NullString
+	var responseProviderID, responseFinishReason, responseUsage sql.NullString
 	var errorType, errorCode, errorMessage sql.NullString
 
 	if interaction.Request != nil {
@@ -69,6 +69,9 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		if len(interaction.Response.ClientResponse) > 0 {
 			responseClient = sql.NullString{String: string(interaction.Response.ClientResponse), Valid: true}
 		}
+		if interaction.Response.ProviderResponseID != "" {
+			responseProviderID = sql.NullString{String: interaction.Response.ProviderResponseID, Valid: true}
+		}
 		if interaction.Response.FinishReason != "" {
 			responseFinishReason = sql.NullString{String: interaction.Response.FinishReason, Valid: true}
 		}
@@ -96,10 +99,21 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		streaming, status, duration_ns,
 		request_raw, request_canonical, request_unmapped_fields, request_provider,
 		response_raw, response_canonical, response_unmapped_fields, response_client,
-		response_finish_reason, response_usage,
+		response_provider_id, response_finish_reason, response_usage,
 		error_type, error_code, error_message,
-		metadata, request_headers, transformation_steps, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		metadata, request_headers, transformation_steps,
+		previous_interaction_id, thread_key,
+		created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	// Prepare nullable fields for threading
+	var previousInteractionID, threadKey sql.NullString
+	if interaction.PreviousInteractionID != "" {
+		previousInteractionID = sql.NullString{String: interaction.PreviousInteractionID, Valid: true}
+	}
+	if interaction.ThreadKey != "" {
+		threadKey = sql.NullString{String: interaction.ThreadKey, Valid: true}
+	}
 
 	_, err = s.db.ExecContext(ctx, query,
 		interaction.ID, interaction.TenantID, string(interaction.Frontdoor), interaction.Provider,
@@ -107,9 +121,10 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		streaming, string(interaction.Status), int64(interaction.Duration),
 		requestRaw, requestCanonical, requestUnmappedFields, requestProvider,
 		responseRaw, responseCanonical, responseUnmappedFields, responseClient,
-		responseFinishReason, responseUsage,
+		responseProviderID, responseFinishReason, responseUsage,
 		errorType, errorCode, errorMessage,
 		string(metadata), string(requestHeaders), string(transformationSteps),
+		previousInteractionID, threadKey,
 		interaction.CreatedAt, interaction.UpdatedAt)
 
 	if err != nil {
@@ -126,9 +141,11 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		streaming, status, duration_ns,
 		request_raw, request_canonical, request_unmapped_fields, request_provider,
 		response_raw, response_canonical, response_unmapped_fields, response_client,
-		response_finish_reason, response_usage,
+		response_provider_id, response_finish_reason, response_usage,
 		error_type, error_code, error_message,
-		metadata, request_headers, transformation_steps, created_at, updated_at
+		metadata, request_headers, transformation_steps,
+		previous_interaction_id, thread_key,
+		created_at, updated_at
 	FROM interactions WHERE id = ?`
 
 	var interaction domain.Interaction
@@ -137,9 +154,10 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	var durationNs int64
 	var requestRaw, requestCanonical, requestUnmappedFields, requestProvider sql.NullString
 	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
-	var responseFinishReason, responseUsage sql.NullString
+	var responseProviderID, responseFinishReason, responseUsage sql.NullString
 	var errorType, errorCode, errorMessage sql.NullString
 	var metadataStr, requestHeadersStr, transformationStepsStr sql.NullString
+	var previousInteractionID, threadKey sql.NullString
 	var appName, servedModel, providerModel sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
@@ -148,9 +166,10 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		&streaming, &status, &durationNs,
 		&requestRaw, &requestCanonical, &requestUnmappedFields, &requestProvider,
 		&responseRaw, &responseCanonical, &responseUnmappedFields, &responseClient,
-		&responseFinishReason, &responseUsage,
+		&responseProviderID, &responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,
 		&metadataStr, &requestHeadersStr, &transformationStepsStr,
+		&previousInteractionID, &threadKey,
 		&interaction.CreatedAt, &interaction.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -174,6 +193,12 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	if providerModel.Valid {
 		interaction.ProviderModel = providerModel.String
 	}
+	if previousInteractionID.Valid {
+		interaction.PreviousInteractionID = previousInteractionID.String
+	}
+	if threadKey.Valid {
+		interaction.ThreadKey = threadKey.String
+	}
 
 	// Unmarshal request
 	if requestRaw.Valid || requestCanonical.Valid || requestUnmappedFields.Valid || requestProvider.Valid {
@@ -193,7 +218,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	}
 
 	// Unmarshal response
-	if responseRaw.Valid || responseCanonical.Valid || responseUnmappedFields.Valid || responseClient.Valid || responseFinishReason.Valid || responseUsage.Valid {
+	if responseRaw.Valid || responseCanonical.Valid || responseUnmappedFields.Valid || responseClient.Valid || responseProviderID.Valid || responseFinishReason.Valid || responseUsage.Valid {
 		interaction.Response = &domain.InteractionResponse{}
 		if responseRaw.Valid {
 			interaction.Response.Raw = json.RawMessage(responseRaw.String)
@@ -206,6 +231,9 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		}
 		if responseClient.Valid {
 			interaction.Response.ClientResponse = json.RawMessage(responseClient.String)
+		}
+		if responseProviderID.Valid {
+			interaction.Response.ProviderResponseID = responseProviderID.String
 		}
 		if responseFinishReason.Valid {
 			interaction.Response.FinishReason = responseFinishReason.String
@@ -246,6 +274,23 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	return &interaction, nil
 }
 
+// GetInteractionByProviderResponseID retrieves an interaction by the provider's response ID.
+// This is used by the Responses API to look up previous interactions when given a resp_<uuid>.
+func (s *Store) GetInteractionByProviderResponseID(ctx context.Context, providerResponseID string) (*domain.Interaction, error) {
+	query := `SELECT id FROM interactions WHERE response_provider_id = ? LIMIT 1`
+
+	var interactionID string
+	err := s.db.QueryRowContext(ctx, query, providerResponseID).Scan(&interactionID)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("interaction with provider response ID %s not found", providerResponseID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup interaction by provider response ID: %w", err)
+	}
+
+	return s.GetInteraction(ctx, interactionID)
+}
+
 // UpdateInteraction updates an existing interaction
 func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error {
 	interaction.UpdatedAt = time.Now()
@@ -256,7 +301,7 @@ func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Inter
 	}
 
 	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
-	var responseFinishReason, responseUsage sql.NullString
+	var responseProviderID, responseFinishReason, responseUsage sql.NullString
 	var errorType, errorCode, errorMessage sql.NullString
 
 	if interaction.Response != nil {
@@ -272,6 +317,9 @@ func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Inter
 		}
 		if len(interaction.Response.ClientResponse) > 0 {
 			responseClient = sql.NullString{String: string(interaction.Response.ClientResponse), Valid: true}
+		}
+		if interaction.Response.ProviderResponseID != "" {
+			responseProviderID = sql.NullString{String: interaction.Response.ProviderResponseID, Valid: true}
 		}
 		if interaction.Response.FinishReason != "" {
 			responseFinishReason = sql.NullString{String: interaction.Response.FinishReason, Valid: true}
@@ -294,7 +342,7 @@ func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Inter
 		served_model = ?, provider_model = ?,
 		status = ?, duration_ns = ?,
 		response_raw = ?, response_canonical = ?, response_unmapped_fields = ?, response_client = ?,
-		response_finish_reason = ?, response_usage = ?,
+		response_provider_id = ?, response_finish_reason = ?, response_usage = ?,
 		error_type = ?, error_code = ?, error_message = ?,
 		metadata = ?, updated_at = ?
 	WHERE id = ?`
@@ -303,7 +351,7 @@ func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Inter
 		interaction.ServedModel, interaction.ProviderModel,
 		string(interaction.Status), int64(interaction.Duration),
 		responseRaw, responseCanonical, responseUnmappedFields, responseClient,
-		responseFinishReason, responseUsage,
+		responseProviderID, responseFinishReason, responseUsage,
 		errorType, errorCode, errorMessage,
 		string(metadata), interaction.UpdatedAt, interaction.ID)
 

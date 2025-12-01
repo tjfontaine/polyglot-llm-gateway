@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from 'react';
-import type { Stats, Overview, InteractionSummary, InteractionDetailUnion } from '../types';
+import type { Stats, Overview, InteractionSummary, NewInteractionDetail } from '../types';
 
 const API_BASE = '/admin/api';
+
+// Filter by frontdoor type - unified model doesn't distinguish conversation/response
+type InteractionFilter = '' | 'openai' | 'anthropic' | 'responses';
 
 interface ApiContextValue {
   stats: Stats | null;
@@ -12,8 +15,8 @@ interface ApiContextValue {
   loadingInteractions: boolean;
   refreshStats: () => Promise<void>;
   refreshOverview: () => Promise<void>;
-  refreshInteractions: (filter?: 'conversation' | 'response' | 'interaction' | '') => Promise<void>;
-  fetchInteractionDetail: (id: string) => Promise<InteractionDetailUnion | null>;
+  refreshInteractions: (filter?: InteractionFilter) => Promise<void>;
+  fetchInteractionDetail: (id: string) => Promise<NewInteractionDetail | null>;
   fetchInteractionEvents: (id: string) => Promise<any>;
 }
 
@@ -49,7 +52,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshInteractions = useCallback(async (filter: 'conversation' | 'response' | 'interaction' | '' = '') => {
+  const refreshInteractions = useCallback(async (filter: InteractionFilter = '') => {
     if (!overview?.storage.enabled) {
       setInteractions([]);
       setInteractionsTotal(0);
@@ -59,8 +62,9 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     setLoadingInteractions(true);
     setInteractionsError(null);
     try {
-      const typeParam = filter ? `&type=${filter}` : '';
-      const res = await fetch(`${API_BASE}/interactions?limit=100${typeParam}`);
+      // Filter by frontdoor type instead of legacy conversation/response types
+      const frontdoorParam = filter ? `&frontdoor=${filter}` : '';
+      const res = await fetch(`${API_BASE}/interactions?limit=100${frontdoorParam}`);
       if (!res.ok) throw new Error('Failed to load interactions');
       const data = await res.json();
       setInteractions(data.interactions ?? []);
@@ -73,7 +77,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     }
   }, [overview?.storage.enabled]);
 
-  const fetchInteractionDetail = useCallback(async (id: string): Promise<InteractionDetailUnion | null> => {
+  const fetchInteractionDetail = useCallback(async (id: string): Promise<NewInteractionDetail | null> => {
     try {
       const res = await fetch(`${API_BASE}/interactions/${id}`);
       if (!res.ok) throw new Error('Failed to load interaction');

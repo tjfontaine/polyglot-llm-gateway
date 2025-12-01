@@ -276,6 +276,20 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	return interaction, nil
 }
 
+// GetInteractionByProviderResponseID retrieves an interaction by the provider's response ID.
+// This is used by the Responses API to look up previous interactions when given a resp_<uuid>.
+func (s *Store) GetInteractionByProviderResponseID(ctx context.Context, providerResponseID string) (*domain.Interaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, interaction := range s.interactions {
+		if interaction.Response != nil && interaction.Response.ProviderResponseID == providerResponseID {
+			return interaction, nil
+		}
+	}
+	return nil, fmt.Errorf("interaction with provider response ID %s not found", providerResponseID)
+}
+
 func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

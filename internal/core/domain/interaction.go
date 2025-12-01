@@ -60,6 +60,12 @@ type Interaction struct {
 	// TransformationSteps captures the transformation flow for debugging
 	TransformationSteps []TransformationStep `json:"transformation_steps,omitempty"`
 
+	// PreviousInteractionID links to a previous interaction for continuations (Responses API)
+	PreviousInteractionID string `json:"previous_interaction_id,omitempty"`
+
+	// ThreadKey is an optional key for grouping related interactions
+	ThreadKey string `json:"thread_key,omitempty"`
+
 	// CreatedAt is when the interaction was created
 	CreatedAt time.Time `json:"created_at"`
 
@@ -71,10 +77,11 @@ type Interaction struct {
 type InteractionStatus string
 
 const (
-	InteractionStatusPending   InteractionStatus = "pending"
-	InteractionStatusCompleted InteractionStatus = "completed"
-	InteractionStatusFailed    InteractionStatus = "failed"
-	InteractionStatusCancelled InteractionStatus = "cancelled"
+	InteractionStatusPending    InteractionStatus = "pending"
+	InteractionStatusInProgress InteractionStatus = "in_progress"
+	InteractionStatusCompleted  InteractionStatus = "completed"
+	InteractionStatusFailed     InteractionStatus = "failed"
+	InteractionStatusCancelled  InteractionStatus = "cancelled"
 )
 
 // InteractionRequest contains details about the incoming request
@@ -112,6 +119,10 @@ type InteractionResponse struct {
 
 	// ClientResponse is what was actually sent back to the client
 	ClientResponse json.RawMessage `json:"client_response,omitempty"`
+
+	// ProviderResponseID is the ID assigned by the provider (e.g., "chatcmpl-xxx", "msg_xxx")
+	// This is stored for reference but NOT used as our primary key
+	ProviderResponseID string `json:"provider_response_id,omitempty"`
 
 	// FinishReason indicates why the model stopped generating
 	FinishReason string `json:"finish_reason,omitempty"`

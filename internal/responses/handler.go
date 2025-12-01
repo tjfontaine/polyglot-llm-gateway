@@ -14,20 +14,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // Handler handles OpenAI Responses API requests
 type Handler struct {
-	store    storage.ConversationStore
+	store    ports.InteractionStore
 	provider ports.Provider
 	logger   *slog.Logger
 }
 
 // NewHandler creates a new Responses API handler
-func NewHandler(store storage.ConversationStore, provider ports.Provider) *Handler {
+func NewHandler(store ports.InteractionStore, provider ports.Provider) *Handler {
 	return &Handler{
 		store:    store,
 		provider: provider,
@@ -63,62 +63,165 @@ func (h *Handler) HandleCreateResponse(w http.ResponseWriter, r *http.Request) {
 	canonReq.UserAgent = r.Header.Get("User-Agent")
 	canonReq.SourceAPIType = domain.APITypeResponses
 
+	// Generate gateway-owned interaction ID as primary key
+	interactionID := "int_" + uuid.New().String()
+
+	// Generate client-facing response ID (for backwards compatibility with Responses API clients)
+	responseID := "resp_" + uuid.New().String()
+
+	// Threading info
+	var previousInteractionID, threadKey string
+
 	// Handle previous response continuation
 	if req.PreviousResponseID != "" {
-		if err := h.loadPreviousContext(r.Context(), req.PreviousResponseID, canonReq); err != nil {
+		prevResult, err := h.loadPreviousContext(r.Context(), req.PreviousResponseID, canonReq)
+		if err != nil {
 			h.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
+		if prevResult != nil {
+			previousInteractionID = prevResult.PreviousInteractionID
+			threadKey = prevResult.ThreadKey
+		}
 	}
 
-	// Generate response ID
-	responseID := "resp_" + uuid.New().String()
-
 	if req.Stream {
-		h.handleStreamingResponse(w, r, &req, canonReq, responseID, tenantID)
+		h.handleStreamingResponse(w, r, &req, canonReq, responseID, interactionID, previousInteractionID, threadKey, tenantID)
 		return
 	}
 
-	h.handleNonStreamingResponse(w, r, &req, canonReq, responseID, tenantID)
+	h.handleNonStreamingResponse(w, r, &req, canonReq, responseID, interactionID, previousInteractionID, threadKey, tenantID)
 }
 
-func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, tenantID string) {
+func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, interactionID, previousInteractionID, threadKey, tenantID string) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+	startTime := time.Now()
+	providerName := h.provider.Name()
+
+	// Raw request for recording
+	rawReqJSON, _ := json.Marshal(req)
+
+	// Log frontdoor decode event
+	canonJSON, _ := json.Marshal(canonReq)
+	metaJSON, _ := json.Marshal(map[string]string{
+		"request_id":  requestID,
+		"response_id": responseID,
+	})
+	conversation.LogEvent(r.Context(), h.store, &domain.InteractionEvent{
+		InteractionID:  interactionID,
+		Stage:          "frontdoor_decode",
+		Direction:      "ingress",
+		APIType:        domain.APITypeResponses,
+		Frontdoor:      "responses",
+		Provider:       providerName,
+		ModelRequested: canonReq.Model,
+		Raw:            rawReqJSON,
+		Canonical:      canonJSON,
+		Metadata:       metaJSON,
+	})
 
 	// Call provider
 	canonResp, err := h.provider.Complete(r.Context(), canonReq)
+	duration := time.Since(startTime)
+
 	if err != nil {
 		h.logger.Error("provider error",
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
+		// Record failed interaction
+		if req.Store == nil || *req.Store {
+			conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+				Store:                 h.store,
+				RawRequest:            rawReqJSON,
+				CanonicalReq:          canonReq,
+				Frontdoor:             domain.APITypeResponses,
+				Provider:              h.provider.Name(),
+				Streaming:             false,
+				Error:                 err,
+				Duration:              duration,
+				PreviousInteractionID: previousInteractionID,
+				ThreadKey:             threadKey,
+				RequestHeaders:        r.Header,
+			})
+		}
 		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
 		return
 	}
 
 	// Convert to Responses API format
 	resp := h.canonicalToResponsesAPI(canonResp, responseID, req)
+	clientRespJSON, _ := json.Marshal(resp)
 
-	// Save response if store supports it
-	if respStore, ok := h.store.(storage.ResponseStore); ok && (req.Store == nil || *req.Store) {
-		reqJSON, _ := json.Marshal(req)
-		respJSON, _ := json.Marshal(resp)
-		record := &storage.ResponseRecord{
-			ID:                 responseID,
-			TenantID:           tenantID,
-			Status:             "completed",
-			Model:              req.Model,
-			Request:            reqJSON,
-			Response:           respJSON,
-			Metadata:           req.Metadata,
-			PreviousResponseID: req.PreviousResponseID,
+	// Store the response ID as the provider response ID in canonical response for recording
+	canonResp.ID = responseID
+
+	// Log response events
+	if len(canonResp.ProviderRequestBody) > 0 {
+		conversation.LogEvent(r.Context(), h.store, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "provider_encode",
+			Direction:      "egress",
+			APIType:        domain.APITypeResponses,
+			Frontdoor:      "responses",
+			Provider:       providerName,
+			ModelRequested: canonReq.Model,
+			Raw:            canonResp.ProviderRequestBody,
+		})
+	}
+	if len(canonResp.RawResponse) > 0 {
+		conversation.LogEvent(r.Context(), h.store, &domain.InteractionEvent{
+			InteractionID:  interactionID,
+			Stage:          "provider_decode",
+			Direction:      "ingress",
+			APIType:        domain.APITypeResponses,
+			Frontdoor:      "responses",
+			Provider:       providerName,
+			ModelRequested: canonReq.Model,
+			ModelServed:    canonResp.Model,
+			ProviderModel:  canonResp.ProviderModel,
+			Raw:            canonResp.RawResponse,
+		})
+	}
+	respCanon, _ := json.Marshal(canonResp)
+	conversation.LogEvent(r.Context(), h.store, &domain.InteractionEvent{
+		InteractionID:  interactionID,
+		Stage:          "frontdoor_encode",
+		Direction:      "egress",
+		APIType:        domain.APITypeResponses,
+		Frontdoor:      "responses",
+		Provider:       providerName,
+		ModelRequested: canonReq.Model,
+		ModelServed:    canonResp.Model,
+		ProviderModel:  canonResp.ProviderModel,
+		Raw:            clientRespJSON,
+		Canonical:      respCanon,
+	})
+
+	// Record interaction through IR layer if storage is enabled
+	if req.Store == nil || *req.Store {
+		// Determine finish reason
+		finishReason := "stop"
+		if len(canonResp.Choices) > 0 {
+			finishReason = canonResp.Choices[0].FinishReason
 		}
-		if err := respStore.SaveResponse(r.Context(), record); err != nil {
-			h.logger.Warn("failed to save response",
-				slog.String("request_id", requestID),
-				slog.String("error", err.Error()),
-			)
-		}
+
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:                 h.store,
+			RawRequest:            rawReqJSON,
+			CanonicalReq:          canonReq,
+			RawResponse:           nil, // We don't have raw provider response in this flow
+			CanonicalResp:         canonResp,
+			ClientResponse:        clientRespJSON,
+			Frontdoor:             domain.APITypeResponses,
+			Provider:              providerName,
+			Streaming:             false,
+			Duration:              duration,
+			FinishReason:          finishReason,
+			PreviousInteractionID: previousInteractionID,
+			ThreadKey:             threadKey,
+			RequestHeaders:        r.Header,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -134,8 +237,32 @@ type streamingToolCall struct {
 	index     int
 }
 
-func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, tenantID string) {
+func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request, req *domain.ResponsesAPIRequest, canonReq *domain.CanonicalRequest, responseID, interactionID, previousInteractionID, threadKey, tenantID string) {
 	requestID, _ := r.Context().Value(middleware.RequestIDKey).(string)
+	startTime := time.Now()
+	providerName := h.provider.Name()
+
+	// Raw request for recording
+	rawReqJSON, _ := json.Marshal(req)
+
+	// Log frontdoor decode event
+	canonJSON, _ := json.Marshal(canonReq)
+	metaJSON, _ := json.Marshal(map[string]string{
+		"request_id":  requestID,
+		"response_id": responseID,
+	})
+	conversation.LogEvent(r.Context(), h.store, &domain.InteractionEvent{
+		InteractionID:  interactionID,
+		Stage:          "frontdoor_decode",
+		Direction:      "ingress",
+		APIType:        domain.APITypeResponses,
+		Frontdoor:      "responses",
+		Provider:       providerName,
+		ModelRequested: canonReq.Model,
+		Raw:            rawReqJSON,
+		Canonical:      canonJSON,
+		Metadata:       metaJSON,
+	})
 
 	// Start streaming from provider
 	events, err := h.provider.Stream(r.Context(), canonReq)
@@ -144,6 +271,22 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			slog.String("request_id", requestID),
 			slog.String("error", err.Error()),
 		)
+		// Record failed interaction
+		if req.Store == nil || *req.Store {
+			conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+				Store:                 h.store,
+				RawRequest:            rawReqJSON,
+				CanonicalReq:          canonReq,
+				Frontdoor:             domain.APITypeResponses,
+				Provider:              h.provider.Name(),
+				Streaming:             true,
+				Error:                 err,
+				Duration:              time.Since(startTime),
+				PreviousInteractionID: previousInteractionID,
+				ThreadKey:             threadKey,
+				RequestHeaders:        r.Header,
+			})
+		}
 		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
 		return
 	}
@@ -408,8 +551,8 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		responseStatus = "incomplete"
 	}
 
-	// Save response if store supports it
-	if respStore, ok := h.store.(storage.ResponseStore); ok && (req.Store == nil || *req.Store) {
+	// Record interaction through IR layer if storage is enabled
+	if req.Store == nil || *req.Store {
 		finalResp := &domain.ResponsesAPIResponse{
 			ID:                 responseID,
 			Object:             "response",
@@ -421,24 +564,43 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			PreviousResponseID: req.PreviousResponseID,
 			Metadata:           req.Metadata,
 		}
-		reqJSON, _ := json.Marshal(req)
-		respJSON, _ := json.Marshal(finalResp)
-		record := &storage.ResponseRecord{
-			ID:                 responseID,
-			TenantID:           tenantID,
-			Status:             responseStatus,
-			Model:              req.Model,
-			Request:            reqJSON,
-			Response:           respJSON,
-			Metadata:           req.Metadata,
-			PreviousResponseID: req.PreviousResponseID,
+		clientRespJSON, _ := json.Marshal(finalResp)
+
+		// Build a canonical response from the streaming data
+		canonResp := &domain.CanonicalResponse{
+			ID:    responseID,
+			Model: req.Model,
+			Usage: domain.Usage{},
 		}
-		if err := respStore.SaveResponse(r.Context(), record); err != nil {
-			h.logger.Warn("failed to save streaming response",
-				slog.String("request_id", requestID),
-				slog.String("error", err.Error()),
-			)
+		if finalUsage != nil {
+			canonResp.Usage = *finalUsage
 		}
+		if fullText.Len() > 0 {
+			canonResp.Choices = append(canonResp.Choices, domain.Choice{
+				Index:        0,
+				FinishReason: finishReason,
+				Message: domain.Message{
+					Role:    "assistant",
+					Content: fullText.String(),
+				},
+			})
+		}
+
+		conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+			Store:                 h.store,
+			RawRequest:            rawReqJSON,
+			CanonicalReq:          canonReq,
+			CanonicalResp:         canonResp,
+			ClientResponse:        clientRespJSON,
+			Frontdoor:             domain.APITypeResponses,
+			Provider:              h.provider.Name(),
+			Streaming:             true,
+			Duration:              time.Since(startTime),
+			FinishReason:          finishReason,
+			PreviousInteractionID: previousInteractionID,
+			ThreadKey:             threadKey,
+			RequestHeaders:        r.Header,
+		})
 	}
 }
 
@@ -460,73 +622,96 @@ func (h *Handler) canonicalToResponsesAPI(canonResp *domain.CanonicalResponse, r
 	return resp
 }
 
-func (h *Handler) loadPreviousContext(ctx context.Context, previousID string, canonReq *domain.CanonicalRequest) error {
-	respStore, ok := h.store.(storage.ResponseStore)
-	if !ok {
-		return fmt.Errorf("response storage not available")
-	}
+// loadPreviousContextResult holds the result of loading previous context
+type loadPreviousContextResult struct {
+	// PreviousInteractionID is the gateway interaction ID of the previous response
+	PreviousInteractionID string
+	// ThreadKey for chaining all interactions in a thread (first interaction ID)
+	ThreadKey string
+}
 
-	record, err := respStore.GetResponse(ctx, previousID)
+func (h *Handler) loadPreviousContext(ctx context.Context, previousID string, canonReq *domain.CanonicalRequest) (*loadPreviousContextResult, error) {
+	interaction, err := h.store.GetInteractionByProviderResponseID(ctx, previousID)
 	if err != nil {
-		return fmt.Errorf("previous response not found: %w", err)
+		return nil, fmt.Errorf("previous response not found: %w", err)
 	}
 
-	var prevResp domain.ResponsesAPIResponse
-	if err := json.Unmarshal(record.Response, &prevResp); err != nil {
-		return fmt.Errorf("failed to parse previous response: %w", err)
+	result := &loadPreviousContextResult{
+		PreviousInteractionID: interaction.ID,
 	}
 
-	// Build messages from previous response
-	for _, item := range prevResp.Output {
-		if item.Type == "message" {
-			var content string
-			for _, part := range item.Content {
-				if part.Type == "output_text" {
-					content += part.Text
+	// Determine thread key: use existing thread key or first interaction ID
+	if interaction.ThreadKey != "" {
+		result.ThreadKey = interaction.ThreadKey
+	} else {
+		// No thread key means this was the first in the thread
+		result.ThreadKey = interaction.ID
+	}
+
+	// Build messages from previous interaction
+	if interaction.Response != nil && len(interaction.Response.ClientResponse) > 0 {
+		var prevResp domain.ResponsesAPIResponse
+		if jsonErr := json.Unmarshal(interaction.Response.ClientResponse, &prevResp); jsonErr == nil {
+			for _, item := range prevResp.Output {
+				if item.Type == "message" {
+					var content string
+					for _, part := range item.Content {
+						if part.Type == "output_text" {
+							content += part.Text
+						}
+					}
+					msg := domain.Message{
+						Role:    item.Role,
+						Content: content,
+					}
+					canonReq.Messages = append([]domain.Message{msg}, canonReq.Messages...)
 				}
 			}
-			// Prepend previous messages
-			msg := domain.Message{
-				Role:    item.Role,
-				Content: content,
-			}
-			canonReq.Messages = append([]domain.Message{msg}, canonReq.Messages...)
 		}
 	}
 
 	// Recursively load earlier context
-	if record.PreviousResponseID != "" {
-		return h.loadPreviousContext(ctx, record.PreviousResponseID, canonReq)
+	if interaction.PreviousInteractionID != "" {
+		prevInteraction, err := h.store.GetInteraction(ctx, interaction.PreviousInteractionID)
+		if err == nil && prevInteraction.Response != nil && prevInteraction.Response.ProviderResponseID != "" {
+			_, recurseErr := h.loadPreviousContext(ctx, prevInteraction.Response.ProviderResponseID, canonReq)
+			if recurseErr != nil {
+				h.logger.Warn("failed to load recursive context",
+					slog.String("previous_id", prevInteraction.Response.ProviderResponseID),
+					slog.String("error", recurseErr.Error()),
+				)
+			}
+		}
 	}
 
-	return nil
+	return result, nil
 }
 
 // HandleGetResponse handles GET /v1/responses/{response_id}
 func (h *Handler) HandleGetResponse(w http.ResponseWriter, r *http.Request) {
 	responseID := chi.URLParam(r, "response_id")
+	tenantID := getTenantID(r.Context())
 
-	respStore, ok := h.store.(storage.ResponseStore)
-	if !ok {
-		h.writeError(w, http.StatusNotImplemented, "not_implemented", "Response storage not available")
-		return
-	}
-
-	record, err := respStore.GetResponse(r.Context(), responseID)
+	interaction, err := h.store.GetInteractionByProviderResponseID(r.Context(), responseID)
 	if err != nil {
 		h.writeError(w, http.StatusNotFound, "not_found", "Response not found")
 		return
 	}
 
 	// Verify tenant access
-	tenantID := getTenantID(r.Context())
-	if record.TenantID != tenantID {
+	if interaction.TenantID != tenantID {
 		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
+	// Return the stored client response
+	if interaction.Response == nil || len(interaction.Response.ClientResponse) == 0 {
+		h.writeError(w, http.StatusInternalServerError, "parse_error", "Response data not available")
+		return
+	}
+
 	var resp domain.ResponsesAPIResponse
-	if err := json.Unmarshal(record.Response, &resp); err != nil {
+	if err := json.Unmarshal(interaction.Response.ClientResponse, &resp); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "parse_error", "Failed to parse response")
 		return
 	}
@@ -538,39 +723,41 @@ func (h *Handler) HandleGetResponse(w http.ResponseWriter, r *http.Request) {
 // HandleCancelResponse handles POST /v1/responses/{response_id}/cancel
 func (h *Handler) HandleCancelResponse(w http.ResponseWriter, r *http.Request) {
 	responseID := chi.URLParam(r, "response_id")
+	tenantID := getTenantID(r.Context())
 
-	respStore, ok := h.store.(storage.ResponseStore)
-	if !ok {
-		h.writeError(w, http.StatusNotImplemented, "not_implemented", "Response storage not available")
-		return
-	}
-
-	record, err := respStore.GetResponse(r.Context(), responseID)
+	interaction, err := h.store.GetInteractionByProviderResponseID(r.Context(), responseID)
 	if err != nil {
 		h.writeError(w, http.StatusNotFound, "not_found", "Response not found")
 		return
 	}
 
 	// Verify tenant access
-	tenantID := getTenantID(r.Context())
-	if record.TenantID != tenantID {
+	if interaction.TenantID != tenantID {
 		h.writeError(w, http.StatusForbidden, "forbidden", "Access denied")
 		return
 	}
 
-	// Only in_progress responses can be cancelled
-	if record.Status != "in_progress" {
+	// Only in_progress interactions can be cancelled
+	if interaction.Status != domain.InteractionStatusInProgress {
 		h.writeError(w, http.StatusBadRequest, "invalid_state", "Response is not in progress")
 		return
 	}
 
-	if err := respStore.UpdateResponseStatus(r.Context(), responseID, "cancelled"); err != nil {
+	// Update status to cancelled
+	interaction.Status = domain.InteractionStatusCancelled
+	if err := h.store.UpdateInteraction(r.Context(), interaction); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "update_error", "Failed to cancel response")
 		return
 	}
 
+	// Return the cancelled response
+	if interaction.Response == nil || len(interaction.Response.ClientResponse) == 0 {
+		h.writeError(w, http.StatusInternalServerError, "parse_error", "Response data not available")
+		return
+	}
+
 	var resp domain.ResponsesAPIResponse
-	if err := json.Unmarshal(record.Response, &resp); err != nil {
+	if err := json.Unmarshal(interaction.Response.ClientResponse, &resp); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "parse_error", "Failed to parse response")
 		return
 	}
@@ -580,7 +767,7 @@ func (h *Handler) HandleCancelResponse(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// Thread-based API (legacy compatibility)
+// Thread-based API
 
 // HandleCreateThread creates a new conversation thread
 func (h *Handler) HandleCreateThread(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +781,7 @@ func (h *Handler) HandleCreateThread(w http.ResponseWriter, r *http.Request) {
 
 	tenantID := getTenantID(r.Context())
 
-	conv := &storage.Conversation{
+	conv := &ports.Conversation{
 		ID:       "thread_" + uuid.New().String(),
 		TenantID: tenantID,
 		Metadata: req.Metadata,
@@ -668,7 +855,7 @@ func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := &storage.StoredMessage{
+	msg := &ports.StoredMessage{
 		ID:      "msg_" + uuid.New().String(),
 		Role:    req.Role,
 		Content: req.Content,
@@ -786,7 +973,7 @@ func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 
 	// Store assistant response
 	if len(canonResp.Choices) > 0 {
-		assistantMsg := &storage.StoredMessage{
+		assistantMsg := &ports.StoredMessage{
 			ID:      "msg_" + uuid.New().String(),
 			Role:    "assistant",
 			Content: canonResp.Choices[0].Message.Content,
