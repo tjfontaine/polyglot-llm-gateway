@@ -1,14 +1,14 @@
 package sqldb
 
 import (
-"context"
-"database/sql"
-"encoding/json"
-"fmt"
-"time"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
 
-"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 )
 
 // Ensure Store implements ShadowStore
@@ -92,13 +92,13 @@ created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	_, err := s.db.ExecContext(ctx, query,
-result.ID, result.InteractionID, result.ProviderName, result.ProviderModel,
-requestCanonical, requestProvider,
-responseRaw, responseCanonical, responseClient, responseFinishReason, responseUsage,
-errorType, errorCode, errorMessage,
-int64(result.Duration), result.TokensIn, result.TokensOut,
-divergencesJSON, hasStructuralDivergence,
-result.CreatedAt)
+		result.ID, result.InteractionID, result.ProviderName, result.ProviderModel,
+		requestCanonical, requestProvider,
+		responseRaw, responseCanonical, responseClient, responseFinishReason, responseUsage,
+		errorType, errorCode, errorMessage,
+		int64(result.Duration), result.TokensIn, result.TokensOut,
+		divergencesJSON, hasStructuralDivergence,
+		result.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save shadow result: %w", err)
@@ -200,7 +200,7 @@ func (s *Store) ListDivergentInteractions(ctx context.Context, opts *ports.Diver
 		var metadataStr, appName, servedModel sql.NullString
 
 		err := rows.Scan(
-&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider, &appName,
+			&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider, &appName,
 			&summary.RequestedModel, &servedModel, &streaming, &status, &durationNs,
 			&metadataStr, &summary.CreatedAt, &summary.UpdatedAt)
 		if err != nil {
@@ -256,7 +256,7 @@ func (s *Store) scanShadowResult(row *sql.Row) (*domain.ShadowResult, error) {
 	var providerModel sql.NullString
 
 	err := row.Scan(
-&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
+		&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
 		&requestCanonical, &requestProvider,
 		&responseRaw, &responseCanonical, &responseClient, &responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,
@@ -346,7 +346,7 @@ func (s *Store) scanShadowResultRow(rows *sql.Rows) (*domain.ShadowResult, error
 	var providerModel sql.NullString
 
 	err := rows.Scan(
-&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
+		&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
 		&requestCanonical, &requestProvider,
 		&responseRaw, &responseCanonical, &responseClient, &responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,

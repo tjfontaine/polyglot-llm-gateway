@@ -1,18 +1,18 @@
 package sqldb
 
 import (
-"context"
-"database/sql"
-"encoding/json"
-"fmt"
-"time"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
 
-"github.com/jmoiron/sqlx"
-_ "modernc.org/sqlite"
+	"github.com/jmoiron/sqlx"
+	_ "modernc.org/sqlite"
 
-"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
-"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/dialect"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/dialect"
 )
 
 // Store is a SQL implementation of ConversationStore, ResponseStore, and InteractionStore
@@ -278,7 +278,7 @@ func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversati
 	          VALUES (?, ?, ?, ?, ?)`)
 
 	_, err = s.db.ExecContext(ctx, query,
-conv.ID, conv.TenantID, string(metadata), conv.CreatedAt, conv.UpdatedAt)
+		conv.ID, conv.TenantID, string(metadata), conv.CreatedAt, conv.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create conversation: %w", err)
@@ -295,7 +295,7 @@ func (s *Store) GetConversation(ctx context.Context, id string) (*storage.Conver
 	var metadataJSON string
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-&conv.ID, &conv.TenantID, &metadataJSON, &conv.CreatedAt, &conv.UpdatedAt)
+		&conv.ID, &conv.TenantID, &metadataJSON, &conv.CreatedAt, &conv.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("conversation %s not found", id)
@@ -355,7 +355,7 @@ func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.Stor
 	          VALUES (?, ?, ?, ?, ?)`)
 
 	_, err = tx.ExecContext(ctx, query,
-msg.ID, convID, msg.Role, msg.Content, msg.CreatedAt)
+		msg.ID, convID, msg.Role, msg.Content, msg.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to insert message: %w", err)
@@ -484,9 +484,9 @@ func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) 
 	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	_, err = s.db.ExecContext(ctx, query,
-resp.ID, resp.TenantID, resp.Status, resp.Model,
-string(resp.Request), string(resp.Response), string(metadata),
-resp.PreviousResponseID, resp.CreatedAt, resp.UpdatedAt)
+		resp.ID, resp.TenantID, resp.Status, resp.Model,
+		string(resp.Request), string(resp.Response), string(metadata),
+		resp.PreviousResponseID, resp.CreatedAt, resp.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save response: %w", err)
@@ -503,7 +503,7 @@ func (s *Store) GetResponse(ctx context.Context, id string) (*storage.ResponseRe
 	var requestStr, responseStr, metadataStr, previousID sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
+		&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
 		&requestStr, &responseStr, &metadataStr, &previousID,
 		&resp.CreatedAt, &resp.UpdatedAt)
 
@@ -661,12 +661,12 @@ raw, canonical, headers, metadata, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	_, err := s.db.ExecContext(ctx, query,
-event.ID, event.InteractionID, event.Stage, event.Direction, string(event.APIType),
-event.Frontdoor, event.Provider, event.AppName, event.ModelRequested, event.ModelServed,
-event.ProviderModel, event.ThreadKey, event.PreviousResponseID,
-string(event.Raw), string(event.Canonical), string(event.Headers), string(event.Metadata),
-event.CreatedAt,
-)
+		event.ID, event.InteractionID, event.Stage, event.Direction, string(event.APIType),
+		event.Frontdoor, event.Provider, event.AppName, event.ModelRequested, event.ModelServed,
+		event.ProviderModel, event.ThreadKey, event.PreviousResponseID,
+		string(event.Raw), string(event.Canonical), string(event.Headers), string(event.Metadata),
+		event.CreatedAt,
+	)
 	return err
 }
 
@@ -700,7 +700,7 @@ func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string,
 		var apiType string
 		var rawStr, canonStr, headersStr, metaStr string
 		if err := rows.Scan(
-&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
+			&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
 			&evt.Frontdoor, &evt.Provider, &evt.AppName, &evt.ModelRequested,
 			&evt.ModelServed, &evt.ProviderModel, &evt.ThreadKey, &evt.PreviousResponseID,
 			&rawStr, &canonStr, &headersStr, &metaStr, &evt.CreatedAt,

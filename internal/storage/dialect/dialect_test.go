@@ -1,7 +1,7 @@
 package dialect
 
 import (
-"testing"
+	"testing"
 )
 
 func TestNew(t *testing.T) {
@@ -19,12 +19,12 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-d, err := New(tt.dialectType)
-if (err != nil) != tt.wantErr {
-t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-return
-}
-if err == nil && d.Name() != tt.wantName {
+			d, err := New(tt.dialectType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil && d.Name() != tt.wantName {
 				t.Errorf("Name() = %v, want %v", d.Name(), tt.wantName)
 			}
 		})
@@ -47,12 +47,12 @@ func TestFromDriverName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.driverName, func(t *testing.T) {
-d, err := FromDriverName(tt.driverName)
-if (err != nil) != tt.wantErr {
-t.Errorf("FromDriverName() error = %v, wantErr %v", err, tt.wantErr)
-return
-}
-if err == nil && d.Name() != tt.wantName {
+			d, err := FromDriverName(tt.driverName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FromDriverName() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil && d.Name() != tt.wantName {
 				t.Errorf("Name() = %v, want %v", d.Name(), tt.wantName)
 			}
 		})
@@ -82,11 +82,11 @@ func TestPostgresDialect_Rebind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-got := d.Rebind(tt.query)
-if got != tt.want {
-t.Errorf("Rebind() = %v, want %v", got, tt.want)
-}
-})
+			got := d.Rebind(tt.query)
+			if got != tt.want {
+				t.Errorf("Rebind() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -162,7 +162,7 @@ func TestDialect_Types(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-if got := tt.dialect.BooleanType(); got != tt.boolType {
+			if got := tt.dialect.BooleanType(); got != tt.boolType {
 				t.Errorf("BooleanType() = %v, want %v", got, tt.boolType)
 			}
 			if got := tt.dialect.TimestampType(); got != tt.timestampType {
@@ -188,7 +188,7 @@ func TestDialect_SupportsReturning(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-if got := tt.dialect.SupportsReturning(); got != tt.want {
+			if got := tt.dialect.SupportsReturning(); got != tt.want {
 				t.Errorf("SupportsReturning() = %v, want %v", got, tt.want)
 			}
 		})

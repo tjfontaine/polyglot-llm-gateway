@@ -184,7 +184,7 @@ if respStore, ok := h.store.(storage.ResponseStore); ok {
 
 Added `ProviderResponseID` to `InteractionResponse` struct.
 
-**File**: `internal/storage/sqlite/store.go`
+**File**: `internal/storage/sqldb/store.go`
 
 Added `response_provider_id` column to interactions table schema.
 
@@ -216,7 +216,7 @@ Updated `RecordInteractionParams` to accept threading fields:
 - `PreviousInteractionID string`
 - `ThreadKey string`
 
-**File**: `internal/storage/sqlite/store.go`
+**File**: `internal/storage/sqldb/store.go`
 
 Added to interactions table:
 
@@ -230,7 +230,7 @@ Added to `InteractionStore` interface:
 
 - `GetInteractionByProviderResponseID(ctx, providerResponseID) (*Interaction, error)`
 
-**File**: `internal/storage/sqlite/interaction_store.go`
+**File**: `internal/storage/sqldb/interaction_store.go`
 
 Implemented `GetInteractionByProviderResponseID` to lookup interactions by the client-facing response ID.
 
