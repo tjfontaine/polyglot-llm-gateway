@@ -34,7 +34,7 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Welcome section */}
-      <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/90 to-slate-950/90 p-6">
+      <div className="rounded-2xl border border-white/10 bg-linear-to-br from-slate-900/90 to-slate-950/90 p-6">
         <h1 className="text-2xl font-bold text-white mb-2">Welcome to Control Plane</h1>
         <p className="text-slate-400 max-w-2xl">
           Monitor your gateway configuration, routing rules, and explore stored interactions.
@@ -49,7 +49,7 @@ export function Dashboard() {
           to="/admin/topology"
           className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-amber-400/30 hover:shadow-[0_24px_50px_rgba(251,191,36,0.1)]"
         >
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-amber-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="absolute inset-0 rounded-2xl bg-linear-to-br from-amber-500/3 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
             <div className="mb-4 flex items-center gap-3">
               <div className="rounded-xl bg-amber-500/10 p-3 text-amber-300 border border-amber-500/20">
@@ -102,7 +102,7 @@ export function Dashboard() {
           to="/admin/routing"
           className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-emerald-400/30 hover:shadow-[0_24px_50px_rgba(34,197,94,0.1)]"
         >
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-emerald-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="absolute inset-0 rounded-2xl bg-linear-to-br from-emerald-500/3 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
             <div className="mb-4 flex items-center gap-3">
               <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-300 border border-emerald-500/20">
@@ -155,7 +155,7 @@ export function Dashboard() {
           to="/admin/data"
           className="group relative rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.35)] transition-all duration-300 hover:border-violet-400/30 hover:shadow-[0_24px_50px_rgba(139,92,246,0.1)]"
         >
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-violet-500/[0.03] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="absolute inset-0 rounded-2xl bg-linear-to-br from-violet-500/3 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           <div className="relative">
             <div className="mb-4 flex items-center gap-3">
               <div className="rounded-xl bg-violet-500/10 p-3 text-violet-300 border border-violet-500/20">
@@ -193,9 +193,9 @@ export function Dashboard() {
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {interaction.type === 'conversation' ? (
-                        <MessageSquare size={14} className="text-sky-300 flex-shrink-0" />
+                        <MessageSquare size={14} className="text-sky-300 shrink-0" />
                       ) : (
-                        <Bot size={14} className="text-rose-300 flex-shrink-0" />
+                        <Bot size={14} className="text-rose-300 shrink-0" />
                       )}
                       <span className="text-sm font-medium text-white truncate">
                         {interaction.type === 'conversation'

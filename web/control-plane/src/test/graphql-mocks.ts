@@ -267,7 +267,7 @@ export const mockGqlShadowResult: ShadowResult = {
             __typename: 'Divergence',
             type: 'TYPE_MISMATCH' as DivergenceType,
             path: '.response.tokens',
-            description: 'Primary has number, shadow has string',
+            description: 'Primary has number, shadow-sm has string',
             primary: 100,
             shadow: '100',
         },

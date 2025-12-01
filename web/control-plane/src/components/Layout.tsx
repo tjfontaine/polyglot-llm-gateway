@@ -50,7 +50,7 @@ export function Layout() {
       {/* Background */}
       <div className="pointer-events-none fixed inset-0 opacity-70" aria-hidden>
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(251,191,36,0.12),transparent_30%),radial-gradient(circle_at_80%_15%,rgba(34,197,94,0.12),transparent_26%),linear-gradient(145deg,rgba(5,9,15,0.95),rgba(7,10,18,0.98))]" />
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:120px_120px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-size-[120px_120px]" />
       </div>
 
       <div className="relative mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">

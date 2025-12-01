@@ -116,7 +116,7 @@ export function Topology() {
                               className="flex items-center gap-2 text-xs"
                             >
                               <Route size={12} className="text-emerald-200" />
-                              <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-emerald-100">
+                              <code className="rounded-sm bg-slate-800/60 px-1.5 py-0.5 text-emerald-100">
                                 {prefix}*
                               </code>
                               <span className="text-slate-500">→</span>
@@ -130,7 +130,7 @@ export function Topology() {
                             className="flex items-center gap-2 text-xs"
                           >
                             <RefreshCcw size={12} className="text-amber-200" />
-                            <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-amber-100">
+                            <code className="rounded-sm bg-slate-800/60 px-1.5 py-0.5 text-amber-100">
                               {rewrite.modelExact ||
                                 (rewrite.modelPrefix ? `${rewrite.modelPrefix}*` : '')}
                             </code>

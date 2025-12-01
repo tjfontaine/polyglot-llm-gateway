@@ -69,7 +69,7 @@ export function Routing() {
                 className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 transition-colors hover:border-white/20"
               >
                 <div className="flex items-center gap-4">
-                  <div className="flex-shrink-0 rounded-lg bg-slate-800/80 px-3 py-2">
+                  <div className="shrink-0 rounded-lg bg-slate-800/80 px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
                       Rule #{idx + 1}
                     </div>

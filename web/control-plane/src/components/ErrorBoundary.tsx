@@ -60,7 +60,7 @@ export class ErrorBoundary extends Component<Props, State> {
                                         {this.state.error.message}
                                     </div>
                                     {this.state.errorInfo?.componentStack && (
-                                        <pre className="text-[10px] text-slate-400 font-mono overflow-auto max-h-40 p-2 bg-slate-950/50 rounded">
+                                        <pre className="text-[10px] text-slate-400 font-mono overflow-auto max-h-40 p-2 bg-slate-950/50 rounded-sm">
                                             {this.state.errorInfo.componentStack}
                                         </pre>
                                     )}

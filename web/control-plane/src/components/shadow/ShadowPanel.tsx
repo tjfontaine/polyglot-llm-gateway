@@ -32,7 +32,7 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
     }, [shadows, selectedShadowId]);
 
     if (loading) {
-        return <LoadingState message="Loading shadow results..." />;
+        return <LoadingState message="Loading shadow-sm results..." />;
     }
 
     if (error) {
@@ -61,8 +61,8 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
             <div className="p-4">
                 <EmptyState
                     icon={Ghost}
-                    title="No shadow results"
-                    description="Shadow mode was not enabled for this request, or no shadow providers were configured."
+                    title="No shadow-sm results"
+                    description="Shadow mode was not enabled for this request, or no shadow-sm providers were configured."
                 />
             </div>
         );
@@ -139,8 +139,8 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
                     ) : (
                         <EmptyState
                             icon={Ghost}
-                            title="Select a shadow"
-                            description="Choose a shadow provider from the list to view comparison details"
+                            title="Select a shadow-sm"
+                            description="Choose a shadow-sm provider from the list to view comparison details"
                         />
                     )}
                 </div>

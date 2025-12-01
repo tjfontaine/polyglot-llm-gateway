@@ -85,14 +85,14 @@ export function DivergenceList({ divergences }: DivergenceListProps) {
                         <div className="flex items-center gap-2 mb-3">
                             <Icon size={16} />
                             <span className="font-medium text-sm">{config.label}</span>
-                            <span className="px-1.5 py-0.5 rounded text-xs bg-black/20">{items.length}</span>
+                            <span className="px-1.5 py-0.5 rounded-sm text-xs bg-black/20">{items.length}</span>
                         </div>
 
                         <ul className="space-y-2">
                             {items.map((d, idx) => (
                                 <li key={idx} className="text-sm">
                                     <div className="flex items-start gap-2">
-                                        <code className="px-2 py-0.5 rounded bg-black/30 text-xs font-mono text-white">
+                                        <code className="px-2 py-0.5 rounded-sm bg-black/30 text-xs font-mono text-white">
                                             {d.path}
                                         </code>
                                     </div>
@@ -102,7 +102,7 @@ export function DivergenceList({ divergences }: DivergenceListProps) {
                                     {(d.primary !== undefined || d.shadow !== undefined) && (
                                         <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
                                             {d.primary !== undefined && (
-                                                <div className="rounded bg-black/20 p-2">
+                                                <div className="rounded-sm bg-black/20 p-2">
                                                     <div className="text-slate-400 mb-1">Primary:</div>
                                                     <code className="text-white font-mono">
                                                         {JSON.stringify(d.primary)}
@@ -110,7 +110,7 @@ export function DivergenceList({ divergences }: DivergenceListProps) {
                                                 </div>
                                             )}
                                             {d.shadow !== undefined && (
-                                                <div className="rounded bg-black/20 p-2">
+                                                <div className="rounded-sm bg-black/20 p-2">
                                                     <div className="text-slate-400 mb-1">Shadow:</div>
                                                     <code className="text-white font-mono">
                                                         {JSON.stringify(d.shadow)}

@@ -20,7 +20,7 @@ const mockShadowResult: ShadowResult = {
     createdAt: String(Date.now() / 1000),
     response: {
         __typename: 'ShadowResponse',
-        canonical: { content: 'Hello from shadow!' },
+        canonical: { content: 'Hello from shadow-sm!' },
     },
 };
 
@@ -45,14 +45,14 @@ const mockShadowResultWithDivergences: ShadowResult = {
             __typename: 'Divergence',
             type: DivergenceType.MissingField,
             path: 'response.usage.prompt_tokens',
-            description: 'Field missing in shadow response',
+            description: 'Field missing in shadow-sm response',
             primary: '100',
         },
         {
             __typename: 'Divergence',
             type: DivergenceType.TypeMismatch,
             path: 'response.model',
-            description: 'Type differs between primary and shadow',
+            description: 'Type differs between primary and shadow-sm',
             primary: 'claude-3',
             shadow: 'gpt-4o',
         },
@@ -98,7 +98,7 @@ describe('ShadowSummary', () => {
         expect(screen.getByText('Match')).toBeInTheDocument();
     });
 
-    it('shows error status when shadow has error', () => {
+    it('shows error status when shadow-sm has error', () => {
         render(<ShadowSummary shadow={mockShadowResultWithError} />);
 
         expect(screen.getByText('Error')).toBeInTheDocument();
@@ -142,14 +142,14 @@ describe('DivergenceList', () => {
             __typename: 'Divergence',
             type: DivergenceType.MissingField,
             path: 'response.usage',
-            description: 'Field missing in shadow',
+            description: 'Field missing in shadow-sm',
             primary: { tokens: 100 },  // Use object, not string - GraphQL JSON scalar
         },
         {
             __typename: 'Divergence',
             type: DivergenceType.ExtraField,
             path: 'response.metadata',
-            description: 'Extra field in shadow',
+            description: 'Extra field in shadow-sm',
             shadow: { extra: 'data' },  // Use object, not string
         },
         {
@@ -190,7 +190,7 @@ describe('DivergenceList', () => {
         expect(screen.getByText('response.status')).toBeInTheDocument();
     });
 
-    it('shows primary and shadow values', () => {
+    it('shows primary and shadow-sm values', () => {
         render(<DivergenceList divergences={divergences} />);
 
         // JSON.stringify on an object produces {"tokens":100}
@@ -200,7 +200,7 @@ describe('DivergenceList', () => {
 });
 
 describe('ShadowComparison', () => {
-    it('renders metrics for shadow', () => {
+    it('renders metrics for shadow-sm', () => {
         render(<ShadowComparison shadow={mockShadowResult} />);
 
         expect(screen.getByText('Shadow: openai')).toBeInTheDocument();
@@ -216,7 +216,7 @@ describe('ShadowComparison', () => {
         expect(screen.getByText('anthropic')).toBeInTheDocument();
     });
 
-    it('shows error state when shadow has error', () => {
+    it('shows error state when shadow-sm has error', () => {
         render(<ShadowComparison shadow={mockShadowResultWithError} />);
 
         expect(screen.getByText('Shadow Execution Error')).toBeInTheDocument();
@@ -252,7 +252,7 @@ describe('ShadowComparison', () => {
 
 describe('ShadowPanel', () => {
     // With the mock GraphQL client, data loads synchronously
-    it('renders shadow results', () => {
+    it('renders shadow-sm results', () => {
         render(<ShadowPanel interactionId="test-123" />);
 
         // The mock provides shadow results immediately

@@ -51,17 +51,17 @@ function EventTimeline({ interactionId }: { interactionId: string }) {
         <div key={evt.id} className="rounded-lg border border-white/5 bg-slate-900/60 p-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-1">
             <span className="font-mono text-white">{evt.stage}</span>
-            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] uppercase tracking-wide text-slate-300">{evt.direction}</span>
-            {evt.modelRequested && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">req: {evt.modelRequested}</span>}
-            {evt.modelServed && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">served: {evt.modelServed}</span>}
-            {evt.threadKey && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-200">thread: {evt.threadKey}</span>}
-            {evt.previousResponseId && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-100">prev: {evt.previousResponseId}</span>}
+            <span className="px-1.5 py-0.5 rounded-sm bg-slate-800 text-[10px] uppercase tracking-wide text-slate-300">{evt.direction}</span>
+            {evt.modelRequested && <span className="px-1.5 py-0.5 rounded-sm bg-slate-800 text-[10px] text-slate-200">req: {evt.modelRequested}</span>}
+            {evt.modelServed && <span className="px-1.5 py-0.5 rounded-sm bg-slate-800 text-[10px] text-slate-200">served: {evt.modelServed}</span>}
+            {evt.threadKey && <span className="px-1.5 py-0.5 rounded-sm bg-slate-800 text-[10px] text-amber-200">thread: {evt.threadKey}</span>}
+            {evt.previousResponseId && <span className="px-1.5 py-0.5 rounded-sm bg-slate-800 text-[10px] text-amber-100">prev: {evt.previousResponseId}</span>}
           </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {evt.raw && (
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Raw</div>
-                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded p-2 overflow-auto max-h-60">
+                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded-sm p-2 overflow-auto max-h-60">
                   {JSON.stringify(evt.raw, null, 2)}
                 </pre>
               </div>
@@ -69,7 +69,7 @@ function EventTimeline({ interactionId }: { interactionId: string }) {
             {evt.canonical && (
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Canonical</div>
-                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded p-2 overflow-auto max-h-60">
+                <pre className="text-xs bg-slate-950/70 border border-white/5 rounded-sm p-2 overflow-auto max-h-60">
                   {JSON.stringify(evt.canonical, null, 2)}
                 </pre>
               </div>
@@ -120,7 +120,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
             </pre>
           </div>
           <div className="flex items-center justify-center gap-2 py-2">
-            <div className="h-8 w-0.5 bg-gradient-to-b from-amber-500/40 to-violet-500/40"></div>
+            <div className="h-8 w-0.5 bg-linear-to-b from-amber-500/40 to-violet-500/40"></div>
             <ArrowDown size={16} className="text-violet-300" />
             <span className="text-xs text-slate-400">Decode to Canonical</span>
           </div>
@@ -145,7 +145,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
                 <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
                 <div className="flex flex-wrap gap-1">
                   {interaction.request.unmappedFields.map((field) => (
-                    <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
+                    <span key={field} className="px-2 py-0.5 rounded-sm bg-amber-500/20 text-[10px] text-amber-200 font-mono">
                       {field}
                     </span>
                   ))}
@@ -154,7 +154,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
             )}
           </div>
           <div className="flex items-center justify-center gap-2 py-2">
-            <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-blue-500/40"></div>
+            <div className="h-8 w-0.5 bg-linear-to-b from-violet-500/40 to-blue-500/40"></div>
             <ArrowDown size={16} className="text-blue-300" />
             <span className="text-xs text-slate-400">Encode for Provider</span>
           </div>
@@ -202,7 +202,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
             </pre>
           </div>
           <div className="flex items-center justify-center gap-2 py-2">
-            <div className="h-8 w-0.5 bg-gradient-to-b from-emerald-500/40 to-violet-500/40"></div>
+            <div className="h-8 w-0.5 bg-linear-to-b from-emerald-500/40 to-violet-500/40"></div>
             <ArrowDown size={16} className="text-violet-300" />
             <span className="text-xs text-slate-400">Decode to Canonical</span>
           </div>
@@ -227,7 +227,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
                 <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
                 <div className="flex flex-wrap gap-1">
                   {interaction.response.unmappedFields.map((field) => (
-                    <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
+                    <span key={field} className="px-2 py-0.5 rounded-sm bg-amber-500/20 text-[10px] text-amber-200 font-mono">
                       {field}
                     </span>
                   ))}
@@ -236,7 +236,7 @@ function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
             )}
           </div>
           <div className="flex items-center justify-center gap-2 py-2">
-            <div className="h-8 w-0.5 bg-gradient-to-b from-violet-500/40 to-cyan-500/40"></div>
+            <div className="h-8 w-0.5 bg-linear-to-b from-violet-500/40 to-cyan-500/40"></div>
             <ArrowDown size={16} className="text-cyan-300" />
             <span className="text-xs text-slate-400">Encode for Client</span>
           </div>
@@ -613,19 +613,19 @@ export function Data() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         {isOpenAI ? (
-                          <Terminal size={14} className="text-emerald-300 flex-shrink-0" />
+                          <Terminal size={14} className="text-emerald-300 shrink-0" />
                         ) : isAnthropic ? (
-                          <MessageSquare size={14} className="text-amber-300 flex-shrink-0" />
+                          <MessageSquare size={14} className="text-amber-300 shrink-0" />
                         ) : isResponses ? (
-                          <Bot size={14} className="text-rose-300 flex-shrink-0" />
+                          <Bot size={14} className="text-rose-300 shrink-0" />
                         ) : (
-                          <ArrowLeftRight size={14} className="text-violet-300 flex-shrink-0" />
+                          <ArrowLeftRight size={14} className="text-violet-300 shrink-0" />
                         )}
                         <span className="truncate text-sm font-semibold text-white">
                           {interaction.id.slice(0, 20)}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         {interaction.status && (
                           <StatusBadge status={interaction.status} />
                         )}
