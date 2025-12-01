@@ -29,12 +29,20 @@ type ServerConfig struct {
 }
 
 type StorageConfig struct {
-	Type   string       `koanf:"type"` // sqlite, memory, none
+	Type   string       `koanf:"type"` // sqlite, postgres, mysql, memory, none
 	SQLite SQLiteConfig `koanf:"sqlite"`
+	// Database is the generic database configuration for multi-dialect support
+	Database DatabaseConfig `koanf:"database"`
 }
 
 type SQLiteConfig struct {
 	Path string `koanf:"path"`
+}
+
+// DatabaseConfig is the generic database configuration supporting multiple dialects.
+type DatabaseConfig struct {
+	Driver string `koanf:"driver"` // sqlite, postgres, mysql
+	DSN    string `koanf:"dsn"`    // Data source name / connection string
 }
 
 type TenantConfig struct {

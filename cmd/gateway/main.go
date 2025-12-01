@@ -25,7 +25,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/shadow"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqldb"
 
 	// Import consolidated packages for legacy provider creation
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
@@ -67,16 +67,34 @@ func main() {
 	if cfg.Storage.Type != "" && cfg.Storage.Type != "none" {
 		switch cfg.Storage.Type {
 		case "sqlite":
+			// Legacy sqlite config for backwards compatibility
 			dbPath := cfg.Storage.SQLite.Path
 			if dbPath == "" {
 				dbPath = "./data/conversations.db"
 			}
-			store, err = sqlite.New(dbPath)
+			store, err = sqldb.NewSQLite(dbPath)
 			if err != nil {
 				log.Fatalf("Failed to initialize SQLite storage: %v", err)
 			}
 			defer store.Close()
 			logger.Info("storage initialized", slog.String("type", "sqlite"), slog.String("path", dbPath))
+			if ts, ok := store.(storage.ThreadStateStore); ok {
+				threadStore = ts
+			}
+			if es, ok := store.(storage.InteractionStore); ok {
+				eventStore = es
+			}
+		case "database":
+			// New multi-dialect database config
+			store, err = sqldb.New(sqldb.Config{
+				Driver: cfg.Storage.Database.Driver,
+				DSN:    cfg.Storage.Database.DSN,
+			})
+			if err != nil {
+				log.Fatalf("Failed to initialize database storage: %v", err)
+			}
+			defer store.Close()
+			logger.Info("storage initialized", slog.String("type", "database"), slog.String("driver", cfg.Storage.Database.Driver))
 			if ts, ok := store.(storage.ThreadStateStore); ok {
 				threadStore = ts
 			}

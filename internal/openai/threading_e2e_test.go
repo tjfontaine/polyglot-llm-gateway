@@ -14,7 +14,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqldb"
 )
 
 func TestResponsesThreadingPersistsAcrossProviders(t *testing.T) {
@@ -56,7 +56,7 @@ func TestResponsesThreadingPersistsAcrossProviders(t *testing.T) {
 	defer ts.Close()
 
 	dbPath := t.TempDir() + "/threads.db"
-	threadStore, err := sqlite.New(dbPath)
+	threadStore, err := sqldb.NewSQLite(dbPath)
 	if err != nil {
 		t.Fatalf("failed to create sqlite store: %v", err)
 	}

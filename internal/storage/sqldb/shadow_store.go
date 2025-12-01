@@ -1,14 +1,14 @@
-package sqlite
+package sqldb
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"time"
+"context"
+"database/sql"
+"encoding/json"
+"fmt"
+"time"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 )
 
 // Ensure Store implements ShadowStore
@@ -81,24 +81,24 @@ func (s *Store) SaveShadowResult(ctx context.Context, result *domain.ShadowResul
 		hasStructuralDivergence = 1
 	}
 
-	query := `INSERT INTO shadow_results (
-		id, interaction_id, provider_name, provider_model,
-		request_canonical, request_provider,
-		response_raw, response_canonical, response_client, response_finish_reason, response_usage,
-		error_type, error_code, error_message,
-		duration_ns, tokens_in, tokens_out,
-		divergences, has_structural_divergence,
-		created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := s.dialect.Rebind(`INSERT INTO shadow_results (
+id, interaction_id, provider_name, provider_model,
+request_canonical, request_provider,
+response_raw, response_canonical, response_client, response_finish_reason, response_usage,
+error_type, error_code, error_message,
+duration_ns, tokens_in, tokens_out,
+divergences, has_structural_divergence,
+created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	_, err := s.db.ExecContext(ctx, query,
-		result.ID, result.InteractionID, result.ProviderName, result.ProviderModel,
-		requestCanonical, requestProvider,
-		responseRaw, responseCanonical, responseClient, responseFinishReason, responseUsage,
-		errorType, errorCode, errorMessage,
-		int64(result.Duration), result.TokensIn, result.TokensOut,
-		divergencesJSON, hasStructuralDivergence,
-		result.CreatedAt)
+result.ID, result.InteractionID, result.ProviderName, result.ProviderModel,
+requestCanonical, requestProvider,
+responseRaw, responseCanonical, responseClient, responseFinishReason, responseUsage,
+errorType, errorCode, errorMessage,
+int64(result.Duration), result.TokensIn, result.TokensOut,
+divergencesJSON, hasStructuralDivergence,
+result.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save shadow result: %w", err)
@@ -109,7 +109,7 @@ func (s *Store) SaveShadowResult(ctx context.Context, result *domain.ShadowResul
 
 // GetShadowResult retrieves a shadow result by ID
 func (s *Store) GetShadowResult(ctx context.Context, id string) (*domain.ShadowResult, error) {
-	query := `SELECT 
+	query := s.dialect.Rebind(`SELECT 
 		id, interaction_id, provider_name, provider_model,
 		request_canonical, request_provider,
 		response_raw, response_canonical, response_client, response_finish_reason, response_usage,
@@ -117,14 +117,14 @@ func (s *Store) GetShadowResult(ctx context.Context, id string) (*domain.ShadowR
 		duration_ns, tokens_in, tokens_out,
 		divergences, has_structural_divergence,
 		created_at
-	FROM shadow_results WHERE id = ?`
+	FROM shadow_results WHERE id = ?`)
 
 	return s.scanShadowResult(s.db.QueryRowContext(ctx, query, id))
 }
 
 // GetShadowResults retrieves all shadow results for an interaction
 func (s *Store) GetShadowResults(ctx context.Context, interactionID string) ([]*domain.ShadowResult, error) {
-	query := `SELECT 
+	query := s.dialect.Rebind(`SELECT 
 		id, interaction_id, provider_name, provider_model,
 		request_canonical, request_provider,
 		response_raw, response_canonical, response_client, response_finish_reason, response_usage,
@@ -134,7 +134,7 @@ func (s *Store) GetShadowResults(ctx context.Context, interactionID string) ([]*
 		created_at
 	FROM shadow_results 
 	WHERE interaction_id = ?
-	ORDER BY created_at ASC`
+	ORDER BY created_at ASC`)
 
 	rows, err := s.db.QueryContext(ctx, query, interactionID)
 	if err != nil {
@@ -185,7 +185,7 @@ func (s *Store) ListDivergentInteractions(ctx context.Context, opts *ports.Diver
 	query += " ORDER BY i.updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, opts.Limit, opts.Offset)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query divergent interactions: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *Store) ListDivergentInteractions(ctx context.Context, opts *ports.Diver
 		var metadataStr, appName, servedModel sql.NullString
 
 		err := rows.Scan(
-			&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider, &appName,
+&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider, &appName,
 			&summary.RequestedModel, &servedModel, &streaming, &status, &durationNs,
 			&metadataStr, &summary.CreatedAt, &summary.UpdatedAt)
 		if err != nil {
@@ -235,7 +235,7 @@ func (s *Store) ListDivergentInteractions(ctx context.Context, opts *ports.Diver
 // GetDivergentShadowCount returns the count of shadow results with divergences
 func (s *Store) GetDivergentShadowCount(ctx context.Context) (int, error) {
 	var count int
-	query := `SELECT COUNT(*) FROM shadow_results WHERE has_structural_divergence = 1`
+	query := s.dialect.Rebind(`SELECT COUNT(*) FROM shadow_results WHERE has_structural_divergence = 1`)
 	err := s.db.QueryRowContext(ctx, query).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count divergent shadows: %w", err)
@@ -256,7 +256,7 @@ func (s *Store) scanShadowResult(row *sql.Row) (*domain.ShadowResult, error) {
 	var providerModel sql.NullString
 
 	err := row.Scan(
-		&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
+&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
 		&requestCanonical, &requestProvider,
 		&responseRaw, &responseCanonical, &responseClient, &responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,
@@ -346,7 +346,7 @@ func (s *Store) scanShadowResultRow(rows *sql.Rows) (*domain.ShadowResult, error
 	var providerModel sql.NullString
 
 	err := rows.Scan(
-		&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
+&result.ID, &result.InteractionID, &result.ProviderName, &providerModel,
 		&requestCanonical, &requestProvider,
 		&responseRaw, &responseCanonical, &responseClient, &responseFinishReason, &responseUsage,
 		&errorType, &errorCode, &errorMessage,

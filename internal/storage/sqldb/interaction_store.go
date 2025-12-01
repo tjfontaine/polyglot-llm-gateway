@@ -1,14 +1,14 @@
-package sqlite
+package sqldb
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"time"
+"context"
+"database/sql"
+"encoding/json"
+"fmt"
+"time"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
 )
 
 // SaveInteraction saves an interaction record
@@ -94,17 +94,17 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 		streaming = 1
 	}
 
-	query := `INSERT INTO interactions (
-		id, tenant_id, frontdoor, provider, app_name, requested_model, served_model, provider_model,
-		streaming, status, duration_ns,
-		request_raw, request_canonical, request_unmapped_fields, request_provider,
-		response_raw, response_canonical, response_unmapped_fields, response_client,
-		response_provider_id, response_finish_reason, response_usage,
-		error_type, error_code, error_message,
-		metadata, request_headers, transformation_steps,
-		previous_interaction_id, thread_key,
-		created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := s.dialect.Rebind(`INSERT INTO interactions (
+id, tenant_id, frontdoor, provider, app_name, requested_model, served_model, provider_model,
+streaming, status, duration_ns,
+request_raw, request_canonical, request_unmapped_fields, request_provider,
+response_raw, response_canonical, response_unmapped_fields, response_client,
+response_provider_id, response_finish_reason, response_usage,
+error_type, error_code, error_message,
+metadata, request_headers, transformation_steps,
+previous_interaction_id, thread_key,
+created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	// Prepare nullable fields for threading
 	var previousInteractionID, threadKey sql.NullString
@@ -116,16 +116,16 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 	}
 
 	_, err = s.db.ExecContext(ctx, query,
-		interaction.ID, interaction.TenantID, string(interaction.Frontdoor), interaction.Provider,
-		interaction.AppName, interaction.RequestedModel, interaction.ServedModel, interaction.ProviderModel,
-		streaming, string(interaction.Status), int64(interaction.Duration),
-		requestRaw, requestCanonical, requestUnmappedFields, requestProvider,
-		responseRaw, responseCanonical, responseUnmappedFields, responseClient,
-		responseProviderID, responseFinishReason, responseUsage,
-		errorType, errorCode, errorMessage,
-		string(metadata), string(requestHeaders), string(transformationSteps),
-		previousInteractionID, threadKey,
-		interaction.CreatedAt, interaction.UpdatedAt)
+interaction.ID, interaction.TenantID, string(interaction.Frontdoor), interaction.Provider,
+interaction.AppName, interaction.RequestedModel, interaction.ServedModel, interaction.ProviderModel,
+streaming, string(interaction.Status), int64(interaction.Duration),
+requestRaw, requestCanonical, requestUnmappedFields, requestProvider,
+responseRaw, responseCanonical, responseUnmappedFields, responseClient,
+responseProviderID, responseFinishReason, responseUsage,
+errorType, errorCode, errorMessage,
+string(metadata), string(requestHeaders), string(transformationSteps),
+previousInteractionID, threadKey,
+interaction.CreatedAt, interaction.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save interaction: %w", err)
@@ -136,7 +136,7 @@ func (s *Store) SaveInteraction(ctx context.Context, interaction *domain.Interac
 
 // GetInteraction retrieves an interaction by ID
 func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interaction, error) {
-	query := `SELECT 
+	query := s.dialect.Rebind(`SELECT 
 		id, tenant_id, frontdoor, provider, app_name, requested_model, served_model, provider_model,
 		streaming, status, duration_ns,
 		request_raw, request_canonical, request_unmapped_fields, request_provider,
@@ -146,7 +146,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 		metadata, request_headers, transformation_steps,
 		previous_interaction_id, thread_key,
 		created_at, updated_at
-	FROM interactions WHERE id = ?`
+	FROM interactions WHERE id = ?`)
 
 	var interaction domain.Interaction
 	var frontdoor, status string
@@ -161,7 +161,7 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 	var appName, servedModel, providerModel sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&interaction.ID, &interaction.TenantID, &frontdoor, &interaction.Provider,
+&interaction.ID, &interaction.TenantID, &frontdoor, &interaction.Provider,
 		&appName, &interaction.RequestedModel, &servedModel, &providerModel,
 		&streaming, &status, &durationNs,
 		&requestRaw, &requestCanonical, &requestUnmappedFields, &requestProvider,
@@ -267,7 +267,6 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 
 	// Unmarshal transformation steps
 	if transformationStepsStr.Valid && transformationStepsStr.String != "" {
-		// Ignore errors - transformation steps  are optional metadata
 		json.Unmarshal([]byte(transformationStepsStr.String), &interaction.TransformationSteps)
 	}
 
@@ -275,177 +274,176 @@ func (s *Store) GetInteraction(ctx context.Context, id string) (*domain.Interact
 }
 
 // GetInteractionByProviderResponseID retrieves an interaction by the provider's response ID.
-// This is used by the Responses API to look up previous interactions when given a resp_<uuid>.
 func (s *Store) GetInteractionByProviderResponseID(ctx context.Context, providerResponseID string) (*domain.Interaction, error) {
-	query := `SELECT id FROM interactions WHERE response_provider_id = ? LIMIT 1`
+query := s.dialect.Rebind(`SELECT id FROM interactions WHERE response_provider_id = ? LIMIT 1`)
 
-	var interactionID string
-	err := s.db.QueryRowContext(ctx, query, providerResponseID).Scan(&interactionID)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("interaction with provider response ID %s not found", providerResponseID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup interaction by provider response ID: %w", err)
-	}
+var interactionID string
+err := s.db.QueryRowContext(ctx, query, providerResponseID).Scan(&interactionID)
+if err == sql.ErrNoRows {
+return nil, fmt.Errorf("interaction with provider response ID %s not found", providerResponseID)
+}
+if err != nil {
+return nil, fmt.Errorf("failed to lookup interaction by provider response ID: %w", err)
+}
 
-	return s.GetInteraction(ctx, interactionID)
+return s.GetInteraction(ctx, interactionID)
 }
 
 // UpdateInteraction updates an existing interaction
 func (s *Store) UpdateInteraction(ctx context.Context, interaction *domain.Interaction) error {
-	interaction.UpdatedAt = time.Now()
+interaction.UpdatedAt = time.Now()
 
-	metadata, err := json.Marshal(interaction.Metadata)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
-	}
+metadata, err := json.Marshal(interaction.Metadata)
+if err != nil {
+return fmt.Errorf("failed to marshal metadata: %w", err)
+}
 
-	var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
-	var responseProviderID, responseFinishReason, responseUsage sql.NullString
-	var errorType, errorCode, errorMessage sql.NullString
+var responseRaw, responseCanonical, responseUnmappedFields, responseClient sql.NullString
+var responseProviderID, responseFinishReason, responseUsage sql.NullString
+var errorType, errorCode, errorMessage sql.NullString
 
-	if interaction.Response != nil {
-		if len(interaction.Response.Raw) > 0 {
-			responseRaw = sql.NullString{String: string(interaction.Response.Raw), Valid: true}
-		}
-		if len(interaction.Response.CanonicalJSON) > 0 {
-			responseCanonical = sql.NullString{String: string(interaction.Response.CanonicalJSON), Valid: true}
-		}
-		if len(interaction.Response.UnmappedFields) > 0 {
-			fieldsJSON, _ := json.Marshal(interaction.Response.UnmappedFields)
-			responseUnmappedFields = sql.NullString{String: string(fieldsJSON), Valid: true}
-		}
-		if len(interaction.Response.ClientResponse) > 0 {
-			responseClient = sql.NullString{String: string(interaction.Response.ClientResponse), Valid: true}
-		}
-		if interaction.Response.ProviderResponseID != "" {
-			responseProviderID = sql.NullString{String: interaction.Response.ProviderResponseID, Valid: true}
-		}
-		if interaction.Response.FinishReason != "" {
-			responseFinishReason = sql.NullString{String: interaction.Response.FinishReason, Valid: true}
-		}
-		if interaction.Response.Usage != nil {
-			usageJSON, _ := json.Marshal(interaction.Response.Usage)
-			responseUsage = sql.NullString{String: string(usageJSON), Valid: true}
-		}
-	}
+if interaction.Response != nil {
+if len(interaction.Response.Raw) > 0 {
+responseRaw = sql.NullString{String: string(interaction.Response.Raw), Valid: true}
+}
+if len(interaction.Response.CanonicalJSON) > 0 {
+responseCanonical = sql.NullString{String: string(interaction.Response.CanonicalJSON), Valid: true}
+}
+if len(interaction.Response.UnmappedFields) > 0 {
+fieldsJSON, _ := json.Marshal(interaction.Response.UnmappedFields)
+responseUnmappedFields = sql.NullString{String: string(fieldsJSON), Valid: true}
+}
+if len(interaction.Response.ClientResponse) > 0 {
+responseClient = sql.NullString{String: string(interaction.Response.ClientResponse), Valid: true}
+}
+if interaction.Response.ProviderResponseID != "" {
+responseProviderID = sql.NullString{String: interaction.Response.ProviderResponseID, Valid: true}
+}
+if interaction.Response.FinishReason != "" {
+responseFinishReason = sql.NullString{String: interaction.Response.FinishReason, Valid: true}
+}
+if interaction.Response.Usage != nil {
+usageJSON, _ := json.Marshal(interaction.Response.Usage)
+responseUsage = sql.NullString{String: string(usageJSON), Valid: true}
+}
+}
 
-	if interaction.Error != nil {
-		errorType = sql.NullString{String: interaction.Error.Type, Valid: true}
-		if interaction.Error.Code != "" {
-			errorCode = sql.NullString{String: interaction.Error.Code, Valid: true}
-		}
-		errorMessage = sql.NullString{String: interaction.Error.Message, Valid: true}
-	}
+if interaction.Error != nil {
+errorType = sql.NullString{String: interaction.Error.Type, Valid: true}
+if interaction.Error.Code != "" {
+errorCode = sql.NullString{String: interaction.Error.Code, Valid: true}
+}
+errorMessage = sql.NullString{String: interaction.Error.Message, Valid: true}
+}
 
-	query := `UPDATE interactions SET
-		served_model = ?, provider_model = ?,
-		status = ?, duration_ns = ?,
-		response_raw = ?, response_canonical = ?, response_unmapped_fields = ?, response_client = ?,
-		response_provider_id = ?, response_finish_reason = ?, response_usage = ?,
-		error_type = ?, error_code = ?, error_message = ?,
-		metadata = ?, updated_at = ?
-	WHERE id = ?`
+query := s.dialect.Rebind(`UPDATE interactions SET
+served_model = ?, provider_model = ?,
+status = ?, duration_ns = ?,
+response_raw = ?, response_canonical = ?, response_unmapped_fields = ?, response_client = ?,
+response_provider_id = ?, response_finish_reason = ?, response_usage = ?,
+error_type = ?, error_code = ?, error_message = ?,
+metadata = ?, updated_at = ?
+WHERE id = ?`)
 
-	result, err := s.db.ExecContext(ctx, query,
-		interaction.ServedModel, interaction.ProviderModel,
-		string(interaction.Status), int64(interaction.Duration),
-		responseRaw, responseCanonical, responseUnmappedFields, responseClient,
-		responseProviderID, responseFinishReason, responseUsage,
-		errorType, errorCode, errorMessage,
-		string(metadata), interaction.UpdatedAt, interaction.ID)
+result, err := s.db.ExecContext(ctx, query,
+interaction.ServedModel, interaction.ProviderModel,
+string(interaction.Status), int64(interaction.Duration),
+responseRaw, responseCanonical, responseUnmappedFields, responseClient,
+responseProviderID, responseFinishReason, responseUsage,
+errorType, errorCode, errorMessage,
+string(metadata), interaction.UpdatedAt, interaction.ID)
 
-	if err != nil {
-		return fmt.Errorf("failed to update interaction: %w", err)
-	}
+if err != nil {
+return fmt.Errorf("failed to update interaction: %w", err)
+}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
+rows, err := result.RowsAffected()
+if err != nil {
+return fmt.Errorf("failed to get rows affected: %w", err)
+}
 
-	if rows == 0 {
-		return fmt.Errorf("interaction %s not found", interaction.ID)
-	}
+if rows == 0 {
+return fmt.Errorf("interaction %s not found", interaction.ID)
+}
 
-	return nil
+return nil
 }
 
 // ListInteractions lists interactions with pagination and optional filtering
 func (s *Store) ListInteractions(ctx context.Context, opts storage.InteractionListOptions) ([]*domain.InteractionSummary, error) {
-	query := `SELECT 
-		id, tenant_id, frontdoor, provider, app_name, requested_model, served_model,
-		streaming, status, duration_ns, metadata, created_at, updated_at
-	FROM interactions WHERE 1=1`
+query := `SELECT 
+id, tenant_id, frontdoor, provider, app_name, requested_model, served_model,
+streaming, status, duration_ns, metadata, created_at, updated_at
+FROM interactions WHERE 1=1`
 
-	var args []interface{}
+var args []interface{}
 
-	if opts.TenantID != "" {
-		query += " AND tenant_id = ?"
-		args = append(args, opts.TenantID)
-	}
-	if opts.Frontdoor != "" {
-		query += " AND frontdoor = ?"
-		args = append(args, string(opts.Frontdoor))
-	}
-	if opts.Provider != "" {
-		query += " AND provider = ?"
-		args = append(args, opts.Provider)
-	}
-	if opts.Status != "" {
-		query += " AND status = ?"
-		args = append(args, opts.Status)
-	}
+if opts.TenantID != "" {
+query += " AND tenant_id = ?"
+args = append(args, opts.TenantID)
+}
+if opts.Frontdoor != "" {
+query += " AND frontdoor = ?"
+args = append(args, string(opts.Frontdoor))
+}
+if opts.Provider != "" {
+query += " AND provider = ?"
+args = append(args, opts.Provider)
+}
+if opts.Status != "" {
+query += " AND status = ?"
+args = append(args, opts.Status)
+}
 
-	query += " ORDER BY updated_at DESC"
+query += " ORDER BY updated_at DESC"
 
-	limit := opts.Limit
-	if limit == 0 {
-		limit = 100
-	}
-	query += " LIMIT ? OFFSET ?"
-	args = append(args, limit, opts.Offset)
+limit := opts.Limit
+if limit == 0 {
+limit = 100
+}
+query += " LIMIT ? OFFSET ?"
+args = append(args, limit, opts.Offset)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query interactions: %w", err)
-	}
-	defer rows.Close()
+rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+if err != nil {
+return nil, fmt.Errorf("failed to query interactions: %w", err)
+}
+defer rows.Close()
 
-	var interactions []*domain.InteractionSummary
-	for rows.Next() {
-		var summary domain.InteractionSummary
-		var frontdoor, status string
-		var streaming int
-		var durationNs int64
-		var metadataStr sql.NullString
-		var appName, servedModel sql.NullString
+var interactions []*domain.InteractionSummary
+for rows.Next() {
+var summary domain.InteractionSummary
+var frontdoor, status string
+var streaming int
+var durationNs int64
+var metadataStr sql.NullString
+var appName, servedModel sql.NullString
 
-		if err := rows.Scan(
-			&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider,
-			&appName, &summary.RequestedModel, &servedModel,
-			&streaming, &status, &durationNs,
-			&metadataStr, &summary.CreatedAt, &summary.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan interaction: %w", err)
-		}
+if err := rows.Scan(
+&summary.ID, &summary.TenantID, &frontdoor, &summary.Provider,
+&appName, &summary.RequestedModel, &servedModel,
+&streaming, &status, &durationNs,
+&metadataStr, &summary.CreatedAt, &summary.UpdatedAt); err != nil {
+return nil, fmt.Errorf("failed to scan interaction: %w", err)
+}
 
-		summary.Frontdoor = domain.APIType(frontdoor)
-		summary.Status = domain.InteractionStatus(status)
-		summary.Streaming = streaming == 1
-		summary.Duration = time.Duration(durationNs)
+summary.Frontdoor = domain.APIType(frontdoor)
+summary.Status = domain.InteractionStatus(status)
+summary.Streaming = streaming == 1
+summary.Duration = time.Duration(durationNs)
 
-		if appName.Valid {
-			summary.AppName = appName.String
-		}
-		if servedModel.Valid {
-			summary.ServedModel = servedModel.String
-		}
-		if metadataStr.Valid && metadataStr.String != "" {
-			json.Unmarshal([]byte(metadataStr.String), &summary.Metadata)
-		}
+if appName.Valid {
+summary.AppName = appName.String
+}
+if servedModel.Valid {
+summary.ServedModel = servedModel.String
+}
+if metadataStr.Valid && metadataStr.String != "" {
+json.Unmarshal([]byte(metadataStr.String), &summary.Metadata)
+}
 
-		interactions = append(interactions, &summary)
-	}
+interactions = append(interactions, &summary)
+}
 
-	return interactions, rows.Err()
+return interactions, rows.Err()
 }

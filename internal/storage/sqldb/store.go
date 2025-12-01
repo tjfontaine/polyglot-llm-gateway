@@ -1,54 +1,57 @@
-// Package sqlite provides a SQLite-only storage implementation.
-//
-// Deprecated: This package is deprecated and will be removed in a future release.
-// Use github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqldb instead,
-// which provides multi-dialect support (SQLite, PostgreSQL, MySQL) using sqlx.
-//
-// Migration example:
-//
-//	// Old:
-//	store, err := sqlite.New("/path/to/db.sqlite")
-//
-//	// New:
-//	store, err := sqldb.NewSQLite("/path/to/db.sqlite")
-//	// or:
-//	store, err := sqldb.New(sqldb.Config{Driver: "sqlite", DSN: "/path/to/db.sqlite"})
-package sqlite
+package sqldb
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"time"
+"context"
+"database/sql"
+"encoding/json"
+"fmt"
+"time"
 
-	_ "modernc.org/sqlite"
+"github.com/jmoiron/sqlx"
+_ "modernc.org/sqlite"
 
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
+"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/dialect"
 )
 
-// Store is a SQLite implementation of ConversationStore, ResponseStore, and InteractionStore
+// Store is a SQL implementation of ConversationStore, ResponseStore, and InteractionStore
+// that supports multiple database dialects.
 type Store struct {
-	db *sql.DB
+	db      *sqlx.DB
+	dialect dialect.Dialect
 }
 
 // Ensure Store implements InteractionStore (which extends ConversationStore)
 var _ storage.InteractionStore = (*Store)(nil)
 
-// New creates a new SQLite store
-func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+// Config holds database connection configuration
+type Config struct {
+	Driver string // Driver name: sqlite, postgres, mysql
+	DSN    string // Data source name / connection string
+}
+
+// New creates a new SQL store with the specified configuration.
+func New(cfg Config) (*Store, error) {
+	d, err := dialect.FromDriverName(cfg.Driver)
+	if err != nil {
+		return nil, fmt.Errorf("unsupported database driver: %w", err)
+	}
+
+	db, err := sqlx.Open(d.DriverName(), cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	// Run dialect-specific initialization (e.g., PRAGMA for SQLite)
+	for _, stmt := range d.PragmaStatements() {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to execute pragma: %w", err)
+		}
 	}
 
-	store := &Store{db: db}
+	store := &Store{db: db, dialect: d}
 
 	// Initialize schema
 	if err := store.initSchema(); err != nil {
@@ -59,117 +62,132 @@ func New(dbPath string) (*Store, error) {
 	return store, nil
 }
 
+// NewSQLite creates a new SQLite store (convenience function for backwards compatibility)
+func NewSQLite(dbPath string) (*Store, error) {
+	return New(Config{Driver: "sqlite", DSN: dbPath})
+}
+
+// DB returns the underlying sqlx.DB for advanced operations
+func (s *Store) DB() *sqlx.DB {
+	return s.db
+}
+
+// Dialect returns the dialect being used
+func (s *Store) Dialect() dialect.Dialect {
+	return s.dialect
+}
+
 func (s *Store) initSchema() error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS conversations (
-			id TEXT PRIMARY KEY,
-			tenant_id TEXT NOT NULL,
-			metadata TEXT,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+id TEXT PRIMARY KEY,
+tenant_id TEXT NOT NULL,
+metadata TEXT,
+created_at TIMESTAMP NOT NULL,
+updated_at TIMESTAMP NOT NULL
+)`,
 		`CREATE TABLE IF NOT EXISTS messages (
-			id TEXT PRIMARY KEY,
-			conversation_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			content TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL,
-			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-		)`,
+id TEXT PRIMARY KEY,
+conversation_id TEXT NOT NULL,
+role TEXT NOT NULL,
+content TEXT NOT NULL,
+created_at TIMESTAMP NOT NULL,
+FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+)`,
 		`CREATE TABLE IF NOT EXISTS responses (
-			id TEXT PRIMARY KEY,
-			tenant_id TEXT NOT NULL,
-			status TEXT NOT NULL,
-			model TEXT NOT NULL,
-			request TEXT NOT NULL,
-			response TEXT,
-			metadata TEXT,
-			previous_response_id TEXT,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+id TEXT PRIMARY KEY,
+tenant_id TEXT NOT NULL,
+status TEXT NOT NULL,
+model TEXT NOT NULL,
+request TEXT NOT NULL,
+response TEXT,
+metadata TEXT,
+previous_response_id TEXT,
+created_at TIMESTAMP NOT NULL,
+updated_at TIMESTAMP NOT NULL
+)`,
 		`CREATE TABLE IF NOT EXISTS interactions (
-			id TEXT PRIMARY KEY,
-			tenant_id TEXT NOT NULL,
-			frontdoor TEXT NOT NULL,
-			provider TEXT NOT NULL,
-			app_name TEXT,
-			requested_model TEXT NOT NULL,
-			served_model TEXT,
-			provider_model TEXT,
-			streaming INTEGER NOT NULL DEFAULT 0,
-			status TEXT NOT NULL,
-			duration_ns INTEGER,
-			request_raw TEXT,
-			request_canonical TEXT,
-			request_unmapped_fields TEXT,
-			request_provider TEXT,
-			response_raw TEXT,
-			response_canonical TEXT,
-			response_unmapped_fields TEXT,
-			response_client TEXT,
-			response_provider_id TEXT,
-			response_finish_reason TEXT,
-			response_usage TEXT,
-			error_type TEXT,
-			error_code TEXT,
-			error_message TEXT,
-			metadata TEXT,
-			request_headers TEXT,
-			transformation_steps TEXT,
-			previous_interaction_id TEXT,
-			thread_key TEXT,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+id TEXT PRIMARY KEY,
+tenant_id TEXT NOT NULL,
+frontdoor TEXT NOT NULL,
+provider TEXT NOT NULL,
+app_name TEXT,
+requested_model TEXT NOT NULL,
+served_model TEXT,
+provider_model TEXT,
+streaming INTEGER NOT NULL DEFAULT 0,
+status TEXT NOT NULL,
+duration_ns INTEGER,
+request_raw TEXT,
+request_canonical TEXT,
+request_unmapped_fields TEXT,
+request_provider TEXT,
+response_raw TEXT,
+response_canonical TEXT,
+response_unmapped_fields TEXT,
+response_client TEXT,
+response_provider_id TEXT,
+response_finish_reason TEXT,
+response_usage TEXT,
+error_type TEXT,
+error_code TEXT,
+error_message TEXT,
+metadata TEXT,
+request_headers TEXT,
+transformation_steps TEXT,
+previous_interaction_id TEXT,
+thread_key TEXT,
+created_at TIMESTAMP NOT NULL,
+updated_at TIMESTAMP NOT NULL
+)`,
 		`CREATE TABLE IF NOT EXISTS thread_state (
-			thread_key TEXT PRIMARY KEY,
-			response_id TEXT NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)`,
+thread_key TEXT PRIMARY KEY,
+response_id TEXT NOT NULL,
+updated_at TIMESTAMP NOT NULL
+)`,
 		`CREATE TABLE IF NOT EXISTS interaction_events (
-			id TEXT PRIMARY KEY,
-			interaction_id TEXT NOT NULL,
-			stage TEXT NOT NULL,
-			direction TEXT NOT NULL,
-			api_type TEXT,
-			frontdoor TEXT,
-			provider TEXT,
-			app_name TEXT,
-			model_requested TEXT,
-			model_served TEXT,
-			provider_model TEXT,
-			thread_key TEXT,
-			previous_response_id TEXT,
-			raw TEXT,
-			canonical TEXT,
-			headers TEXT,
-			metadata TEXT,
-			created_at TIMESTAMP NOT NULL
-		)`,
+id TEXT PRIMARY KEY,
+interaction_id TEXT NOT NULL,
+stage TEXT NOT NULL,
+direction TEXT NOT NULL,
+api_type TEXT,
+frontdoor TEXT,
+provider TEXT,
+app_name TEXT,
+model_requested TEXT,
+model_served TEXT,
+provider_model TEXT,
+thread_key TEXT,
+previous_response_id TEXT,
+raw TEXT,
+canonical TEXT,
+headers TEXT,
+metadata TEXT,
+created_at TIMESTAMP NOT NULL
+)`,
 		`CREATE TABLE IF NOT EXISTS shadow_results (
-			id TEXT PRIMARY KEY,
-			interaction_id TEXT NOT NULL,
-			provider_name TEXT NOT NULL,
-			provider_model TEXT,
-			request_canonical TEXT,
-			request_provider TEXT,
-			response_raw TEXT,
-			response_canonical TEXT,
-			response_client TEXT,
-			response_finish_reason TEXT,
-			response_usage TEXT,
-			error_type TEXT,
-			error_code TEXT,
-			error_message TEXT,
-			duration_ns INTEGER,
-			tokens_in INTEGER,
-			tokens_out INTEGER,
-			divergences TEXT,
-			has_structural_divergence INTEGER NOT NULL DEFAULT 0,
-			created_at TIMESTAMP NOT NULL,
-			FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE
-		)`,
+id TEXT PRIMARY KEY,
+interaction_id TEXT NOT NULL,
+provider_name TEXT NOT NULL,
+provider_model TEXT,
+request_canonical TEXT,
+request_provider TEXT,
+response_raw TEXT,
+response_canonical TEXT,
+response_client TEXT,
+response_finish_reason TEXT,
+response_usage TEXT,
+error_type TEXT,
+error_code TEXT,
+error_message TEXT,
+duration_ns INTEGER,
+tokens_in INTEGER,
+tokens_out INTEGER,
+divergences TEXT,
+has_structural_divergence INTEGER NOT NULL DEFAULT 0,
+created_at TIMESTAMP NOT NULL,
+FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE
+)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversations_tenant ON conversations(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_responses_tenant ON responses(tenant_id)`,
@@ -186,12 +204,32 @@ func (s *Store) initSchema() error {
 	}
 
 	for _, stmt := range statements {
-		if _, err := s.db.Exec(stmt); err != nil {
+		if _, err := s.db.Exec(s.dialect.Rebind(stmt)); err != nil {
 			return fmt.Errorf("failed to execute schema statement: %w", err)
 		}
 	}
 
 	// Run migrations for existing databases - add columns that may not exist
+	if err := s.runMigrations(); err != nil {
+		return err
+	}
+
+	// Create indexes after ensuring columns exist
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_interactions_thread_key ON interactions(thread_key)`,
+		`CREATE INDEX IF NOT EXISTS idx_interactions_previous ON interactions(previous_interaction_id)`,
+	}
+
+	for _, stmt := range indexes {
+		if _, err := s.db.Exec(s.dialect.Rebind(stmt)); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) runMigrations() error {
 	migrations := []struct {
 		table  string
 		column string
@@ -203,33 +241,28 @@ func (s *Store) initSchema() error {
 	}
 
 	for _, m := range migrations {
-		// Check if column exists
-		var count int
-		err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, m.table, m.column).Scan(&count)
+		exists, err := s.columnExists(m.table, m.column)
 		if err != nil {
 			return fmt.Errorf("failed to check column %s.%s: %w", m.table, m.column, err)
 		}
-		if count == 0 {
-			// Column doesn't exist, add it
-			if _, err := s.db.Exec(m.ddl); err != nil {
+		if !exists {
+			if _, err := s.db.Exec(s.dialect.Rebind(m.ddl)); err != nil {
 				return fmt.Errorf("failed to add column %s.%s: %w", m.table, m.column, err)
 			}
 		}
 	}
 
-	// Create indexes after ensuring columns exist
-	indexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_interactions_thread_key ON interactions(thread_key)`,
-		`CREATE INDEX IF NOT EXISTS idx_interactions_previous ON interactions(previous_interaction_id)`,
-	}
-
-	for _, stmt := range indexes {
-		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("failed to create index: %w", err)
-		}
-	}
-
 	return nil
+}
+
+func (s *Store) columnExists(table, column string) (bool, error) {
+	var count int
+	query := s.dialect.ColumnExistsQuery()
+	err := s.db.QueryRow(query, table, column).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversation) error {
@@ -241,11 +274,11 @@ func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversati
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	query := `INSERT INTO conversations (id, tenant_id, metadata, created_at, updated_at)
-	          VALUES (?, ?, ?, ?, ?)`
+	query := s.dialect.Rebind(`INSERT INTO conversations (id, tenant_id, metadata, created_at, updated_at)
+	          VALUES (?, ?, ?, ?, ?)`)
 
 	_, err = s.db.ExecContext(ctx, query,
-		conv.ID, conv.TenantID, string(metadata), conv.CreatedAt, conv.UpdatedAt)
+conv.ID, conv.TenantID, string(metadata), conv.CreatedAt, conv.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to create conversation: %w", err)
@@ -255,14 +288,14 @@ func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversati
 }
 
 func (s *Store) GetConversation(ctx context.Context, id string) (*storage.Conversation, error) {
-	query := `SELECT id, tenant_id, metadata, created_at, updated_at
-	          FROM conversations WHERE id = ?`
+	query := s.dialect.Rebind(`SELECT id, tenant_id, metadata, created_at, updated_at
+	          FROM conversations WHERE id = ?`)
 
 	var conv storage.Conversation
 	var metadataJSON string
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&conv.ID, &conv.TenantID, &metadataJSON, &conv.CreatedAt, &conv.UpdatedAt)
+&conv.ID, &conv.TenantID, &metadataJSON, &conv.CreatedAt, &conv.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("conversation %s not found", id)
@@ -286,9 +319,9 @@ func (s *Store) GetConversation(ctx context.Context, id string) (*storage.Conver
 }
 
 func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.StoredMessage, error) {
-	query := `SELECT id, role, content, created_at
+	query := s.dialect.Rebind(`SELECT id, role, content, created_at
 	          FROM messages WHERE conversation_id = ?
-	          ORDER BY created_at ASC`
+	          ORDER BY created_at ASC`)
 
 	rows, err := s.db.QueryContext(ctx, query, convID)
 	if err != nil {
@@ -311,25 +344,25 @@ func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.Store
 func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.StoredMessage) error {
 	msg.CreatedAt = time.Now()
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	// Insert message
-	query := `INSERT INTO messages (id, conversation_id, role, content, created_at)
-	          VALUES (?, ?, ?, ?, ?)`
+	query := s.dialect.Rebind(`INSERT INTO messages (id, conversation_id, role, content, created_at)
+	          VALUES (?, ?, ?, ?, ?)`)
 
 	_, err = tx.ExecContext(ctx, query,
-		msg.ID, convID, msg.Role, msg.Content, msg.CreatedAt)
+msg.ID, convID, msg.Role, msg.Content, msg.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
 	// Update conversation updated_at
-	updateQuery := `UPDATE conversations SET updated_at = ? WHERE id = ?`
+	updateQuery := s.dialect.Rebind(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
 	_, err = tx.ExecContext(ctx, updateQuery, time.Now(), convID)
 	if err != nil {
 		return fmt.Errorf("failed to update conversation: %w", err)
@@ -339,10 +372,10 @@ func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.Stor
 }
 
 func (s *Store) ListConversations(ctx context.Context, opts storage.ListOptions) ([]*storage.Conversation, error) {
-	query := `SELECT id, tenant_id, metadata, created_at, updated_at
+	query := s.dialect.Rebind(`SELECT id, tenant_id, metadata, created_at, updated_at
 	          FROM conversations WHERE tenant_id = ?
 	          ORDER BY updated_at DESC
-	          LIMIT ? OFFSET ?`
+	          LIMIT ? OFFSET ?`)
 
 	limit := opts.Limit
 	if limit == 0 {
@@ -383,7 +416,7 @@ func (s *Store) ListConversations(ctx context.Context, opts storage.ListOptions)
 }
 
 func (s *Store) DeleteConversation(ctx context.Context, id string) error {
-	query := `DELETE FROM conversations WHERE id = ?`
+	query := s.dialect.Rebind(`DELETE FROM conversations WHERE id = ?`)
 
 	result, err := s.db.ExecContext(ctx, query, id)
 	if err != nil {
@@ -411,11 +444,14 @@ func (s *Store) SetThreadState(threadKey, responseID string) error {
 	if threadKey == "" || responseID == "" {
 		return nil
 	}
-	_, err := s.db.Exec(`
-	INSERT INTO thread_state (thread_key, response_id, updated_at)
-	VALUES (?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(thread_key) DO UPDATE SET response_id=excluded.response_id, updated_at=CURRENT_TIMESTAMP;
-	`, threadKey, responseID)
+
+	// Use dialect-specific upsert
+	upsertClause := s.dialect.UpsertClause("thread_key", []string{"response_id", "updated_at"})
+	query := s.dialect.Rebind(fmt.Sprintf(`INSERT INTO thread_state (thread_key, response_id, updated_at)
+	VALUES (?, ?, %s)
+	%s`, s.dialect.CurrentTimestamp(), upsertClause))
+
+	_, err := s.db.Exec(query, threadKey, responseID)
 	return err
 }
 
@@ -425,7 +461,8 @@ func (s *Store) GetThreadState(threadKey string) (string, error) {
 		return "", nil
 	}
 	var respID string
-	err := s.db.QueryRow(`SELECT response_id FROM thread_state WHERE thread_key = ?`, threadKey).Scan(&respID)
+	query := s.dialect.Rebind(`SELECT response_id FROM thread_state WHERE thread_key = ?`)
+	err := s.db.QueryRow(query, threadKey).Scan(&respID)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -443,13 +480,13 @@ func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) 
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	query := `INSERT INTO responses (id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at)
-	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := s.dialect.Rebind(`INSERT INTO responses (id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 
 	_, err = s.db.ExecContext(ctx, query,
-		resp.ID, resp.TenantID, resp.Status, resp.Model,
-		string(resp.Request), string(resp.Response), string(metadata),
-		resp.PreviousResponseID, resp.CreatedAt, resp.UpdatedAt)
+resp.ID, resp.TenantID, resp.Status, resp.Model,
+string(resp.Request), string(resp.Response), string(metadata),
+resp.PreviousResponseID, resp.CreatedAt, resp.UpdatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save response: %w", err)
@@ -459,14 +496,14 @@ func (s *Store) SaveResponse(ctx context.Context, resp *storage.ResponseRecord) 
 }
 
 func (s *Store) GetResponse(ctx context.Context, id string) (*storage.ResponseRecord, error) {
-	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
-	          FROM responses WHERE id = ?`
+	query := s.dialect.Rebind(`SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	          FROM responses WHERE id = ?`)
 
 	var resp storage.ResponseRecord
 	var requestStr, responseStr, metadataStr, previousID sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
+&resp.ID, &resp.TenantID, &resp.Status, &resp.Model,
 		&requestStr, &responseStr, &metadataStr, &previousID,
 		&resp.CreatedAt, &resp.UpdatedAt)
 
@@ -496,7 +533,7 @@ func (s *Store) GetResponse(ctx context.Context, id string) (*storage.ResponseRe
 }
 
 func (s *Store) UpdateResponseStatus(ctx context.Context, id, status string) error {
-	query := `UPDATE responses SET status = ?, updated_at = ? WHERE id = ?`
+	query := s.dialect.Rebind(`UPDATE responses SET status = ?, updated_at = ? WHERE id = ?`)
 
 	result, err := s.db.ExecContext(ctx, query, status, time.Now(), id)
 	if err != nil {
@@ -516,9 +553,9 @@ func (s *Store) UpdateResponseStatus(ctx context.Context, id, status string) err
 }
 
 func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string) ([]*storage.ResponseRecord, error) {
-	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	query := s.dialect.Rebind(`SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
 	          FROM responses WHERE previous_response_id = ?
-	          ORDER BY created_at ASC`
+	          ORDER BY created_at ASC`)
 
 	rows, err := s.db.QueryContext(ctx, query, previousID)
 	if err != nil {
@@ -559,10 +596,10 @@ func (s *Store) GetResponsesByPreviousID(ctx context.Context, previousID string)
 }
 
 func (s *Store) ListResponses(ctx context.Context, opts storage.ListOptions) ([]*storage.ResponseRecord, error) {
-	query := `SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
+	query := s.dialect.Rebind(`SELECT id, tenant_id, status, model, request, response, metadata, previous_response_id, created_at, updated_at
 	          FROM responses WHERE tenant_id = ?
 	          ORDER BY updated_at DESC
-	          LIMIT ? OFFSET ?`
+	          LIMIT ? OFFSET ?`)
 
 	limit := opts.Limit
 	if limit == 0 {
@@ -617,18 +654,19 @@ func (s *Store) AppendInteractionEvent(ctx context.Context, event *domain.Intera
 		event.CreatedAt = time.Now()
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO interaction_events (
-			id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
-			model_requested, model_served, provider_model, thread_key, previous_response_id,
-			raw, canonical, headers, metadata, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.ID, event.InteractionID, event.Stage, event.Direction, string(event.APIType),
-		event.Frontdoor, event.Provider, event.AppName, event.ModelRequested, event.ModelServed,
-		event.ProviderModel, event.ThreadKey, event.PreviousResponseID,
-		string(event.Raw), string(event.Canonical), string(event.Headers), string(event.Metadata),
-		event.CreatedAt,
-	)
+	query := s.dialect.Rebind(`INSERT INTO interaction_events (
+id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
+model_requested, model_served, provider_model, thread_key, previous_response_id,
+raw, canonical, headers, metadata, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+
+	_, err := s.db.ExecContext(ctx, query,
+event.ID, event.InteractionID, event.Stage, event.Direction, string(event.APIType),
+event.Frontdoor, event.Provider, event.AppName, event.ModelRequested, event.ModelServed,
+event.ProviderModel, event.ThreadKey, event.PreviousResponseID,
+string(event.Raw), string(event.Canonical), string(event.Headers), string(event.Metadata),
+event.CreatedAt,
+)
 	return err
 }
 
@@ -642,16 +680,15 @@ func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string,
 		limit = 100
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
+	query := s.dialect.Rebind(`SELECT id, interaction_id, stage, direction, api_type, frontdoor, provider, app_name,
 		       model_requested, model_served, provider_model, thread_key, previous_response_id,
 		       raw, canonical, headers, metadata, created_at
 		FROM interaction_events
 		WHERE interaction_id = ?
 		ORDER BY created_at ASC
-		LIMIT ? OFFSET ?`,
-		interactionID, limit, opts.Offset,
-	)
+		LIMIT ? OFFSET ?`)
+
+	rows, err := s.db.QueryContext(ctx, query, interactionID, limit, opts.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -663,7 +700,7 @@ func (s *Store) ListInteractionEvents(ctx context.Context, interactionID string,
 		var apiType string
 		var rawStr, canonStr, headersStr, metaStr string
 		if err := rows.Scan(
-			&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
+&evt.ID, &evt.InteractionID, &evt.Stage, &evt.Direction, &apiType,
 			&evt.Frontdoor, &evt.Provider, &evt.AppName, &evt.ModelRequested,
 			&evt.ModelServed, &evt.ProviderModel, &evt.ThreadKey, &evt.PreviousResponseID,
 			&rawStr, &canonStr, &headersStr, &metaStr, &evt.CreatedAt,
