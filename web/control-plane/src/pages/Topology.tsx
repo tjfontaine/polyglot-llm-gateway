@@ -8,22 +8,23 @@ import {
   Signal,
   Zap,
 } from 'lucide-react';
-import { useApi } from '../hooks/useApi';
+import { useOverview } from '../gql/hooks';
 import { PageHeader, Pill, Section, EmptyState } from '../components/ui';
 
 export function Topology() {
-  const { overview, refreshOverview } = useApi();
+  const { overview, refresh: refreshOverview } = useOverview();
 
   const appEntries = overview?.apps?.length
     ? overview.apps
     : overview?.frontdoors?.map((fd, idx) => ({
-        name: fd.type || `frontdoor-${idx + 1}`,
-        frontdoor: fd.type,
-        path: fd.path,
-        provider: fd.provider,
-        default_model: fd.default_model,
-        model_routing: { prefix_providers: {}, rewrites: [] },
-      })) ?? [];
+      name: fd.type || `frontdoor-${idx + 1}`,
+      frontdoor: fd.type,
+      path: fd.path,
+      provider: fd.provider,
+      defaultModel: fd.defaultModel,
+      enableResponses: false,
+      modelRouting: { prefixProviders: {} as Record<string, string>, rewrites: [] },
+    })) ?? [];
 
   return (
     <div className="space-y-6">
@@ -76,8 +77,8 @@ export function Topology() {
                       <div className="text-xs text-amber-200">{app.path}</div>
                     </div>
                   </div>
-                  {app.enable_responses && (
-                    <span className="rounded-md bg-emerald-500/20 px-2 py-1 text-xs text-emerald-100 border border-emerald-500/30">
+                  {app.enableResponses && (
+                    <span className="rounded-md bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 border border-emerald-500/30">
                       <Bot size={12} className="inline mr-1" />
                       Responses API
                     </span>
@@ -95,53 +96,53 @@ export function Topology() {
                       provider: {app.provider}
                     </span>
                   )}
-                  {app.default_model && (
+                  {app.defaultModel && (
                     <span className="rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-200">
-                      default model: {app.default_model}
+                      default model: {app.defaultModel}
                     </span>
                   )}
                 </div>
 
                 {/* Model Routing */}
-                {(Object.keys(app.model_routing?.prefix_providers ?? {}).length > 0 ||
-                  (app.model_routing?.rewrites?.length ?? 0) > 0) && (
-                  <div className="mt-4 rounded-xl border border-white/5 bg-slate-900/50 p-3">
-                    <div className="text-xs font-medium text-slate-300 mb-2">Model Routing</div>
-                    <div className="space-y-1.5">
-                      {Object.entries(app.model_routing?.prefix_providers ?? {}).map(
-                        ([prefix, provider]) => (
+                {(Object.keys(app.modelRouting?.prefixProviders ?? {}).length > 0 ||
+                  (app.modelRouting?.rewrites?.length ?? 0) > 0) && (
+                    <div className="mt-4 rounded-xl border border-white/5 bg-slate-900/50 p-3">
+                      <div className="text-xs font-medium text-slate-300 mb-2">Model Routing</div>
+                      <div className="space-y-1.5">
+                        {Object.entries(app.modelRouting?.prefixProviders ?? {}).map(
+                          ([prefix, provider]) => (
+                            <div
+                              key={`${app.path}-prefix-${prefix}`}
+                              className="flex items-center gap-2 text-xs"
+                            >
+                              <Route size={12} className="text-emerald-200" />
+                              <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-emerald-100">
+                                {prefix}*
+                              </code>
+                              <span className="text-slate-500">→</span>
+                              <span className="text-white">{String(provider)}</span>
+                            </div>
+                          )
+                        )}
+                        {(app.modelRouting?.rewrites ?? []).map((rewrite, idx) => (
                           <div
-                            key={`${app.path}-prefix-${prefix}`}
+                            key={`${app.path}-rewrite-${idx}`}
                             className="flex items-center gap-2 text-xs"
                           >
-                            <Route size={12} className="text-emerald-200" />
-                            <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-emerald-100">
-                              {prefix}*
+                            <RefreshCcw size={12} className="text-amber-200" />
+                            <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-amber-100">
+                              {rewrite.modelExact ||
+                                (rewrite.modelPrefix ? `${rewrite.modelPrefix}*` : '')}
                             </code>
                             <span className="text-slate-500">→</span>
-                            <span className="text-white">{provider}</span>
+                            <span className="text-white">
+                              {rewrite.provider}:{rewrite.model}
+                            </span>
                           </div>
-                        )
-                      )}
-                      {(app.model_routing?.rewrites ?? []).map((rewrite, idx) => (
-                        <div
-                          key={`${app.path}-rewrite-${idx}`}
-                          className="flex items-center gap-2 text-xs"
-                        >
-                          <RefreshCcw size={12} className="text-amber-200" />
-                          <code className="rounded bg-slate-800/60 px-1.5 py-0.5 text-amber-100">
-                            {rewrite.model_exact ||
-                              (rewrite.model_prefix ? `${rewrite.model_prefix}*` : '')}
-                          </code>
-                          <span className="text-slate-500">→</span>
-                          <span className="text-white">
-                            {rewrite.provider}:{rewrite.model}
-                          </span>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             ))}
             {appEntries.length === 0 && (
@@ -186,18 +187,18 @@ export function Topology() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {p.base_url && (
+                  {p.baseUrl && (
                     <span className="rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-200">
-                      base: {p.base_url}
+                      base: {p.baseUrl}
                     </span>
                   )}
-                  {p.supports_responses && (
+                  {p.supportsResponses && (
                     <span className="rounded-md bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 border border-emerald-500/30">
                       <Bot size={12} className="inline mr-1" />
                       Responses ready
                     </span>
                   )}
-                  {p.enable_passthrough && (
+                  {p.enablePassthrough && (
                     <span className="rounded-md bg-amber-500/20 px-2.5 py-1 text-xs text-amber-100 border border-amber-500/30">
                       <Zap size={12} className="inline mr-1" />
                       Passthrough
@@ -241,13 +242,13 @@ export function Topology() {
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {appEntries.filter((a) => a.enable_responses).length}
+              {appEntries.filter((a) => a.enableResponses).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Responses-enabled</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {(overview?.providers ?? []).filter((p) => p.enable_passthrough).length}
+              {(overview?.providers ?? []).filter((p) => p.enablePassthrough).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Passthrough</div>
           </div>

@@ -1,27 +1,20 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { render } from '../test/test-utils';
+import { render, type GraphQLMockData } from '../test/test-utils';
+import { mockGqlEmptyOverview } from '../test/graphql-mocks';
 import { Data } from './Data';
-import { mockStats, mockNullArraysOverview, createMockFetch } from '../test/mocks';
 
 describe('Data page', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('handles null arrays safely when storage enabled', async () => {
-    const overviewWithStorage = {
-      ...mockNullArraysOverview,
-      storage: { enabled: true, type: 'sqlite', path: '/tmp/db' },
+    const mockData: GraphQLMockData = {
+      overview: {
+        ...mockGqlEmptyOverview,
+        storage: { __typename: 'StorageSummary', enabled: true, type: 'sqlite', path: '/tmp/db' },
+      },
+      interactions: { interactions: [], total: 0 },
     };
 
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': overviewWithStorage,
-      '/interactions?limit=100': { interactions: [], total: 0 },
-    }));
-
-    render(<Data />, { initialRoute: '/admin/data' });
+    render(<Data />, { initialRoute: '/admin/data', mockData });
 
     await waitFor(() => {
       expect(screen.getByText('Data Explorer')).toBeInTheDocument();
@@ -32,12 +25,14 @@ describe('Data page', () => {
   });
 
   it('shows storage disabled state when persistence is off', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': { ...mockNullArraysOverview, storage: { enabled: false, type: '' } },
-    }));
+    const mockData: GraphQLMockData = {
+      overview: {
+        ...mockGqlEmptyOverview,
+        storage: { __typename: 'StorageSummary', enabled: false, type: '', path: null },
+      },
+    };
 
-    render(<Data />, { initialRoute: '/admin/data' });
+    render(<Data />, { initialRoute: '/admin/data', mockData });
 
     await waitFor(() => {
       expect(screen.getByText('Storage Disabled')).toBeInTheDocument();

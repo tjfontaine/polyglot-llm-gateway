@@ -98,9 +98,9 @@ export const mockNullArraysOverview: Overview = {
   apps: null as unknown as Overview['apps'],
   frontdoors: null as unknown as Overview['frontdoors'],
   providers: null as unknown as Overview['providers'],
-  routing: { 
-    default_provider: '', 
-    rules: null as unknown as Overview['routing']['rules'] 
+  routing: {
+    default_provider: '',
+    rules: null as unknown as Overview['routing']['rules']
   },
   tenants: null as unknown as Overview['tenants'],
 };
@@ -108,7 +108,7 @@ export const mockNullArraysOverview: Overview = {
 export const mockInteractions: InteractionSummary[] = [
   {
     id: 'conv-123',
-    type: 'conversation',
+    type: 'interaction',
     model: 'gpt-4',
     metadata: { title: 'Test Conversation' },
     message_count: 5,
@@ -117,7 +117,7 @@ export const mockInteractions: InteractionSummary[] = [
   },
   {
     id: 'resp-456',
-    type: 'response',
+    type: 'interaction',
     status: 'completed',
     model: 'claude-3-opus',
     metadata: {},
@@ -126,7 +126,7 @@ export const mockInteractions: InteractionSummary[] = [
   },
   {
     id: 'resp-789',
-    type: 'response',
+    type: 'interaction',
     status: 'in_progress',
     model: 'gpt-4-turbo',
     previous_response_id: 'resp-456',
@@ -159,23 +159,23 @@ export const mockResponseDetail: InteractionDetail = {
   created_at: 1700000500,
   updated_at: 1700000600,
   request: { model: 'claude-3-opus', input: 'Test input' },
-  response: { id: 'resp-456', output: [{ type: 'message', content: 'Test output' }] },
+  response: { id: 'resp-456', output: [{ type: 'message', content: [{ type: 'text', text: 'Test output' }] }] },
 };
 
 export function createMockFetch(responses: Record<string, unknown>) {
   return (url: string) => {
     // Normalize the URL by removing the base and any query params for matching
-    let path = url.replace('/admin/api', '');
-    
+    const path = url.replace('/admin/api', '');
+
     // Try exact match first
     let response = responses[path];
-    
+
     // Try without query params
     if (response === undefined) {
       const pathWithoutQuery = path.split('?')[0];
       response = responses[pathWithoutQuery];
     }
-    
+
     // Try with query params if exact path didn't match
     if (response === undefined) {
       for (const key of Object.keys(responses)) {
@@ -185,7 +185,7 @@ export function createMockFetch(responses: Record<string, unknown>) {
         }
       }
     }
-    
+
     if (response === undefined) {
       return Promise.resolve({
         ok: false,
@@ -193,7 +193,7 @@ export function createMockFetch(responses: Record<string, unknown>) {
         json: () => Promise.resolve({ error: 'Not found' }),
       });
     }
-    
+
     return Promise.resolve({
       ok: true,
       status: 200,

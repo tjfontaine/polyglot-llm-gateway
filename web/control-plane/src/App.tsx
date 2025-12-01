@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ApiProvider } from './hooks/useApi';
+import { GraphQLProvider } from './gql/client';
 import { Layout, ErrorBoundary } from './components';
 import { Dashboard, Topology, Routing, Data } from './pages';
 import './App.css';
@@ -7,7 +7,7 @@ import './App.css';
 function App() {
   return (
     <ErrorBoundary>
-      <ApiProvider>
+      <GraphQLProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/admin" element={<Layout />}>
@@ -22,7 +22,7 @@ function App() {
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         </BrowserRouter>
-      </ApiProvider>
+      </GraphQLProvider>
     </ErrorBoundary>
   );
 }

@@ -1,39 +1,17 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { render } from '../test/test-utils';
+import { render, mockGqlOverview, type GraphQLMockData } from '../test/test-utils';
+import { mockGqlEmptyOverview } from '../test/graphql-mocks';
 import { Topology } from './Topology';
-import {
-  mockStats,
-  mockOverview,
-  mockEmptyOverview,
-  mockNullArraysOverview,
-  createMockFetch,
-} from '../test/mocks';
 
 describe('Topology', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('renders page header', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     expect(screen.getByText('Applications and provider configurations')).toBeInTheDocument();
   });
 
   it('renders applications section with count', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -45,12 +23,6 @@ describe('Topology', () => {
   });
 
   it('renders app details', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -63,30 +35,18 @@ describe('Topology', () => {
   });
 
   it('shows Responses API badge for enabled apps', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
       expect(screen.getByText('main-app')).toBeInTheDocument();
     });
 
-    // main-app has enable_responses: true
+    // main-app has enableResponses: true
     const responsesBadges = screen.getAllByText('Responses API');
     expect(responsesBadges.length).toBeGreaterThan(0);
   });
 
   it('renders model routing configuration', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -100,13 +60,11 @@ describe('Topology', () => {
   });
 
   it('shows empty state when no applications', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockEmptyOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    const mockData: GraphQLMockData = {
+      overview: mockGqlEmptyOverview,
+    };
 
-    render(<Topology />, { initialRoute: '/admin/topology' });
+    render(<Topology />, { initialRoute: '/admin/topology', mockData });
 
     await waitFor(() => {
       expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
@@ -116,15 +74,18 @@ describe('Topology', () => {
   });
 
   it('handles null arrays from backend gracefully (bug fix verification)', async () => {
-    // This test verifies the fix for the bug where null arrays caused crashes
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockNullArraysOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    // GraphQL normalizes null arrays to empty arrays
+    const mockData: GraphQLMockData = {
+      overview: {
+        ...mockGqlEmptyOverview,
+        apps: [],
+        frontdoors: [],
+        providers: [],
+      },
+    };
 
     // Should not throw error
-    render(<Topology />, { initialRoute: '/admin/topology' });
+    render(<Topology />, { initialRoute: '/admin/topology', mockData });
 
     await waitFor(() => {
       expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);
@@ -136,12 +97,6 @@ describe('Topology', () => {
   });
 
   it('renders providers section with count', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -153,12 +108,6 @@ describe('Topology', () => {
   });
 
   it('renders provider details', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -169,12 +118,6 @@ describe('Topology', () => {
   });
 
   it('shows provider type information', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -186,29 +129,17 @@ describe('Topology', () => {
   });
 
   it('shows passthrough badge for enabled providers', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
       expect(screen.getAllByText('anthropic-provider').length).toBeGreaterThan(0);
     });
 
-    // anthropic-provider has enable_passthrough: true
+    // anthropic-provider has enablePassthrough: true
     expect(screen.getAllByText('Passthrough').length).toBeGreaterThan(0);
   });
 
   it('shows responses ready badge for supported providers', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -220,13 +151,11 @@ describe('Topology', () => {
   });
 
   it('shows empty state when no providers', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockEmptyOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    const mockData: GraphQLMockData = {
+      overview: mockGqlEmptyOverview,
+    };
 
-    render(<Topology />, { initialRoute: '/admin/topology' });
+    render(<Topology />, { initialRoute: '/admin/topology', mockData });
 
     await waitFor(() => {
       expect(screen.getAllByText('Providers').length).toBeGreaterThan(0);
@@ -236,12 +165,6 @@ describe('Topology', () => {
   });
 
   it('renders topology summary section', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     await waitFor(() => {
@@ -252,29 +175,20 @@ describe('Topology', () => {
   });
 
   it('renders refresh button', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Topology />, { initialRoute: '/admin/topology' });
 
     expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
   });
 
   it('falls back to frontdoors when apps array is empty', async () => {
-    const overviewWithFrontdoors = {
-      ...mockOverview,
-      apps: [],
+    const mockData: GraphQLMockData = {
+      overview: {
+        ...mockGqlOverview,
+        apps: [],
+      },
     };
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': overviewWithFrontdoors,
-      '/interactions': { interactions: [], total: 0 },
-    }));
 
-    render(<Topology />, { initialRoute: '/admin/topology' });
+    render(<Topology />, { initialRoute: '/admin/topology', mockData });
 
     await waitFor(() => {
       expect(screen.getAllByText('Applications').length).toBeGreaterThan(0);

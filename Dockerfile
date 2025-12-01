@@ -9,7 +9,12 @@ WORKDIR /app/web/control-plane
 COPY web/control-plane/package.json web/control-plane/package-lock.json ./
 RUN npm ci
 
+# Copy GraphQL schema from Go backend for codegen
+COPY internal/api/controlplane/graph/schema.graphqls /app/internal/api/controlplane/graph/schema.graphqls
+
 COPY web/control-plane/ ./
+# Generate TypeScript types from GraphQL schema
+RUN npm run codegen
 # Use 'build:dev' for development (unminified, source maps) or 'build' for production
 RUN if [ "$BUILD_MODE" = "production" ]; then npm run build; else npm run build:dev; fi
 
@@ -22,8 +27,13 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source and build the gateway binary
+# Copy source
 COPY . .
+
+# Generate Go GraphQL types using gqlgen
+RUN cd internal/api/controlplane/graph && go run github.com/99designs/gqlgen generate
+
+# Copy frontend build and build the gateway binary
 RUN rm -rf internal/api/controlplane/dist
 COPY --from=frontend-builder /app/web/control-plane/dist internal/api/controlplane/dist
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway

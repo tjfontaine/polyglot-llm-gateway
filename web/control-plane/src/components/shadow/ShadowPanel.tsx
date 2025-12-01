@@ -1,58 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
     AlertTriangle,
     CheckCircle,
     Ghost,
     RefreshCcw,
 } from 'lucide-react';
-import type { ShadowResult, ShadowResultsResponse, NewInteractionDetail } from '../../types';
+import { useShadowResults } from '../../gql/hooks';
+import type { Interaction } from '../../gql/graphql';
 import { ShadowSummary } from './ShadowSummary';
 import { ShadowComparison } from './ShadowComparison';
 import { EmptyState, LoadingState } from '../ui';
 
 interface ShadowPanelProps {
     interactionId: string;
-    primary?: NewInteractionDetail;
+    primary?: Interaction;
 }
 
-const API_BASE = '/admin/api';
-
 export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
-    const [shadows, setShadows] = useState<ShadowResult[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [selectedShadow, setSelectedShadow] = useState<ShadowResult | null>(null);
+    const { shadowResults, loading, error, refresh } = useShadowResults(interactionId);
+    const shadows = useMemo(() => shadowResults?.shadows ?? [], [shadowResults?.shadows]);
+    const [selectedShadowId, setSelectedShadowId] = useState<string | null>(null);
 
-    const fetchShadows = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const res = await fetch(`${API_BASE}/interactions/${interactionId}/shadows`);
-            if (!res.ok) {
-                if (res.status === 501) {
-                    // Shadow store not supported
-                    setShadows([]);
-                    return;
-                }
-                throw new Error('Failed to load shadow results');
-            }
-            const data: ShadowResultsResponse = await res.json();
-            setShadows(data.shadows ?? []);
-            // Auto-select first shadow if none selected
-            if (data.shadows && data.shadows.length > 0 && !selectedShadow) {
-                setSelectedShadow(data.shadows[0]);
-            }
-        } catch (err) {
-            console.error(err);
-            setError('Unable to load shadow results');
-        } finally {
-            setLoading(false);
+    // Derive selectedShadow from ID - auto-select first if none selected
+    const selectedShadow = useMemo(() => {
+        if (shadows.length === 0) return null;
+        if (selectedShadowId) {
+            const found = shadows.find(s => s.id === selectedShadowId);
+            if (found) return found;
         }
-    };
-
-    useEffect(() => {
-        fetchShadows();
-    }, [interactionId]);
+        return shadows[0];
+    }, [shadows, selectedShadowId]);
 
     if (loading) {
         return <LoadingState message="Loading shadow results..." />;
@@ -68,7 +45,7 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
                         <div className="mt-1 text-xs text-slate-500">{error}</div>
                     </div>
                     <button
-                        onClick={fetchShadows}
+                        onClick={refresh}
                         className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-500/20 text-violet-200 hover:bg-violet-500/30 transition-colors"
                     >
                         <RefreshCcw size={14} />
@@ -101,10 +78,10 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className={`rounded-lg p-2 ${hasErrors
-                                ? 'bg-red-500/10 text-red-300'
-                                : hasDivergences
-                                    ? 'bg-amber-500/10 text-amber-300'
-                                    : 'bg-emerald-500/10 text-emerald-300'
+                            ? 'bg-red-500/10 text-red-300'
+                            : hasDivergences
+                                ? 'bg-amber-500/10 text-amber-300'
+                                : 'bg-emerald-500/10 text-emerald-300'
                             }`}>
                             <Ghost size={20} />
                         </div>
@@ -149,7 +126,7 @@ export function ShadowPanel({ interactionId, primary }: ShadowPanelProps) {
                         <ShadowSummary
                             key={shadow.id}
                             shadow={shadow}
-                            onClick={() => setSelectedShadow(shadow)}
+                            onClick={() => setSelectedShadowId(shadow.id)}
                             selected={selectedShadow?.id === shadow.id}
                         />
                     ))}

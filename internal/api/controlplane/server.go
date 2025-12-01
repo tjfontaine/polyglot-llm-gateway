@@ -12,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/controlplane/graph"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
@@ -52,6 +55,14 @@ func (s *Server) routes() {
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
 
+	// GraphQL endpoints
+	resolver := graph.NewResolver(s.cfg, s.store, s.tenants)
+	resolver.StartTime = s.startTime
+	gqlHandler := handler.NewDefaultServer(graph.NewExecutableSchema(graph.Config{Resolvers: resolver}))
+	s.router.Handle("/api/graphql", gqlHandler)
+	s.router.Get("/api/graphql/playground", playground.Handler("GraphQL Playground", "/admin/api/graphql"))
+
+	// REST endpoints (for backward compatibility)
 	s.router.Get("/api/stats", s.handleStats)
 	s.router.Get("/api/overview", s.handleOverview)
 	s.router.Get("/api/threads", s.handleListThreads)

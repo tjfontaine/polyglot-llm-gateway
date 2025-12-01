@@ -14,7 +14,7 @@ describe('useApi hook', () => {
       '/overview': mockOverview,
       '/interactions': { interactions: mockInteractions, total: mockInteractions.length },
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -36,7 +36,7 @@ describe('useApi hook', () => {
       '/overview': mockOverview,
       '/interactions': { interactions: mockInteractions, total: 3 },
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -56,7 +56,7 @@ describe('useApi hook', () => {
       '/stats': mockStats,
       '/overview': overviewNoStorage,
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -76,7 +76,7 @@ describe('useApi hook', () => {
       '/overview': mockOverview,
       '/interactions': { interactions: [], total: 0 },
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -107,7 +107,7 @@ describe('useApi hook', () => {
       '/overview': mockOverview,
       '/interactions': { interactions: [], total: 0 },
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -140,7 +140,7 @@ describe('useApi hook', () => {
       '/interactions': { interactions: [], total: 0 },
       '/interactions/test-123': detail,
     }));
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,
@@ -173,7 +173,7 @@ describe('useApi hook', () => {
         '/interactions': { interactions: [], total: 0 },
       })(url);
     });
-    global.fetch = mockFetch;
+    global.fetch = mockFetch as unknown as typeof fetch;
 
     const { result } = renderHook(() => useApi(), {
       wrapper: ({ children }) => <ApiProvider>{children}</ApiProvider>,

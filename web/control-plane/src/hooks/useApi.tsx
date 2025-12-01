@@ -1,5 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from 'react';
-import type { Stats, Overview, InteractionSummary, NewInteractionDetail } from '../types';
+import type { Stats, Overview, InteractionSummary, NewInteractionDetail, InteractionEvent } from '../types';
 
 const API_BASE = '/admin/api';
 
@@ -17,7 +18,7 @@ interface ApiContextValue {
   refreshOverview: () => Promise<void>;
   refreshInteractions: (filter?: InteractionFilter) => Promise<void>;
   fetchInteractionDetail: (id: string) => Promise<NewInteractionDetail | null>;
-  fetchInteractionEvents: (id: string) => Promise<any>;
+  fetchInteractionEvents: (id: string) => Promise<InteractionEvent[] | null>;
 }
 
 const ApiContext = createContext<ApiContextValue | null>(null);

@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react';
+import { useState, Fragment } from 'react';
 import {
   AlertCircle,
   ArrowDown,
@@ -20,208 +20,26 @@ import {
   Wrench,
   Zap,
 } from 'lucide-react';
-import { useApi, formatShortDate } from '../hooks/useApi';
 import { PageHeader, Pill, EmptyState, LoadingState, StatusBadge, ShadowPanel } from '../components';
-import type { NewInteractionDetail, ResponseOutputItem, InteractionEvent } from '../types';
+import {
+  useOverview,
+  useInteractions,
+  useInteraction,
+  useInteractionEvents,
+  formatShortDate,
+} from '../gql/hooks';
+import type {
+  Interaction,
+  InteractionFilter,
+} from '../gql/graphql';
 
 // Filter by frontdoor type or status - unified model doesn't distinguish conversation/response
 type FilterType = '' | 'openai' | 'anthropic' | 'responses';
 type DetailTab = 'pipeline' | 'shadows' | 'timeline';
 
-// Helper component to render a single output item
-function OutputItemCard({ item }: { item: ResponseOutputItem }) {
-  if (item.type === 'message') {
-    const text = item.content
-      ?.filter(part => part.type === 'output_text')
-      .map(part => part.text)
-      .join('') || '';
-
-    return (
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-        <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-          <Bot size={14} className="text-emerald-300" />
-          <span className="font-semibold text-emerald-200">Assistant Message</span>
-          {item.status && <StatusBadge status={item.status} />}
-        </div>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-white">
-          {text || <span className="text-slate-500 italic">No content</span>}
-        </p>
-      </div>
-    );
-  }
-
-  if (item.type === 'function_call') {
-    // Try to format arguments as pretty JSON
-    let formattedArgs = item.arguments || '{}';
-    try {
-      formattedArgs = JSON.stringify(JSON.parse(item.arguments || '{}'), null, 2);
-    } catch {
-      // Keep original if not valid JSON
-    }
-
-    return (
-      <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-violet-500/20">
-              <Wrench size={14} className="text-violet-300" />
-            </div>
-            <div>
-              <span className="font-semibold text-violet-200 text-sm">Tool Call</span>
-              <span className="text-slate-400 text-xs ml-2">→ {item.name}</span>
-            </div>
-          </div>
-          {item.status && <StatusBadge status={item.status} />}
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">Function:</span>
-            <code className="px-2 py-0.5 rounded bg-slate-800/80 text-xs text-violet-200 font-mono">
-              {item.name}
-            </code>
-          </div>
-          {item.call_id && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">Call ID:</span>
-              <code className="px-2 py-0.5 rounded bg-slate-800/80 text-xs text-slate-300 font-mono">
-                {item.call_id}
-              </code>
-            </div>
-          )}
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <Terminal size={12} className="text-slate-400" />
-              <span className="text-xs text-slate-400">Arguments</span>
-            </div>
-            <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[200px] font-mono border border-white/5">
-              {formattedArgs}
-            </pre>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (item.type === 'function_call_output') {
-    return (
-      <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3">
-        <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-          <Terminal size={14} className="text-cyan-300" />
-          <span className="font-semibold text-cyan-200">Tool Result</span>
-          {item.call_id && (
-            <code className="px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-300 font-mono">
-              {item.call_id}
-            </code>
-          )}
-        </div>
-        <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[150px] font-mono">
-          {item.output || 'No output'}
-        </pre>
-      </div>
-    );
-  }
-
-  // Fallback for unknown types
-  return (
-    <div className="rounded-xl border border-slate-500/30 bg-slate-500/10 px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
-        <span className="font-semibold">Unknown: {item.type}</span>
-      </div>
-      <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-3 rounded-lg overflow-auto max-h-[150px] font-mono">
-        {JSON.stringify(item, null, 2)}
-      </pre>
-    </div>
-  );
-}
-
-// Helper to render the response section with improved tool call display
-function ResponseSection({ response }: { response: ResponseData }) {
-  const hasOutput = response.output && response.output.length > 0;
-  const hasToolCalls = response.output?.some(item => item.type === 'function_call') || false;
-
-  return (
-    <div className="space-y-4">
-      {/* Status bar for tool calls */}
-      {hasToolCalls && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-violet-500/10 border border-violet-500/20">
-          <Wrench size={16} className="text-violet-300" />
-          <span className="text-sm text-violet-200 font-medium">
-            This response includes tool calls
-          </span>
-          <span className="px-2 py-0.5 rounded-full bg-violet-500/20 text-xs text-violet-200">
-            {response.output?.filter(i => i.type === 'function_call').length} tool{response.output?.filter(i => i.type === 'function_call').length !== 1 ? 's' : ''}
-          </span>
-        </div>
-      )}
-
-      {/* Output items */}
-      {hasOutput ? (
-        <div className="space-y-3">
-          <div className="text-xs text-slate-400 font-medium uppercase tracking-wide px-1">
-            Output ({response.output?.length} item{response.output?.length !== 1 ? 's' : ''})
-          </div>
-          {response.output?.map((item, idx) => (
-            <OutputItemCard key={item.id || idx} item={item} />
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-          <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
-            <Bot size={14} className="text-emerald-300" />
-            <span className="font-semibold text-emerald-200">Response</span>
-          </div>
-          <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[350px] font-mono">
-            {JSON.stringify(response, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {/* Usage info */}
-      {response.usage && (
-        <div className="flex flex-wrap gap-3 text-xs">
-          {response.usage.input_tokens !== undefined && (
-            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
-              Input: <span className="text-white font-medium">{response.usage.input_tokens}</span> tokens
-            </span>
-          )}
-          {response.usage.output_tokens !== undefined && (
-            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
-              Output: <span className="text-white font-medium">{response.usage.output_tokens}</span> tokens
-            </span>
-          )}
-          {response.usage.total_tokens !== undefined && (
-            <span className="px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-300">
-              Total: <span className="text-white font-medium">{response.usage.total_tokens}</span> tokens
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EventTimeline({ interactionId, loadEvents }: { interactionId: string; loadEvents: (id: string) => Promise<{ interaction_id: string; events: InteractionEvent[] }> }) {
-  const [events, setEvents] = useState<InteractionEvent[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchEvents = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await loadEvents(interactionId);
-        setEvents(res.events || []);
-      } catch (err) {
-        console.error(err);
-        setError('Unable to load events');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchEvents();
-  }, [interactionId, loadEvents]);
+function EventTimeline({ interactionId }: { interactionId: string }) {
+  const { events: eventsData, loading, error } = useInteractionEvents(interactionId);
+  const events = eventsData?.events ?? [];
 
   if (loading) return <LoadingState message="Loading timeline..." />;
   if (error) return <EmptyState icon={AlertCircle} title="Timeline unavailable" description={error} />;
@@ -234,10 +52,10 @@ function EventTimeline({ interactionId, loadEvents }: { interactionId: string; l
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-1">
             <span className="font-mono text-white">{evt.stage}</span>
             <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] uppercase tracking-wide text-slate-300">{evt.direction}</span>
-            {evt.model_requested && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">req: {evt.model_requested}</span>}
-            {evt.model_served && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">served: {evt.model_served}</span>}
-            {evt.thread_key && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-200">thread: {evt.thread_key}</span>}
-            {evt.previous_response_id && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-100">prev: {evt.previous_response_id}</span>}
+            {evt.modelRequested && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">req: {evt.modelRequested}</span>}
+            {evt.modelServed && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-200">served: {evt.modelServed}</span>}
+            {evt.threadKey && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-200">thread: {evt.threadKey}</span>}
+            {evt.previousResponseId && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-amber-100">prev: {evt.previousResponseId}</span>}
           </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {evt.raw && (
@@ -264,18 +82,20 @@ function EventTimeline({ interactionId, loadEvents }: { interactionId: string; l
 }
 
 // Component for the pipeline flow content (extracted from UnifiedInteractionDetail)
-function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetail }) {
+function PipelineFlowContent({ interaction }: { interaction: Interaction }) {
+  const requestHeaders = interaction.requestHeaders as Record<string, string> | null;
+
   return (
     <div className="flex-1 space-y-6 overflow-y-auto px-5 py-6 max-h-[calc(100vh-450px)]">
       {/* Request Headers */}
-      {interaction.request_headers && Object.keys(interaction.request_headers).length > 0 && (
+      {requestHeaders && Object.keys(requestHeaders).length > 0 && (
         <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 px-4 py-3">
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
             <List size={14} className="text-violet-300" />
             <span className="font-semibold text-violet-200">Request Headers</span>
           </div>
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs font-mono">
-            {Object.entries(interaction.request_headers).map(([key, value]) => (
+            {Object.entries(requestHeaders).map(([key, value]) => (
               <Fragment key={key}>
                 <div className="text-slate-400 text-right">{key}:</div>
                 <div className="text-slate-200 break-all">{value}</div>
@@ -320,11 +140,11 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
             <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
               {JSON.stringify(interaction.request.canonical, null, 2)}
             </pre>
-            {interaction.request.unmapped_fields && interaction.request.unmapped_fields.length > 0 && (
+            {interaction.request.unmappedFields && interaction.request.unmappedFields.length > 0 && (
               <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
                 <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
                 <div className="flex flex-wrap gap-1">
-                  {interaction.request.unmapped_fields.map((field) => (
+                  {interaction.request.unmappedFields.map((field) => (
                     <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
                       {field}
                     </span>
@@ -342,7 +162,7 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
       )}
 
       {/* STEP 3: Provider Request */}
-      {interaction.request?.provider_request && (
+      {interaction.request?.providerRequest && (
         <>
           <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-3">
             <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
@@ -352,7 +172,7 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
               <span className="text-slate-500">(Sent to {interaction.provider})</span>
             </div>
             <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-              {JSON.stringify(interaction.request.provider_request, null, 2)}
+              {JSON.stringify(interaction.request.providerRequest, null, 2)}
             </pre>
           </div>
           <div className="flex items-center justify-center gap-2 py-4">
@@ -402,11 +222,11 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
             <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
               {JSON.stringify(interaction.response.canonical, null, 2)}
             </pre>
-            {interaction.response.unmapped_fields && interaction.response.unmapped_fields.length > 0 && (
+            {interaction.response.unmappedFields && interaction.response.unmappedFields.length > 0 && (
               <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
                 <div className="text-xs font-medium text-amber-200 mb-1">⚠️ Unmapped Fields</div>
                 <div className="flex flex-wrap gap-1">
-                  {interaction.response.unmapped_fields.map((field) => (
+                  {interaction.response.unmappedFields.map((field) => (
                     <span key={field} className="px-2 py-0.5 rounded bg-amber-500/20 text-[10px] text-amber-200 font-mono">
                       {field}
                     </span>
@@ -424,7 +244,7 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
       )}
 
       {/* STEP 6: Client Response */}
-      {interaction.response?.client_response && (
+      {interaction.response?.clientResponse && (
         <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
             <span className="flex items-center justify-center w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-200 font-bold text-[10px]">6</span>
@@ -433,7 +253,7 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
             <span className="text-slate-500">(Returned to client)</span>
           </div>
           <pre className="whitespace-pre-wrap text-xs text-slate-300 bg-slate-950/50 p-4 rounded-xl overflow-auto max-h-[300px] font-mono">
-            {JSON.stringify(interaction.response.client_response, null, 2)}
+            {JSON.stringify(interaction.response.clientResponse, null, 2)}
           </pre>
           {interaction.response.usage && (
             <div className="mt-3 rounded-lg border border-slate-500/30 bg-slate-800/30 px-3 py-2">
@@ -441,15 +261,15 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
               <div className="grid grid-cols-3 gap-4 text-xs">
                 <div>
                   <div className="text-slate-500">Prompt</div>
-                  <div className="text-slate-200 font-mono">{interaction.response.usage.prompt_tokens ?? interaction.response.usage.input_tokens}</div>
+                  <div className="text-slate-200 font-mono">{interaction.response.usage.inputTokens}</div>
                 </div>
                 <div>
                   <div className="text-slate-500">Completion</div>
-                  <div className="text-slate-200 font-mono">{interaction.response.usage.completion_tokens ?? interaction.response.usage.output_tokens}</div>
+                  <div className="text-slate-200 font-mono">{interaction.response.usage.outputTokens}</div>
                 </div>
                 <div>
                   <div className="text-slate-500">Total</div>
-                  <div className="text-emerald-200 font-mono font-semibold">{interaction.response.usage.total_tokens}</div>
+                  <div className="text-emerald-200 font-mono font-semibold">{interaction.response.usage.totalTokens}</div>
                 </div>
               </div>
             </div>
@@ -475,7 +295,7 @@ function PipelineFlowContent({ interaction }: { interaction: NewInteractionDetai
   );
 }
 
-function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: NewInteractionDetail; loadEvents: (id: string) => Promise<{ interaction_id: string; events: InteractionEvent[] }> }) {
+function UnifiedInteractionDetail({ interaction }: { interaction: Interaction }) {
   const [activeTab, setActiveTab] = useState<DetailTab>('pipeline');
 
   return (
@@ -504,12 +324,12 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
           <div className="flex flex-wrap gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
               <Clock4 size={12} />
-              {formatShortDate(interaction.created_at)}
+              {formatShortDate(interaction.createdAt)}
             </span>
-            {interaction.served_model && (
+            {interaction.servedModel && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
                 <ServerCog size={12} />
-                {interaction.served_model}
+                {interaction.servedModel}
               </span>
             )}
             {interaction.frontdoor && (
@@ -524,10 +344,10 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
                 provider: {interaction.provider}
               </span>
             )}
-            {interaction.app_name && (
+            {interaction.appName && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-1 text-xs text-slate-200">
                 <Compass size={12} />
-                app: {interaction.app_name}
+                app: {interaction.appName}
               </span>
             )}
             {interaction.duration && (
@@ -585,7 +405,7 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
 
       {activeTab === 'timeline' && (
         <div className="p-5">
-          <EventTimeline interactionId={interaction.id} loadEvents={loadEvents} />
+          <EventTimeline interactionId={interaction.id} />
         </div>
       )}
     </div>
@@ -593,27 +413,35 @@ function UnifiedInteractionDetail({ interaction, loadEvents }: { interaction: Ne
 }
 
 export function Data() {
-  const { overview, interactions, interactionsTotal, loadingInteractions, interactionsError, refreshInteractions, fetchInteractionDetail, fetchInteractionEvents } = useApi();
-  const [selectedInteraction, setSelectedInteraction] = useState<NewInteractionDetail | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+  const { overview } = useOverview();
   const [filter, setFilter] = useState<FilterType>('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const openInteraction = async (id: string) => {
-    setLoadingDetail(true);
-    const detail = await fetchInteractionDetail(id);
-    setSelectedInteraction(detail);
-    setLoadingDetail(false);
+  // Build filter for interactions query
+  const interactionFilter: InteractionFilter | undefined = filter
+    ? { frontdoor: filter }
+    : undefined;
+
+  const { interactions, total: interactionsTotal, loading: loadingInteractions, error: interactionsError, refresh: refreshInteractions } = useInteractions({
+    filter: interactionFilter,
+    limit: 50,
+  });
+
+  // Fetch selected interaction detail
+  const { interaction: selectedInteraction, loading: loadingDetail } = useInteraction(selectedId);
+
+  const openInteraction = (id: string) => {
+    setSelectedId(id);
   };
 
   const handleRefresh = () => {
-    setSelectedInteraction(null);
-    refreshInteractions(filter);
+    setSelectedId(null);
+    refreshInteractions();
   };
 
   const handleFilterChange = (newFilter: FilterType) => {
     setFilter(newFilter);
-    setSelectedInteraction(null);
-    refreshInteractions(newFilter);
+    setSelectedId(null);
   };
 
   if (!overview?.storage.enabled) {
@@ -636,10 +464,18 @@ export function Data() {
     );
   }
 
+  // Helper to extract frontdoor from metadata (which is JSON scalar)
+  const getFrontdoor = (metadata: unknown): string => {
+    if (metadata && typeof metadata === 'object' && 'frontdoor' in metadata) {
+      return (metadata as { frontdoor?: string }).frontdoor || 'unknown';
+    }
+    return 'unknown';
+  };
+
   // Count interactions by frontdoor type
-  const openaiCount = interactions.filter(i => i.metadata?.frontdoor === 'openai').length;
-  const anthropicCount = interactions.filter(i => i.metadata?.frontdoor === 'anthropic').length;
-  const responsesCount = interactions.filter(i => i.metadata?.frontdoor === 'responses').length;
+  const openaiCount = interactions.filter(i => getFrontdoor(i.metadata) === 'openai').length;
+  const anthropicCount = interactions.filter(i => getFrontdoor(i.metadata) === 'anthropic').length;
+  const responsesCount = interactions.filter(i => getFrontdoor(i.metadata) === 'responses').length;
 
 
   return (
@@ -759,16 +595,17 @@ export function Data() {
             {!loadingInteractions &&
               interactions.map((interaction) => {
                 // Determine frontdoor type for icon/color
-                const frontdoor = interaction.metadata?.frontdoor || 'unknown';
+                const frontdoor = getFrontdoor(interaction.metadata);
                 const isOpenAI = frontdoor === 'openai';
                 const isAnthropic = frontdoor === 'anthropic';
                 const isResponses = frontdoor === 'responses';
+                const metadata = interaction.metadata as Record<string, string> | null;
 
                 return (
                   <button
                     key={interaction.id}
                     onClick={() => openInteraction(interaction.id)}
-                    className={`group flex w-full flex-col gap-2 rounded-xl border px-4 py-3 text-left transition ${selectedInteraction?.id === interaction.id
+                    className={`group flex w-full flex-col gap-2 rounded-xl border px-4 py-3 text-left transition ${selectedId === interaction.id
                       ? 'border-violet-400/50 bg-violet-500/10 shadow-[0_0_20px_rgba(139,92,246,0.1)]'
                       : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
                       }`}
@@ -797,7 +634,7 @@ export function Data() {
 
                     <div className="flex items-center gap-2 text-[11px] text-slate-400">
                       <Clock4 size={12} />
-                      <span>{formatShortDate(interaction.updated_at)}</span>
+                      <span>{formatShortDate(interaction.updatedAt)}</span>
                       {interaction.model && (
                         <>
                           <span className="text-slate-600">•</span>
@@ -818,17 +655,17 @@ export function Data() {
                         }`}>
                         {frontdoor}
                       </span>
-                      {interaction.metadata?.provider && (
+                      {metadata?.provider && (
                         <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
-                          prov: {interaction.metadata.provider}
+                          prov: {metadata.provider}
                         </span>
                       )}
-                      {interaction.metadata?.app && (
+                      {metadata?.app && (
                         <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-200">
-                          app: {interaction.metadata.app}
+                          app: {metadata.app}
                         </span>
                       )}
-                      {interaction.previous_response_id && (
+                      {interaction.previousResponseId && (
                         <span className="rounded-md bg-slate-800/80 px-2 py-0.5 text-[10px] text-emerald-200">
                           <ArrowLeftRight size={10} className="inline mr-1" />
                           continues
@@ -871,7 +708,6 @@ export function Data() {
           {selectedInteraction && !loadingDetail && (
             <UnifiedInteractionDetail
               interaction={selectedInteraction}
-              loadEvents={fetchInteractionEvents}
             />
           )}
         </div>

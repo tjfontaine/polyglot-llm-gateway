@@ -1,10 +1,10 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, beforeAll, afterAll } from 'vitest';
+import { afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { server } from './server';
 
 // Ensure React treats the environment as act-enabled to silence warnings from async effects
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // Cleanup after each test
 afterEach(() => {

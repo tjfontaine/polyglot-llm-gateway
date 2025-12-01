@@ -6,7 +6,7 @@ import {
     XCircle,
     Zap,
 } from 'lucide-react';
-import type { ShadowResult } from '../../types';
+import type { ShadowResult } from '../../gql/graphql';
 
 interface ShadowSummaryProps {
     shadow: ShadowResult;
@@ -41,17 +41,17 @@ export function ShadowSummary({ shadow, onClick, selected }: ShadowSummaryProps)
             <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                     <div className={`rounded-lg p-2 ${hasError
-                            ? 'bg-red-500/10 text-red-300'
-                            : hasDivergences
-                                ? 'bg-amber-500/10 text-amber-300'
-                                : 'bg-emerald-500/10 text-emerald-300'
+                        ? 'bg-red-500/10 text-red-300'
+                        : hasDivergences
+                            ? 'bg-amber-500/10 text-amber-300'
+                            : 'bg-emerald-500/10 text-emerald-300'
                         }`}>
                         <ServerCog size={18} />
                     </div>
                     <div>
-                        <div className="font-medium text-white text-sm">{shadow.provider_name}</div>
-                        {shadow.provider_model && (
-                            <div className="text-xs text-slate-400 mt-0.5">{shadow.provider_model}</div>
+                        <div className="font-medium text-white text-sm">{shadow.providerName}</div>
+                        {shadow.providerModel && (
+                            <div className="text-xs text-slate-400 mt-0.5">{shadow.providerModel}</div>
                         )}
                     </div>
                 </div>
@@ -80,13 +80,13 @@ export function ShadowSummary({ shadow, onClick, selected }: ShadowSummaryProps)
             <div className="flex flex-wrap gap-3 mt-3 text-xs">
                 <span className="flex items-center gap-1.5 text-slate-400">
                     <Clock4 size={12} />
-                    {formatDuration(shadow.duration_ns)}
+                    {formatDuration(shadow.durationNs)}
                 </span>
 
-                {(shadow.tokens_in !== undefined || shadow.tokens_out !== undefined) && (
+                {(shadow.tokensIn !== undefined || shadow.tokensOut !== undefined) && (
                     <span className="flex items-center gap-1.5 text-slate-400">
                         <Zap size={12} />
-                        {shadow.tokens_in ?? 0} in / {shadow.tokens_out ?? 0} out
+                        {shadow.tokensIn ?? 0} in / {shadow.tokensOut ?? 0} out
                     </span>
                 )}
             </div>

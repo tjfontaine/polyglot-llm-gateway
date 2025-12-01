@@ -13,7 +13,7 @@ import {
   Clock4,
   Bot,
 } from 'lucide-react';
-import { useApi, formatBytesToMB, friendlyDuration } from '../hooks/useApi';
+import { useStats, useOverview, formatBytesToMB, friendlyDuration } from '../gql/hooks';
 import { Pill, InfoCard } from './ui';
 import { useMemo } from 'react';
 
@@ -25,7 +25,8 @@ const navItems = [
 ];
 
 export function Layout() {
-  const { stats, overview } = useApi();
+  const { stats } = useStats();
+  const { overview } = useOverview();
 
   const tenantLabel = useMemo(() => {
     if (!overview) return 'Mode: pending';
@@ -37,11 +38,11 @@ export function Layout() {
   }, [overview]);
 
   const hasResponsesEnabled = useMemo(() => {
-    return (overview?.apps ?? []).some((app) => app?.enable_responses);
+    return (overview?.apps ?? []).some((app) => app?.enableResponses);
   }, [overview]);
 
   const hasPassthroughEnabled = useMemo(() => {
-    return (overview?.providers ?? []).some((p) => p?.enable_passthrough);
+    return (overview?.providers ?? []).some((p) => p?.enablePassthrough);
   }, [overview]);
 
   return (
@@ -69,7 +70,7 @@ export function Layout() {
                   label={overview?.storage.enabled ? `Storage: ${overview.storage.type || 'enabled'}` : 'Storage disabled'}
                   tone={overview?.storage.enabled ? 'emerald' : 'slate'}
                 />
-                <Pill icon={ServerCog} label={stats ? `Go ${stats.go_version}` : 'Runtime pending'} />
+                <Pill icon={ServerCog} label={stats ? `Go ${stats.goVersion}` : 'Runtime pending'} />
                 {hasResponsesEnabled && <Pill icon={Bot} label="Responses API" tone="emerald" />}
                 {hasPassthroughEnabled && <Pill icon={Zap} label="Passthrough" tone="amber" />}
               </div>
@@ -88,10 +89,9 @@ export function Layout() {
                 to={to}
                 end={exact}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
-                    isActive
-                      ? 'bg-amber-500/20 text-amber-100 border border-amber-400/40 shadow-[0_0_20px_rgba(251,191,36,0.15)]'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white border border-transparent'
+                  `flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${isActive
+                    ? 'bg-amber-500/20 text-amber-100 border border-amber-400/40 shadow-[0_0_20px_rgba(251,191,36,0.15)]'
+                    : 'text-slate-300 hover:bg-white/5 hover:text-white border border-transparent'
                   }`
                 }
               >
@@ -105,9 +105,9 @@ export function Layout() {
         {/* Quick Stats Bar */}
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <InfoCard title="Uptime" value={friendlyDuration(stats?.uptime)} hint="process" icon={Clock4} />
-          <InfoCard title="Goroutines" value={stats ? `${stats.num_goroutine}` : '--'} hint="runtime" icon={Activity} />
-          <InfoCard title="Memory" value={formatBytesToMB(stats?.memory.alloc)} hint="allocated" icon={ServerCog} />
-          <InfoCard title="GC cycles" value={stats ? `${stats.memory.num_gc}` : '--'} hint="since start" icon={GitBranch} />
+          <InfoCard title="Goroutines" value={stats ? `${stats.numGoroutine}` : '--'} hint="runtime" icon={Activity} />
+          <InfoCard title="Memory" value={formatBytesToMB(stats?.memory?.alloc)} hint="allocated" icon={ServerCog} />
+          <InfoCard title="GC cycles" value={stats ? `${stats.memory?.numGC}` : '--'} hint="since start" icon={GitBranch} />
         </section>
 
         {/* Main Content */}

@@ -7,38 +7,39 @@ import {
     Minus,
     Plus,
 } from 'lucide-react';
-import type { Divergence, DivergenceType } from '../../types';
+import type { Divergence } from '../../gql/graphql';
 
 interface DivergenceListProps {
     divergences: Divergence[];
 }
 
-const divergenceTypeConfig: Record<DivergenceType, {
+// Map GraphQL enum values to display config
+const divergenceTypeConfig: Record<string, {
     label: string;
     icon: typeof AlertTriangle;
     colorClass: string;
 }> = {
-    missing_field: {
+    MISSING_FIELD: {
         label: 'Missing Fields',
         icon: Minus,
         colorClass: 'text-red-300 bg-red-500/10 border-red-500/30',
     },
-    extra_field: {
+    EXTRA_FIELD: {
         label: 'Extra Fields',
         icon: Plus,
         colorClass: 'text-blue-300 bg-blue-500/10 border-blue-500/30',
     },
-    type_mismatch: {
+    TYPE_MISMATCH: {
         label: 'Type Mismatches',
         icon: Diff,
         colorClass: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
     },
-    array_length: {
+    ARRAY_LENGTH: {
         label: 'Array Length Differences',
         icon: List,
         colorClass: 'text-violet-300 bg-violet-500/10 border-violet-500/30',
     },
-    null_mismatch: {
+    NULL_MISMATCH: {
         label: 'Null/Non-null Mismatches',
         icon: FileQuestion,
         colorClass: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/30',
@@ -74,7 +75,7 @@ export function DivergenceList({ divergences }: DivergenceListProps) {
             </div>
 
             {Object.entries(grouped).map(([type, items]) => {
-                const config = divergenceTypeConfig[type as DivergenceType];
+                const config = divergenceTypeConfig[type];
                 if (!config) return null;
 
                 const Icon = config.icon;

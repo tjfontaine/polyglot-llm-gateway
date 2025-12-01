@@ -1,29 +1,11 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
-import { render } from '../test/test-utils';
+import { render, type GraphQLMockData } from '../test/test-utils';
+import { mockGqlMultiTenantOverview, mockGqlEmptyOverview } from '../test/graphql-mocks';
 import { Dashboard } from './Dashboard';
-import {
-  mockStats,
-  mockOverview,
-  mockMultiTenantOverview,
-  mockEmptyOverview,
-  mockNullArraysOverview,
-  mockInteractions,
-  createMockFetch,
-} from '../test/mocks';
 
 describe('Dashboard', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('renders welcome section', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: mockInteractions, total: 3 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     expect(screen.getByText('Welcome to Control Plane')).toBeInTheDocument();
@@ -31,12 +13,6 @@ describe('Dashboard', () => {
   });
 
   it('renders topology card with app and provider counts', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: mockInteractions, total: 3 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -47,12 +23,6 @@ describe('Dashboard', () => {
   });
 
   it('renders routing card with rules count', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: mockInteractions, total: 3 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -63,12 +33,6 @@ describe('Dashboard', () => {
   });
 
   it('renders data card with interaction counts', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: mockInteractions, total: 3 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -79,13 +43,12 @@ describe('Dashboard', () => {
   });
 
   it('handles empty overview gracefully', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockEmptyOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    const mockData: GraphQLMockData = {
+      overview: mockGqlEmptyOverview,
+      interactions: { interactions: [], total: 0 },
+    };
 
-    render(<Dashboard />, { initialRoute: '/admin' });
+    render(<Dashboard />, { initialRoute: '/admin', mockData });
 
     await waitFor(() => {
       expect(screen.getByText('Welcome to Control Plane')).toBeInTheDocument();
@@ -98,14 +61,21 @@ describe('Dashboard', () => {
 
   it('handles null arrays from backend gracefully (bug fix verification)', async () => {
     // This test verifies the fix for the bug where null arrays caused crashes
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockNullArraysOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    // GraphQL normalizes these, but we verify the component handles empty data
+    const mockData: GraphQLMockData = {
+      overview: {
+        ...mockGqlEmptyOverview,
+        apps: [],
+        frontdoors: [],
+        providers: [],
+        routing: { __typename: 'RoutingSummary', defaultProvider: '', rules: [] },
+        tenants: [],
+      },
+      interactions: { interactions: [], total: 0 },
+    };
 
     // Should not throw error
-    render(<Dashboard />, { initialRoute: '/admin' });
+    render(<Dashboard />, { initialRoute: '/admin', mockData });
 
     await waitFor(() => {
       expect(screen.getByText('Welcome to Control Plane')).toBeInTheDocument();
@@ -118,13 +88,12 @@ describe('Dashboard', () => {
   });
 
   it('shows multi-tenant mode in quick status', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockMultiTenantOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
+    const mockData: GraphQLMockData = {
+      overview: mockGqlMultiTenantOverview,
+      interactions: { interactions: [], total: 0 },
+    };
 
-    render(<Dashboard />, { initialRoute: '/admin' });
+    render(<Dashboard />, { initialRoute: '/admin', mockData });
 
     await waitFor(() => {
       expect(screen.getByText('Quick Status')).toBeInTheDocument();
@@ -134,12 +103,6 @@ describe('Dashboard', () => {
   });
 
   it('shows storage type in quick status', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -150,12 +113,6 @@ describe('Dashboard', () => {
   });
 
   it('shows default provider in quick status', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -166,12 +123,6 @@ describe('Dashboard', () => {
   });
 
   it('shows responses API enabled badge when apps have it enabled', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -182,12 +133,6 @@ describe('Dashboard', () => {
   });
 
   it('shows passthrough providers badge when providers have it enabled', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -198,12 +143,6 @@ describe('Dashboard', () => {
   });
 
   it('links topology card to /admin/topology', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -215,12 +154,6 @@ describe('Dashboard', () => {
   });
 
   it('links routing card to /admin/routing', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {
@@ -232,12 +165,6 @@ describe('Dashboard', () => {
   });
 
   it('links data card to /admin/data', async () => {
-    global.fetch = vi.fn(createMockFetch({
-      '/stats': mockStats,
-      '/overview': mockOverview,
-      '/interactions': { interactions: [], total: 0 },
-    }));
-
     render(<Dashboard />, { initialRoute: '/admin' });
 
     await waitFor(() => {

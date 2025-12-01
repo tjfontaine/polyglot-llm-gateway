@@ -8,24 +8,24 @@ import {
   MessageSquare,
   Route,
   Signal,
-  Users,
   Zap,
 } from 'lucide-react';
-import { useApi, formatShortDate } from '../hooks/useApi';
+import { useOverview, useInteractions } from '../gql/hooks';
 import { Pill, StatusBadge } from '../components/ui';
 
 export function Dashboard() {
-  const { overview, interactions, interactionsTotal, loadingInteractions } = useApi();
+  const { overview } = useOverview();
+  const { interactions, total: interactionsTotal, loading: loadingInteractions } = useInteractions({ limit: 10 });
 
   const appEntries = overview?.apps?.length
     ? overview.apps
     : overview?.frontdoors?.map((fd, idx) => ({
-        name: fd.type || `frontdoor-${idx + 1}`,
-        frontdoor: fd.type,
-        path: fd.path,
-        provider: fd.provider,
-        default_model: fd.default_model,
-      })) ?? [];
+      name: fd.type || `frontdoor-${idx + 1}`,
+      frontdoor: fd.type,
+      path: fd.path,
+      provider: fd.provider,
+      defaultModel: fd.defaultModel,
+    })) ?? [];
 
   const recentInteractions = interactions.slice(0, 4);
   const conversationCount = interactions.filter(i => i.type === 'conversation').length;
@@ -133,8 +133,8 @@ export function Dashboard() {
                 >
                   <div className="text-sm text-white">→ {rule.provider}</div>
                   <div className="text-xs text-slate-400">
-                    {rule.model_prefix && `prefix: ${rule.model_prefix}`}
-                    {rule.model_exact && `exact: ${rule.model_exact}`}
+                    {rule.modelPrefix && `prefix: ${rule.modelPrefix}`}
+                    {rule.modelExact && `exact: ${rule.modelExact}`}
                   </div>
                 </div>
               ))}
@@ -206,8 +206,8 @@ export function Dashboard() {
                     {interaction.type === 'response' && interaction.status && (
                       <StatusBadge status={interaction.status} />
                     )}
-                    {interaction.type === 'conversation' && interaction.message_count && (
-                      <span className="text-xs text-slate-400">{interaction.message_count} msg</span>
+                    {interaction.type === 'conversation' && interaction.messageCount && (
+                      <span className="text-xs text-slate-400">{interaction.messageCount} msg</span>
                     )}
                   </div>
                 ))}
@@ -247,17 +247,17 @@ export function Dashboard() {
             )}
             <Pill
               icon={Route}
-              label={`Default provider: ${overview?.routing?.default_provider || 'none'}`}
+              label={`Default provider: ${overview?.routing?.defaultProvider || 'none'}`}
               tone="slate"
             />
-            {(overview?.providers ?? []).filter((p) => p.enable_passthrough).length > 0 && (
+            {(overview?.providers ?? []).filter((p) => p.enablePassthrough).length > 0 && (
               <Pill
                 icon={Zap}
-                label={`${(overview?.providers ?? []).filter((p) => p.enable_passthrough).length} passthrough provider(s)`}
+                label={`${(overview?.providers ?? []).filter((p) => p.enablePassthrough).length} passthrough provider(s)`}
                 tone="amber"
               />
             )}
-            {(overview?.apps ?? []).some((app) => app?.enable_responses) && (
+            {(overview?.apps ?? []).some((app) => app?.enableResponses) && (
               <Pill icon={Bot} label="Responses API enabled" tone="emerald" />
             )}
           </div>

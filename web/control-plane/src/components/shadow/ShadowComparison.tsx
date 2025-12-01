@@ -7,12 +7,12 @@ import {
     XCircle,
     Zap,
 } from 'lucide-react';
-import type { ShadowResult, NewInteractionDetail } from '../../types';
+import type { ShadowResult, Interaction } from '../../gql/graphql';
 import { DivergenceList } from './DivergenceList';
 
 interface ShadowComparisonProps {
     shadow: ShadowResult;
-    primary?: NewInteractionDetail;
+    primary?: Interaction;
 }
 
 type ViewMode = 'side-by-side' | 'shadow-only';
@@ -59,8 +59,8 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                         <button
                             onClick={() => setStage('request')}
                             className={`px-3 py-1.5 text-xs transition-colors ${stage === 'request'
-                                    ? 'bg-violet-500/20 text-violet-200'
-                                    : 'bg-transparent text-slate-400 hover:text-white'
+                                ? 'bg-violet-500/20 text-violet-200'
+                                : 'bg-transparent text-slate-400 hover:text-white'
                                 }`}
                         >
                             Request
@@ -68,8 +68,8 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                         <button
                             onClick={() => setStage('response')}
                             className={`px-3 py-1.5 text-xs transition-colors ${stage === 'response'
-                                    ? 'bg-violet-500/20 text-violet-200'
-                                    : 'bg-transparent text-slate-400 hover:text-white'
+                                ? 'bg-violet-500/20 text-violet-200'
+                                : 'bg-transparent text-slate-400 hover:text-white'
                                 }`}
                         >
                             Response
@@ -84,8 +84,8 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                             <button
                                 onClick={() => setViewMode('side-by-side')}
                                 className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${viewMode === 'side-by-side'
-                                        ? 'bg-violet-500/20 text-violet-200'
-                                        : 'bg-transparent text-slate-400 hover:text-white'
+                                    ? 'bg-violet-500/20 text-violet-200'
+                                    : 'bg-transparent text-slate-400 hover:text-white'
                                     }`}
                             >
                                 <Split size={12} />
@@ -94,8 +94,8 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                             <button
                                 onClick={() => setViewMode('shadow-only')}
                                 className={`px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors ${viewMode === 'shadow-only'
-                                        ? 'bg-violet-500/20 text-violet-200'
-                                        : 'bg-transparent text-slate-400 hover:text-white'
+                                    ? 'bg-violet-500/20 text-violet-200'
+                                    : 'bg-transparent text-slate-400 hover:text-white'
                                     }`}
                             >
                                 <Eye size={12} />
@@ -125,7 +125,7 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                             {primary.response?.usage && (
                                 <span className="flex items-center gap-1.5 text-slate-300">
                                     <Zap size={12} />
-                                    {primary.response.usage.input_tokens ?? 0} in / {primary.response.usage.output_tokens ?? 0} out
+                                    {primary.response.usage.inputTokens ?? 0} in / {primary.response.usage.outputTokens ?? 0} out
                                 </span>
                             )}
                         </div>
@@ -134,22 +134,22 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
 
                 <div className={`flex-1 min-w-[200px] p-3 rounded-xl border ${hasError ? 'bg-red-500/5 border-red-500/30' : 'bg-emerald-500/5 border-emerald-500/30'
                     }`}>
-                    <div className="text-xs text-slate-400 mb-2 font-semibold">Shadow: {shadow.provider_name}</div>
+                    <div className="text-xs text-slate-400 mb-2 font-semibold">Shadow: {shadow.providerName}</div>
                     <div className="flex flex-wrap gap-3 text-xs">
-                        {shadow.provider_model && (
+                        {shadow.providerModel && (
                             <span className="flex items-center gap-1.5 text-slate-300">
                                 <ServerCog size={12} />
-                                {shadow.provider_model}
+                                {shadow.providerModel}
                             </span>
                         )}
                         <span className="flex items-center gap-1.5 text-slate-300">
                             <Clock4 size={12} />
-                            {formatDuration(shadow.duration_ns)}
+                            {formatDuration(shadow.durationNs)}
                         </span>
-                        {(shadow.tokens_in !== undefined || shadow.tokens_out !== undefined) && (
+                        {(shadow.tokensIn !== undefined || shadow.tokensOut !== undefined) && (
                             <span className="flex items-center gap-1.5 text-slate-300">
                                 <Zap size={12} />
-                                {shadow.tokens_in ?? 0} in / {shadow.tokens_out ?? 0} out
+                                {shadow.tokensIn ?? 0} in / {shadow.tokensOut ?? 0} out
                             </span>
                         )}
                     </div>
@@ -208,10 +208,10 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                                 />
                             )}
 
-                            {shadow.request?.provider_request && (
+                            {shadow.request?.providerRequest && (
                                 <JsonView
-                                    data={shadow.request.provider_request}
-                                    label={`Provider Request (to ${shadow.provider_name})`}
+                                    data={shadow.request.providerRequest}
+                                    label={`Provider Request (to ${shadow.providerName})`}
                                     colorClass="border-blue-500/20 bg-blue-500/5"
                                 />
                             )}
@@ -252,7 +252,7 @@ export function ShadowComparison({ shadow, primary }: ShadowComparisonProps) {
                                         colorClass="border-violet-500/20 bg-violet-500/5"
                                     />
                                     <JsonView
-                                        data={shadow.response?.client_response}
+                                        data={shadow.response?.clientResponse}
                                         label="Client Response (What client would receive)"
                                         colorClass="border-amber-500/20 bg-amber-500/5"
                                     />

@@ -5,11 +5,11 @@ import {
   Route,
   Users,
 } from 'lucide-react';
-import { useApi } from '../hooks/useApi';
+import { useOverview } from '../gql/hooks';
 import { PageHeader, Pill, Section, EmptyState } from '../components/ui';
 
 export function Routing() {
-  const { overview, refreshOverview } = useApi();
+  const { overview, refresh: refreshOverview } = useOverview();
 
   return (
     <div className="space-y-6">
@@ -39,7 +39,7 @@ export function Routing() {
           <div>
             <div className="text-sm text-slate-400">Default Provider</div>
             <div className="text-xl font-bold text-white">
-              {overview?.routing?.default_provider || 'Not configured'}
+              {overview?.routing?.defaultProvider || 'Not configured'}
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Requests that don't match any routing rule will be sent to this provider
@@ -74,19 +74,19 @@ export function Routing() {
                       Rule #{idx + 1}
                     </div>
                     <div className="text-xs font-medium text-slate-300">
-                      {rule.model_prefix && (
+                      {rule.modelPrefix && (
                         <>
                           <span className="text-slate-500">prefix:</span>{' '}
-                          <code className="text-amber-200">{rule.model_prefix}</code>
+                          <code className="text-amber-200">{rule.modelPrefix}</code>
                         </>
                       )}
-                      {rule.model_exact && (
+                      {rule.modelExact && (
                         <>
                           <span className="text-slate-500">exact:</span>{' '}
-                          <code className="text-emerald-200">{rule.model_exact}</code>
+                          <code className="text-emerald-200">{rule.modelExact}</code>
                         </>
                       )}
-                      {!rule.model_exact && !rule.model_prefix && (
+                      {!rule.modelExact && !rule.modelPrefix && (
                         <span className="text-slate-400">default</span>
                       )}
                     </div>
@@ -99,26 +99,26 @@ export function Routing() {
                       Provider
                     </div>
                     <div className="text-sm font-semibold text-white">
-                      {rule.provider || overview?.routing?.default_provider || 'default'}
+                      {rule.provider || overview?.routing?.defaultProvider || 'default'}
                     </div>
                   </div>
                 </div>
 
                 {/* Rule explanation */}
                 <div className="mt-3 text-xs text-slate-500">
-                  {rule.model_prefix && (
-                    <>Models starting with <code className="text-amber-200/70">{rule.model_prefix}</code> will be routed to <span className="text-white">{rule.provider}</span></>
+                  {rule.modelPrefix && (
+                    <>Models starting with <code className="text-amber-200/70">{rule.modelPrefix}</code> will be routed to <span className="text-white">{rule.provider}</span></>
                   )}
-                  {rule.model_exact && (
-                    <>Exact model <code className="text-emerald-200/70">{rule.model_exact}</code> will be routed to <span className="text-white">{rule.provider}</span></>
+                  {rule.modelExact && (
+                    <>Exact model <code className="text-emerald-200/70">{rule.modelExact}</code> will be routed to <span className="text-white">{rule.provider}</span></>
                   )}
-                  {!rule.model_exact && !rule.model_prefix && (
+                  {!rule.modelExact && !rule.modelPrefix && (
                     <>Default routing rule to <span className="text-white">{rule.provider}</span></>
                   )}
                 </div>
               </div>
             ))}
-            {(overview?.routing.rules?.length ?? 0) === 0 && (
+            {(overview?.routing?.rules?.length ?? 0) === 0 && (
               <EmptyState
                 icon={GitBranch}
                 title="No routing rules configured"
@@ -197,16 +197,16 @@ export function Routing() {
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <div className="rounded-xl border border-white/5 bg-slate-900/50 p-3 text-center">
-                      <div className="text-lg font-bold text-white">{tenant.provider_count}</div>
+                      <div className="text-lg font-bold text-white">{tenant.providerCount}</div>
                       <div className="text-xs text-slate-400">Providers</div>
                     </div>
                     <div className="rounded-xl border border-white/5 bg-slate-900/50 p-3 text-center">
-                      <div className="text-lg font-bold text-white">{tenant.routing_rules}</div>
+                      <div className="text-lg font-bold text-white">{tenant.routingRules}</div>
                       <div className="text-xs text-slate-400">Routing rules</div>
                     </div>
                   </div>
 
-                  {tenant.supports_tenant && (
+                  {tenant.supportsTenant && (
                     <div className="mt-3">
                       <span className="rounded-md bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 border border-emerald-500/30">
                         Custom configuration
@@ -252,13 +252,13 @@ export function Routing() {
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {(overview?.routing?.rules ?? []).filter((r) => r.model_prefix).length}
+              {(overview?.routing?.rules ?? []).filter((r) => r.modelPrefix).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Prefix Rules</div>
           </div>
           <div className="rounded-xl border border-white/5 bg-slate-950/50 p-4 text-center">
             <div className="text-2xl font-bold text-white">
-              {(overview?.routing?.rules ?? []).filter((r) => r.model_exact).length}
+              {(overview?.routing?.rules ?? []).filter((r) => r.modelExact).length}
             </div>
             <div className="text-xs text-slate-400 mt-1">Exact Rules</div>
           </div>
