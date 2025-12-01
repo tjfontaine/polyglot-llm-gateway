@@ -17,7 +17,7 @@ type ConversationStore interface {
 	GetConversation(ctx context.Context, id string) (*Conversation, error)
 
 	// AddMessage adds a message to a conversation
-	AddMessage(ctx context.Context, convID string, msg *Message) error
+	AddMessage(ctx context.Context, convID string, msg *StoredMessage) error
 
 	// ListConversations lists conversations with pagination
 	ListConversations(ctx context.Context, opts ListOptions) ([]*Conversation, error)
@@ -49,8 +49,9 @@ type ResponseStore interface {
 	ListResponses(ctx context.Context, opts ListOptions) ([]*ResponseRecord, error)
 }
 
-// Interaction represents a unified view of either a conversation or a response
-type Interaction struct {
+// InteractionSummary represents a unified list item for either a conversation or a response.
+// This is distinct from domain.Interaction which contains full request/response details.
+type InteractionSummary struct {
 	ID           string            `json:"id"`
 	Type         string            `json:"type"` // "conversation" or "response"
 	TenantID     string            `json:"tenant_id"`
@@ -67,13 +68,14 @@ type Conversation struct {
 	ID        string            `json:"id"`
 	TenantID  string            `json:"tenant_id"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
-	Messages  []Message         `json:"messages"`
+	Messages  []StoredMessage   `json:"messages"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
 
-// Message represents a single message in a conversation
-type Message struct {
+// StoredMessage represents a single message in a stored conversation.
+// This is distinct from domain.Message which is used in API request/response flows.
+type StoredMessage struct {
 	ID        string    `json:"id"`
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`

@@ -45,7 +45,7 @@ func (s *Store) CreateConversation(ctx context.Context, conv *storage.Conversati
 
 	conv.CreatedAt = time.Now()
 	conv.UpdatedAt = time.Now()
-	conv.Messages = []storage.Message{}
+	conv.Messages = []storage.StoredMessage{}
 
 	s.conversations[conv.ID] = conv
 	return nil
@@ -63,7 +63,7 @@ func (s *Store) GetConversation(ctx context.Context, id string) (*storage.Conver
 	return conv, nil
 }
 
-func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.Message) error {
+func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.StoredMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

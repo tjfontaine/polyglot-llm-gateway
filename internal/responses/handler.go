@@ -668,7 +668,7 @@ func (h *Handler) HandleCreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := &storage.Message{
+	msg := &storage.StoredMessage{
 		ID:      "msg_" + uuid.New().String(),
 		Role:    req.Role,
 		Content: req.Content,
@@ -786,7 +786,7 @@ func (h *Handler) HandleCreateRun(w http.ResponseWriter, r *http.Request) {
 
 	// Store assistant response
 	if len(canonResp.Choices) > 0 {
-		assistantMsg := &storage.Message{
+		assistantMsg := &storage.StoredMessage{
 			ID:      "msg_" + uuid.New().String(),
 			Role:    "assistant",
 			Content: canonResp.Choices[0].Message.Content,

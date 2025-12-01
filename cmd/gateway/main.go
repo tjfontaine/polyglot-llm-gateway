@@ -28,8 +28,8 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqlite"
 
 	// Import consolidated packages for legacy provider creation
-	anthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
-	openai "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 func main() {

@@ -12,10 +12,10 @@ type (
 	InteractionStore       = corestorage.InteractionStore
 	ShadowStore            = corestorage.ShadowStore
 	Conversation           = corestorage.Conversation
-	Message                = corestorage.Message
+	StoredMessage          = corestorage.StoredMessage
 	ListOptions            = corestorage.ListOptions
 	ResponseRecord         = corestorage.ResponseRecord
-	Interaction            = corestorage.Interaction
+	InteractionSummary     = corestorage.InteractionSummary
 	InteractionListOptions = corestorage.InteractionListOptions
 	DivergenceListOptions  = corestorage.DivergenceListOptions
 	InteractionEvent       = domain.InteractionEvent

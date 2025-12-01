@@ -48,7 +48,7 @@ func TestMemoryStore_AddMessage(t *testing.T) {
 		t.Fatalf("CreateConversation() error = %v", err)
 	}
 
-	msg := &storage.Message{
+	msg := &storage.StoredMessage{
 		ID:      "msg-1",
 		Role:    "user",
 		Content: "Hello",

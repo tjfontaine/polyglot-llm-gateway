@@ -1,13 +1,20 @@
-package frontdoor
+package frontdoor_test
 
 import (
 	"testing"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
 )
 
+func init() {
+	frontdoor.ClearFactories()
+	registration.RegisterBuiltins()
+}
+
 func TestListFrontdoorTypes(t *testing.T) {
-	types := ListFrontdoorTypes()
+	types := frontdoor.ListFrontdoorTypes()
 	if len(types) < 2 {
 		t.Errorf("expected at least 2 frontdoor types, got %d", len(types))
 	}
@@ -27,7 +34,7 @@ func TestListFrontdoorTypes(t *testing.T) {
 }
 
 func TestListFrontdoorFactories(t *testing.T) {
-	factories := ListFrontdoorFactories()
+	factories := frontdoor.ListFactories()
 	if len(factories) < 2 {
 		t.Errorf("expected at least 2 factories, got %d", len(factories))
 	}
@@ -58,7 +65,7 @@ func TestGetFrontdoorFactory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.frontdoorType, func(t *testing.T) {
-			f, ok := GetFrontdoorFactory(tt.frontdoorType)
+			f, ok := frontdoor.GetFactory(tt.frontdoorType)
 			if ok != tt.wantOk {
 				t.Errorf("GetFrontdoorFactory(%q) returned ok=%v, want %v", tt.frontdoorType, ok, tt.wantOk)
 			}
@@ -83,9 +90,9 @@ func TestIsFrontdoorRegistered(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.frontdoorType, func(t *testing.T) {
-			got := IsFrontdoorRegistered(tt.frontdoorType)
+			got := frontdoor.IsRegistered(tt.frontdoorType)
 			if got != tt.want {
-				t.Errorf("IsFrontdoorRegistered(%q) = %v, want %v", tt.frontdoorType, got, tt.want)
+				t.Errorf("IsRegistered(%q) = %v, want %v", tt.frontdoorType, got, tt.want)
 			}
 		})
 	}
@@ -102,7 +109,7 @@ func TestFrontdoorAPITypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.frontdoorType, func(t *testing.T) {
-			f, ok := GetFrontdoorFactory(tt.frontdoorType)
+			f, ok := frontdoor.GetFactory(tt.frontdoorType)
 			if !ok {
 				t.Fatalf("factory %q not found", tt.frontdoorType)
 			}

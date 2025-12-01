@@ -62,7 +62,7 @@ func (m *mockStore) GetConversation(ctx context.Context, id string) (*storage.Co
 func (m *mockStore) ListConversations(ctx context.Context, opts storage.ListOptions) ([]*storage.Conversation, error) {
 	return nil, nil
 }
-func (m *mockStore) AddMessage(ctx context.Context, convID string, msg *storage.Message) error {
+func (m *mockStore) AddMessage(ctx context.Context, convID string, msg *storage.StoredMessage) error {
 	return nil
 }
 func (m *mockStore) SaveResponse(ctx context.Context, record *storage.ResponseRecord) error {

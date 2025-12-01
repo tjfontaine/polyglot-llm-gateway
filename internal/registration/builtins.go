@@ -1,10 +1,8 @@
 package registration
 
 import (
-	apiAnthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/api/anthropic"
-	apiOpenAI "github.com/tjfontaine/polyglot-llm-gateway/internal/api/openai"
-	backendAnthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
-	backendOpenAI "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
 )
 
 // RegisterBuiltins registers built-in providers and frontdoors explicitly.
@@ -17,12 +15,12 @@ func RegisterBuiltins() {
 
 // RegisterProviderBuiltins registers built-in providers only.
 func RegisterProviderBuiltins() {
-	backendOpenAI.RegisterProviderFactories()
-	backendAnthropic.RegisterProviderFactory()
+	openai.RegisterProviderFactories()
+	anthropic.RegisterProviderFactory()
 }
 
 // RegisterFrontdoorBuiltins registers built-in frontdoors only.
 func RegisterFrontdoorBuiltins() {
-	apiOpenAI.RegisterFrontdoor()
-	apiAnthropic.RegisterFrontdoor()
+	openai.RegisterFrontdoor()
+	anthropic.RegisterFrontdoor()
 }

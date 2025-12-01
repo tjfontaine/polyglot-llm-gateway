@@ -76,7 +76,7 @@ func Record(ctx context.Context, store storage.ConversationStore, convID string,
 		if content == "" {
 			return
 		}
-		if err := store.AddMessage(persistCtx, convID, &storage.Message{
+		if err := store.AddMessage(persistCtx, convID, &storage.StoredMessage{
 			ID:      "msg_" + uuid.New().String(),
 			Role:    role,
 			Content: content,

@@ -229,7 +229,7 @@ func (s *Store) GetConversation(ctx context.Context, id string) (*storage.Conver
 	return &conv, nil
 }
 
-func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.Message, error) {
+func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.StoredMessage, error) {
 	query := `SELECT id, role, content, created_at
 	          FROM messages WHERE conversation_id = ?
 	          ORDER BY created_at ASC`
@@ -240,9 +240,9 @@ func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.Messa
 	}
 	defer rows.Close()
 
-	var messages []storage.Message
+	var messages []storage.StoredMessage
 	for rows.Next() {
-		var msg storage.Message
+		var msg storage.StoredMessage
 		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &msg.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan message: %w", err)
 		}
@@ -252,7 +252,7 @@ func (s *Store) getMessages(ctx context.Context, convID string) ([]storage.Messa
 	return messages, rows.Err()
 }
 
-func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.Message) error {
+func (s *Store) AddMessage(ctx context.Context, convID string, msg *storage.StoredMessage) error {
 	msg.CreatedAt = time.Now()
 
 	tx, err := s.db.BeginTx(ctx, nil)

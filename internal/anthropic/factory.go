@@ -5,7 +5,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
-	providerregistry "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 )
 
 // ProviderType is the provider type identifier used in configuration.
@@ -13,11 +13,11 @@ const ProviderType = "anthropic"
 
 // RegisterProviderFactory registers the Anthropic provider factory.
 func RegisterProviderFactory() {
-	if providerregistry.IsRegistered(ProviderType) {
+	if provider.IsRegistered(ProviderType) {
 		return
 	}
 
-	providerregistry.RegisterFactory(providerregistry.ProviderFactory{
+	provider.RegisterFactory(provider.ProviderFactory{
 		Type:           ProviderType,
 		APIType:        domain.APITypeAnthropic,
 		Description:    "Anthropic API provider (Claude models)",

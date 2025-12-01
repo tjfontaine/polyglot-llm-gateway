@@ -5,7 +5,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
-	providerregistry "github.com/tjfontaine/polyglot-llm-gateway/internal/provider/registry"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 )
 
 // ProviderType is the provider type identifier used in configuration.
@@ -16,8 +16,8 @@ const ProviderTypeCompatible = "openai-compatible"
 
 // RegisterProviderFactories registers the OpenAI provider factories.
 func RegisterProviderFactories() {
-	if !providerregistry.IsRegistered(ProviderType) {
-		providerregistry.RegisterFactory(providerregistry.ProviderFactory{
+	if !provider.IsRegistered(ProviderType) {
+		provider.RegisterFactory(provider.ProviderFactory{
 			Type:           ProviderType,
 			APIType:        domain.APITypeOpenAI,
 			Description:    "OpenAI API provider (GPT models)",
@@ -26,8 +26,8 @@ func RegisterProviderFactories() {
 		})
 	}
 
-	if !providerregistry.IsRegistered(ProviderTypeCompatible) {
-		providerregistry.RegisterFactory(providerregistry.ProviderFactory{
+	if !provider.IsRegistered(ProviderTypeCompatible) {
+		provider.RegisterFactory(provider.ProviderFactory{
 			Type:           ProviderTypeCompatible,
 			APIType:        domain.APITypeOpenAI,
 			Description:    "OpenAI-compatible API provider (local models, etc.)",

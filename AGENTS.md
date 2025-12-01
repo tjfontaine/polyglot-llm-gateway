@@ -1,24 +1,62 @@
 # Polyglot LLM Gateway — Agent Guidelines
 
 ## Scope
+
 This file applies to the entire repository unless a more specific `AGENTS.md` is introduced deeper in the tree.
 
 ## Project Overview
+
 - **Purpose:** A Go-based gateway that normalizes LLM requests into a canonical shape, routes them to configured providers, and optionally serves a React/Vite control-plane UI.
 - **Key server layers:**
-  - `internal/frontdoor/*` map external protocols (OpenAI, Anthropic, Responses API) into canonical requests.
+  - `internal/anthropic/` and `internal/openai/` contain consolidated API packages (types, client, codec, provider, factory, frontdoor).
+  - `internal/responses/` contains the OpenAI Responses API implementation.
   - `internal/router` selects providers based on routing rules and model rewrites.
-  - `internal/provider/*` translate canonical requests into provider-specific API calls; streaming is handled through `CanonicalEvent` channels.
   - `internal/storage/*` persist conversation data when Responses APIs are enabled (SQLite or in-memory).
   - `internal/pkg/auth` and `internal/pkg/tenant` enable multi-tenant mode with bearer key hashing.
-  - `internal/api/server` wires chi middleware, auth, and OpenTelemetry instrumentation.
+  - `internal/api/server` wires the HTTP server; `internal/api/middleware` contains middleware components.
   - `internal/api/controlplane` serves the admin API and React UI for observing gateway state.
 - **Control plane:** `web/control-plane` is a React 19 + Vite app whose built assets are copied into `internal/api/controlplane/dist` by the `Makefile`.
+
+### Package Structure (Consolidated)
+
+```
+internal/
+├── anthropic/                  # ALL Anthropic code together
+│   ├── types.go                # API request/response types
+│   ├── client.go               # HTTP client
+│   ├── codec.go                # Canonical ↔ Anthropic translation
+│   ├── provider.go             # Provider implementation
+│   ├── factory.go              # Provider factory registration
+│   └── frontdoor.go            # HTTP handler
+├── openai/                     # ALL OpenAI code together
+│   ├── types.go
+│   ├── client.go
+│   ├── codec.go
+│   ├── provider.go
+│   ├── factory.go
+│   └── frontdoor.go
+├── responses/                  # OpenAI Responses API
+│   └── handler.go
+├── passthrough/                # Passthrough provider
+│   └── provider.go
+├── frontdoor/                  # Frontdoor factory registry
+│   └── registry.go
+├── provider/                   # Provider factory registry
+│   └── registry.go
+├── api/
+│   ├── controlplane/           # Admin UI server
+│   ├── middleware/             # HTTP middleware
+│   └── server/                 # HTTP server setup
+```
+
+The consolidated structure makes it trivial to add new API types: copy one package, rename, and implement. All related code lives together.
 
 ## Control Plane Architecture
 
 ### Backend API (`internal/api/controlplane`)
+
 The control plane server exposes read-only admin APIs under `/admin/api/`:
+
 - `GET /api/stats` — Runtime statistics (uptime, goroutines, memory)
 - `GET /api/overview` — Gateway configuration summary (apps, providers, routing, tenants)
 - `GET /api/interactions` — Unified list of all stored data (conversations + responses)
@@ -27,7 +65,9 @@ The control plane server exposes read-only admin APIs under `/admin/api/`:
 - `GET /api/responses` — Legacy: list responses only
 
 ### Unified Interactions Model
+
 Conversations (from chat APIs) and Responses (from the Responses API) are unified into a single "Interaction" concept:
+
 - Both share common fields: `id`, `type`, `model`, `metadata`, `created_at`, `updated_at`
 - Conversations have `messages[]` and `message_count`
 - Responses have `request`, `response`, `status`, and `previous_response_id`
@@ -35,6 +75,7 @@ Conversations (from chat APIs) and Responses (from the Responses API) are unifie
 - Filter by type using `?type=conversation` or `?type=response`
 
 ### Frontend Structure (`web/control-plane/src`)
+
 ```
 src/
 ├── components/
@@ -67,21 +108,25 @@ src/
 ```
 
 ### Page Responsibilities
+
 - **Dashboard**: Quick overview with stats and cards linking to detailed pages
 - **Topology**: Detailed view of configured apps and providers
 - **Routing**: Model routing rules and tenant configuration
 - **Data**: Unified explorer for all recorded interactions (conversations + responses)
 
 ### Design Principles
+
 - **Unified experience**: Don't separate conversations and responses into different pages; they represent the same concept (LLM interactions) viewed through different API lenses
 - **Read-only**: The control plane never modifies gateway state; it's purely observational
 - **Filter, don't fragment**: Use filters within a single view rather than creating multiple similar pages
 
 ### Backend Registration & Routing
+
 - Providers/frontdoors register via explicit functions (no init side effects). `cmd/gateway` calls `registration.RegisterBuiltins()` to wire OpenAI/Anthropic. New providers/frontdoors should expose `RegisterProviderFactory()` / `RegisterFrontdoor()` and be invoked from that helper or directly in `cmd/gateway`.
 - Routing and model mapping live in `internal/router` (legacy `internal/policy` removed). Use `router.NewProviderRouter` for routing and `router.NewMappingProvider` when model rewrites/prefix mapping are needed.
 
 ### Frontend Null Safety
+
 The Go backend may return `null` for empty slices (e.g., `routing.rules`, `tenants`, `providers`). Always use optional chaining when accessing nested properties from API responses:
 
 ```typescript
@@ -136,6 +181,7 @@ Every data type follows the same pattern:
 ### Canonical Types (`internal/core/domain`)
 
 **`CanonicalRequest`** - Normalized request format:
+
 ```go
 type CanonicalRequest struct {
     Model         string
@@ -150,6 +196,7 @@ type CanonicalRequest struct {
 ```
 
 **`CanonicalResponse`** - Normalized response format:
+
 ```go
 type CanonicalResponse struct {
     ID            string
@@ -162,6 +209,7 @@ type CanonicalResponse struct {
 ```
 
 **`CanonicalEvent`** - Streaming event:
+
 ```go
 type CanonicalEvent struct {
     Role         string
@@ -173,6 +221,7 @@ type CanonicalEvent struct {
 ```
 
 **`APIError`** - Canonical error:
+
 ```go
 type APIError struct {
     Type       ErrorType    // invalid_request, rate_limit, etc.
@@ -198,9 +247,14 @@ type Codec interface {
 }
 ```
 
-Each API type has its consolidated package containing types, client, codec, provider, and frontdoor:
-- `internal/backend/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
-- `internal/backend/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
+Each API type should have a consolidated package containing types, client, codec, provider, and frontdoor.
+
+**Current state:** Provider code lives in `internal/backend/{openai,anthropic}/` while frontdoor handlers are in `internal/api/{openai,anthropic}/`. This separation adds friction when adding new API types.
+
+**Target state:** Consolidate into `internal/{openai,anthropic}/` packages:
+
+- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
+- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
 
 ### Request Flow Example
 
@@ -283,9 +337,11 @@ if len(resp.RawResponse) > 0 && resp.SourceAPIType == domain.APITypeAnthropic {
 To add a new API type (e.g., Google Gemini), create a consolidated package containing all related code:
 
 #### 1. Create Consolidated Package
-Create `internal/gemini/` with the following files:
+
+Create `internal/gemini/` with the following files (following the target consolidated structure):
 
 **`types.go`** - API request/response structures:
+
 ```go
 package gemini
 
@@ -296,6 +352,7 @@ type GenerateContentResponse struct { /* ... */ }
 ```
 
 **`client.go`** - HTTP client for API calls:
+
 ```go
 package gemini
 
@@ -305,6 +362,7 @@ func (c *Client) GenerateContent(ctx context.Context, req *GenerateContentReques
 ```
 
 **`codec.go`** - Codec implementing bidirectional translation:
+
 ```go
 package gemini
 
@@ -317,6 +375,7 @@ func (c *Codec) EncodeResponse(resp *domain.CanonicalResponse) ([]byte, error) {
 ```
 
 **`provider.go`** - Provider implementation:
+
 ```go
 package gemini
 
@@ -331,6 +390,7 @@ func (p *Provider) ListModels(ctx context.Context) (*domain.ModelList, error) { 
 ```
 
 **`factory.go`** - Self-registering factory:
+
 ```go
 package gemini
 
@@ -373,7 +433,9 @@ func ValidateProviderConfig(cfg config.ProviderConfig) error {
 ```
 
 #### 2. Register Package Import
+
 Add a blank import in `internal/provider/registry.go` to trigger init():
+
 ```go
 import (
     // ... existing imports ...
@@ -382,9 +444,11 @@ import (
 ```
 
 #### 3. Add Frontdoor Handler (If exposing a new API format)
+
 Frontdoor handlers can now be included in the same consolidated package. Add `frontdoor.go` to `internal/gemini/`:
 
 **`frontdoor.go`** - HTTP handlers for the API format:
+
 ```go
 package gemini
 
@@ -441,20 +505,24 @@ func (h *FrontdoorHandler) HandleGenerateContent(w http.ResponseWriter, r *http.
 ```
 
 **Note on import cycles:** The consolidated package approach works because:
+
 1. Provider registration happens in `factory.go` which only imports `config`, `domain`, and `provider/registry`
 2. Frontdoor registration in `frontdoor.go` imports additional packages like `conversation`, `server`, etc.
 3. The `provider/registry.go` no longer imports the consolidated packages directly - instead, `cmd/gateway/main.go` imports them to trigger registration
 4. Tests that need factory registration use external test packages (e.g., `package gemini_test`) to avoid cycles
 
 #### 4. Wire Registration
+
 Call the explicit registration functions (e.g., `gemini.RegisterProviderFactory()` and `gemini.RegisterFrontdoor()`) from `cmd/gateway` or the shared helper `internal/registration.RegisterBuiltins()` used by main/tests. Avoid init-based side effects and blank-import wiring.
 
 #### 5. Add Error Mapping
+
 Add `ToCanonical()` method for provider errors and update `codec/errors.go` formatter.
 
 ### Verification
 
 After adding a new provider/frontdoor:
+
 - Run `go build ./...` to verify compilation
 - Run `go test ./internal/provider/... ./internal/frontdoor/...` to verify tests pass
 - Check that `provider.ListProviderTypes()` includes your new type
@@ -462,15 +530,21 @@ After adding a new provider/frontdoor:
 
 The factory pattern ensures compile-time validation and makes the required components explicit.
 
-## Server Layer & Middleware (`internal/api/server`)
+## Server Layer & Middleware
 
-The server package provides the HTTP infrastructure for the gateway, including middleware components that form the request processing pipeline.
+The HTTP infrastructure is split across two packages:
 
-### Package Structure
+### `internal/api/server/`
 
 ```
 internal/api/server/
-├── server.go         # Server setup and middleware chain configuration
+└── server.go         # Server setup, router creation, middleware chain wiring
+```
+
+### `internal/api/middleware/`
+
+```
+internal/api/middleware/
 ├── doc.go            # Package documentation
 ├── requestid.go      # Request ID generation middleware
 ├── logging.go        # Structured logging middleware
@@ -493,6 +567,7 @@ internal/api/server/
 ### Middleware Chain Order
 
 The server applies middleware in this order:
+
 1. **RequestIDMiddleware** - First, to enable request tracing
 2. **LoggingMiddleware** - Captures all requests for observability
 3. **AuthMiddleware** - Validates API keys (if multi-tenant mode enabled)
@@ -517,6 +592,7 @@ ctx := server.SetRateLimits(r.Context(), &server.RateLimitInfo{...})
 ### Adding New Middleware
 
 When adding new middleware:
+
 1. Create a new file (e.g., `newmiddleware.go`) following the existing pattern
 2. Use the standard `func(http.Handler) http.Handler` signature
 3. Add tests in `middleware_test.go`
@@ -524,9 +600,10 @@ When adding new middleware:
 5. Update this documentation
 
 ## Coding Conventions
+
 - **Go style:** Keep code `gofmt`-clean and idiomatic Go. Prefer small, focused functions and return descriptive errors. Avoid introducing panics in request paths.
 - **Configuration-driven behavior:** Respect the config structs in `internal/pkg/config` and the registry helpers when adding new frontdoors or providers; plug into `frontdoor.Registry`/`provider.Registry` using the factory pattern instead of hardcoding wiring.
-- **Factory pattern:** New providers and frontdoors must register themselves via `RegisterFactory()` in their respective package init() functions.
+- **Factory pattern:** New providers and frontdoors must expose explicit `RegisterProviderFactory()` / `RegisterFrontdoor()` functions (avoid init() side effects). Wire registration from `internal/registration/builtins.go`.
 - **Canonical types first:** Work with `internal/core/domain` types at API boundaries. Frontdoors should fully populate `CanonicalRequest`/`CanonicalResponse` and let providers handle translation details.
 - **Error handling:** API clients should convert provider-specific errors to `domain.APIError` using `ToCanonical()`. Frontdoors should use `codec.WriteError()` to format errors for their API type.
 - **Streaming:** When adding streaming support, emit `CanonicalEvent` values and propagate provider errors via the channel before closing it.
@@ -535,6 +612,7 @@ When adding new middleware:
 - **Frontend:** Keep React components type-safe (TypeScript) and run linting before committing UI changes.
 
 ## Testing Expectations
+
 - **Go:** Run `go test ./...` from the repo root. Provider tests will skip recording if the relevant API key is missing and `VCR_MODE=record` is set; in replay mode they work offline.
 - **Frontend:** From `web/control-plane`:
   - `npm install` — Install dependencies (once)
@@ -547,11 +625,13 @@ When adding new middleware:
 - The `Makefile` target `build` will bundle both frontend and backend if needed.
 
 ## Dependency & Build Notes
+
 - **Go version:** Module targets Go 1.25.3; ensure toolchain compatibility.
 - **Binaries:** Backend entrypoints live in `cmd/gateway` (server) and `cmd/keygen` (API key hashing helper).
 - **Artifacts:** The frontend build output in `web/control-plane/dist` is copied into `internal/api/controlplane/dist`; do not commit `node_modules`.
 
 ## Review Checklist for Changes
+
 - Code is formatted (`gofmt`, ESLint for frontend) and lints cleanly.
 - New routes or providers are registered via the appropriate registry helpers using the factory pattern instead of manual router wiring.
 - Tests are added or updated, especially when touching routing, provider translations, or storage persistence.

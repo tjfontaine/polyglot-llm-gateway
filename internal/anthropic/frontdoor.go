@@ -15,11 +15,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware"
-	backendanthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/conversation"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor/registry"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/codec"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tokens"
@@ -44,11 +43,11 @@ type FrontdoorRoute struct {
 
 // RegisterFrontdoor registers the Anthropic frontdoor factory.
 func RegisterFrontdoor() {
-	if registry.IsRegistered(FrontdoorType) {
+	if frontdoor.IsRegistered(FrontdoorType) {
 		return
 	}
 
-	registry.RegisterFactory(registry.FrontdoorFactory{
+	frontdoor.RegisterFactory(frontdoor.FrontdoorFactory{
 		Type:           FrontdoorType,
 		APIType:        FrontdoorAPIType(),
 		Description:    "Anthropic Messages API format",
@@ -57,12 +56,12 @@ func RegisterFrontdoor() {
 }
 
 // createFrontdoorHandlers creates handler registrations for Anthropic frontdoor.
-func createFrontdoorHandlers(cfg registry.HandlerConfig) []registry.HandlerRegistration {
+func createFrontdoorHandlers(cfg frontdoor.HandlerConfig) []frontdoor.HandlerRegistration {
 	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models, cfg.ShadowConfig)
 	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
-	result := make([]registry.HandlerRegistration, len(routes))
+	result := make([]frontdoor.HandlerRegistration, len(routes))
 	for i, r := range routes {
-		result[i] = registry.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
+		result[i] = frontdoor.HandlerRegistration{Path: r.Path, Method: r.Method, Handler: r.Handler}
 	}
 	return result
 }
@@ -112,7 +111,7 @@ func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStor
 		store:        store,
 		appName:      appName,
 		models:       exposedModels,
-		codec:        backendanthropic.NewCodec(),
+		codec:        NewCodec(),
 		tokenCounter: tokenRegistry,
 		shadowConfig: shadowCfg,
 	}

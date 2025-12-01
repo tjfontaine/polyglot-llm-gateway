@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	backendanthropic "github.com/tjfontaine/polyglot-llm-gateway/internal/backend/anthropic"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
@@ -162,7 +161,7 @@ func TestHandleListModelsFallsBackToProvider(t *testing.T) {
 
 func TestAnthropicProvider_SupportsTokenCounting(t *testing.T) {
 	// Test that the Anthropic provider properly reports token counting support
-	provider := backendanthropic.NewProvider("test-key")
+	provider := NewProvider("test-key")
 
 	tests := []struct {
 		model    string
@@ -187,7 +186,7 @@ func TestAnthropicProvider_SupportsTokenCounting(t *testing.T) {
 
 func TestAnthropicProvider_ImplementsTokenCountProvider(t *testing.T) {
 	// Verify the provider implements the TokenCountProvider interface
-	provider := backendanthropic.NewProvider("test-key")
+	provider := NewProvider("test-key")
 
 	// Check that provider implements the interface
 	var _ ports.TokenCountProvider = provider

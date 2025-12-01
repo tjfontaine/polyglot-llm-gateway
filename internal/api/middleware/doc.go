@@ -1,11 +1,10 @@
 /*
-Package server provides HTTP server infrastructure for the polyglot LLM gateway.
+Package middleware provides HTTP middleware components for the polyglot LLM gateway.
 
 # Overview
 
-The server package contains HTTP middleware components and the server setup code.
-Each middleware is designed to be composable and can be chained together to form
-a request processing pipeline.
+The middleware package contains HTTP middleware components that can be chained
+together to form a request processing pipeline.
 
 # Middleware Components
 
