@@ -51,7 +51,7 @@ Build and start the gateway with Docker Compose (ensure `.env` contains your API
 docker compose up --build
 ```
 
-The service will be available on http://localhost:8080 and will reload automatically when configuration files or environment variables change on container restarts.
+The service will be available on <http://localhost:8080> and will reload automatically when configuration files or environment variables change on container restarts.
 
 ## Configuration
 
@@ -193,16 +193,30 @@ poly-llm-gateway/
 ├── .env.example             # Example environment file
 ├── cmd/gateway/main.go      # Application entrypoint
 └── internal/
-    ├── config/              # Configuration loading
-    ├── domain/              # Canonical types & interfaces
-    ├── frontdoor/           # Inbound protocol adapters
-    │   ├── openai/          # OpenAI protocol
-    │   └── anthropic/       # Anthropic protocol
-    ├── provider/            # Outbound provider adapters
-    │   ├── openai/          # OpenAI provider
-    │   └── anthropic/       # Anthropic provider
-    ├── policy/              # Routing logic
-    └── server/              # HTTP server
+    ├── anthropic/           # Anthropic API (types, client, codec, provider, frontdoor)
+    ├── openai/              # OpenAI API (types, client, codec, provider, frontdoor)
+    ├── responses/           # OpenAI Responses API implementation
+    ├── passthrough/         # Passthrough provider
+    ├── frontdoor/           # Frontdoor registry
+    ├── provider/            # Provider registry & model mapping
+    ├── router/              # Routing logic
+    ├── shadow/              # Shadow mode execution
+    ├── conversation/        # Interaction recording
+    ├── storage/             # SQLite/memory storage
+    ├── core/
+    │   ├── domain/          # Canonical types & interfaces
+    │   └── ports/           # Port interfaces
+    ├── pkg/
+    │   ├── config/          # Configuration loading
+    │   ├── codec/           # Codec interfaces & error handling
+    │   ├── auth/            # API key authentication
+    │   └── tenant/          # Multi-tenant support
+    ├── api/
+    │   ├── server/          # HTTP server setup
+    │   ├── middleware/      # HTTP middleware
+    │   └── controlplane/    # Admin UI server & GraphQL API
+    ├── registration/        # Built-in provider/frontdoor registration
+    └── testutil/            # Test utilities
 ```
 
 ## Development

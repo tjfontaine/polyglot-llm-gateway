@@ -4,6 +4,52 @@
 
 This file applies to the entire repository unless a more specific `AGENTS.md` is introduced deeper in the tree.
 
+## Quick Reference
+
+### Setup Commands
+
+```bash
+# Install dependencies
+go mod download
+
+# Build the gateway
+go build -o bin/gateway ./cmd/gateway
+
+# Build everything (including frontend)
+make build
+```
+
+### Test Commands
+
+```bash
+# Run all Go tests
+go test ./...
+
+# Run tests for a specific package
+go test ./internal/router/...
+
+# Run with VCR recording (requires API keys)
+VCR_MODE=record go test ./internal/provider/...
+
+# Frontend tests (from web/control-plane/)
+npm install        # First time only
+npm run test       # Run Vitest tests
+npm run lint       # Run ESLint
+```
+
+### Development Server
+
+```bash
+# Start the gateway (uses config.yaml)
+go run ./cmd/gateway
+
+# Or use the built binary
+./bin/gateway
+
+# With Docker Compose
+docker compose up --build
+```
+
 ## Project Overview
 
 - **Purpose:** A Go-based gateway that normalizes LLM requests into a canonical shape, routes them to configured providers, and optionally serves a React/Vite control-plane UI.
@@ -19,7 +65,7 @@ This file applies to the entire repository unless a more specific `AGENTS.md` is
 
 ### Package Structure (Consolidated)
 
-```
+```text
 internal/
 ├── anthropic/                  # ALL Anthropic code together
 │   ├── types.go                # API request/response types
@@ -39,14 +85,40 @@ internal/
 │   └── handler.go
 ├── passthrough/                # Passthrough provider
 │   └── provider.go
+├── conversation/               # Interaction recording
+│   ├── recorder.go             # Message-level recording
+│   ├── interaction_recorder.go # Full interaction lifecycle
+│   └── eventlogger.go          # Pipeline event logging
+├── shadow/                     # Shadow mode execution
+│   ├── manager.go              # Shadow coordination
+│   ├── executor.go             # Async shadow execution
+│   └── divergence.go           # Response comparison
 ├── frontdoor/                  # Frontdoor factory registry
 │   └── registry.go
 ├── provider/                   # Provider factory registry
 │   └── registry.go
+├── router/                     # Routing logic
+│   ├── router.go               # Provider routing
+│   └── mapping.go              # Model mapping/rewrites
+├── storage/                    # Persistence layer
+│   ├── storage.go              # Storage factory
+│   ├── memory/                 # In-memory store
+│   ├── sqldb/                  # SQLite store
+│   └── dialect/                # SQL dialects
 ├── api/
-│   ├── controlplane/           # Admin UI server
+│   ├── controlplane/           # Admin UI server & GraphQL
 │   ├── middleware/             # HTTP middleware
 │   └── server/                 # HTTP server setup
+├── core/
+│   ├── domain/                 # Canonical types
+│   └── ports/                  # Port interfaces
+├── pkg/
+│   ├── config/                 # Configuration loading
+│   ├── codec/                  # Codec interface & errors
+│   ├── auth/                   # API key authentication
+│   └── tenant/                 # Multi-tenant support
+└── registration/               # Built-in factory registration
+    └── builtins.go
 ```
 
 The consolidated structure makes it trivial to add new API types: copy one package, rename, and implement. All related code lives together.
@@ -55,14 +127,25 @@ The consolidated structure makes it trivial to add new API types: copy one packa
 
 ### Backend API (`internal/api/controlplane`)
 
-The control plane server exposes read-only admin APIs under `/admin/api/`:
+The control plane server exposes read-only admin APIs:
+
+**GraphQL API:**
+
+- `POST /api/graphql` — GraphQL endpoint (primary API)
+- `GET /api/graphql/playground` — GraphQL Playground UI
+
+**REST Endpoints (for backward compatibility):**
 
 - `GET /api/stats` — Runtime statistics (uptime, goroutines, memory)
 - `GET /api/overview` — Gateway configuration summary (apps, providers, routing, tenants)
 - `GET /api/interactions` — Unified list of all stored data (conversations + responses)
 - `GET /api/interactions/{id}` — Detail view for any interaction
+- `GET /api/interactions/{id}/events` — Interaction events (request/response pipeline)
+- `GET /api/interactions/{id}/shadows` — Shadow results for an interaction
 - `GET /api/threads` — Legacy: list conversations only
 - `GET /api/responses` — Legacy: list responses only
+- `GET /api/shadows/divergent` — List shadow results with divergences
+- `GET /api/shadows/{shadow_id}` — Shadow result detail
 
 ### Unified Interactions Model
 
@@ -76,35 +159,51 @@ Conversations (from chat APIs) and Responses (from the Responses API) are unifie
 
 ### Frontend Structure (`web/control-plane/src`)
 
-```
+```text
 src/
 ├── components/
-│   ├── Layout.tsx          # Main layout with header, nav, stats bar
-│   ├── Layout.test.tsx     # Layout component tests
+│   ├── Layout.tsx              # Main layout with header, nav, stats bar
+│   ├── Layout.test.tsx         # Layout component tests
+│   ├── ErrorBoundary.tsx       # Error boundary for graceful error handling
+│   ├── ErrorBoundary.test.tsx  # Error boundary tests
 │   ├── ui/
-│   │   ├── index.tsx       # Reusable UI components (Pill, InfoCard, etc.)
-│   │   └── ui.test.tsx     # UI component tests
+│   │   ├── index.tsx           # Reusable UI components (Pill, InfoCard, etc.)
+│   │   └── ui.test.tsx         # UI component tests
+│   ├── shadow/
+│   │   ├── ShadowPanel.tsx     # Shadow results display
+│   │   ├── ShadowComparison.tsx # Side-by-side comparison
+│   │   ├── DivergenceList.tsx  # Divergence display
+│   │   ├── ShadowSummary.tsx   # Summary statistics
+│   │   ├── shadow.test.tsx     # Shadow component tests
+│   │   └── index.ts
 │   └── index.ts
+├── gql/                        # GraphQL client setup and operations
+│   ├── client.tsx              # urql client configuration
+│   ├── graphql.ts              # GraphQL code generation output
+│   ├── operations.ts           # GraphQL queries and mutations
+│   └── hooks.ts                # Generated React hooks
 ├── hooks/
-│   ├── useApi.tsx          # React context for API data fetching
-│   └── useApi.test.tsx     # API hook tests
+│   ├── useApi.tsx              # React context for REST API data fetching
+│   └── useApi.test.tsx         # API hook tests
 ├── pages/
-│   ├── Dashboard.tsx       # Landing page with overview cards
-│   ├── Dashboard.test.tsx  # Dashboard tests
-│   ├── Topology.tsx        # Apps & providers configuration
-│   ├── Topology.test.tsx   # Topology tests
-│   ├── Routing.tsx         # Routing rules & tenants
-│   ├── Routing.test.tsx    # Routing tests
-│   ├── Data.tsx            # Unified data explorer (interactions)
+│   ├── Dashboard.tsx           # Landing page with overview cards
+│   ├── Dashboard.test.tsx      # Dashboard tests
+│   ├── Topology.tsx            # Apps & providers configuration
+│   ├── Topology.test.tsx       # Topology tests
+│   ├── Routing.tsx             # Routing rules & tenants
+│   ├── Routing.test.tsx        # Routing tests
+│   ├── Data.tsx                # Unified data explorer (interactions)
+│   ├── Data.test.tsx           # Data page tests
 │   └── index.ts
 ├── test/
-│   ├── setup.ts            # Vitest setup (jest-dom, mocks)
-│   ├── mocks.ts            # Mock data for tests
-│   └── test-utils.tsx      # Custom render with providers
+│   ├── setup.ts                # Vitest setup (jest-dom, mocks)
+│   ├── mocks.ts                # Mock data for tests
+│   ├── graphql-mocks.ts        # GraphQL mock handlers
+│   └── test-utils.tsx          # Custom render with providers
 ├── types/
-│   └── index.ts            # TypeScript interfaces
-├── App.tsx                 # Router setup
-└── main.tsx                # Entry point
+│   └── index.ts                # TypeScript interfaces
+├── App.tsx                     # Router setup
+└── main.tsx                    # Entry point
 ```
 
 ### Page Responsibilities
@@ -147,8 +246,8 @@ The gateway's core design principle is **canonicalization through the domain mod
 
 ### Core Architecture Pattern
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
+```text
+┌───────────────────────────────────────────────────────────────────────────────┐
 │                              GATEWAY                                             │
 │                                                                                  │
 │  ┌─────────────┐     ┌──────────────────────────────────────┐     ┌───────────┐ │
@@ -232,12 +331,13 @@ type APIError struct {
 }
 ```
 
-### Codec Layer (`internal/codec`)
+### Codec Layer (`internal/pkg/codec`)
 
 Codecs handle bidirectional translation between API-specific formats and canonical types:
 
 ```go
 type Codec interface {
+    Name() string
     DecodeRequest(data []byte) (*domain.CanonicalRequest, error)
     EncodeRequest(req *domain.CanonicalRequest) ([]byte, error)
     DecodeResponse(data []byte) (*domain.CanonicalResponse, error)
@@ -247,14 +347,10 @@ type Codec interface {
 }
 ```
 
-Each API type should have a consolidated package containing types, client, codec, provider, and frontdoor.
+Each API type has a consolidated package containing types, client, codec, provider, factory, and frontdoor:
 
-**Current state:** Provider code lives in `internal/backend/{openai,anthropic}/` while frontdoor handlers are in `internal/api/{openai,anthropic}/`. This separation adds friction when adding new API types.
-
-**Target state:** Consolidate into `internal/{openai,anthropic}/` packages:
-
-- `internal/anthropic/` - Anthropic Messages API (types, client, codec, provider, factory, frontdoor)
-- `internal/openai/` - OpenAI Chat Completions API (types, client, codec, provider, factory, frontdoor)
+- `internal/anthropic/` - Anthropic Messages API
+- `internal/openai/` - OpenAI Chat Completions API
 
 ### Request Flow Example
 
@@ -530,20 +626,96 @@ After adding a new provider/frontdoor:
 
 The factory pattern ensures compile-time validation and makes the required components explicit.
 
+## Shadow Mode
+
+Shadow mode enables comparison testing between providers by executing requests against both a primary provider and one or more shadow providers, then comparing the results.
+
+### Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                        REQUEST FLOW                              │
+│                                                                  │
+│  Client Request                                                  │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────┐    ┌─────────────────────────────────────┐ │
+│  │ Primary Provider│    │        Shadow Manager                │ │
+│  │   (blocking)    │    │                                     │ │
+│  │       │         │    │  ┌───────────────┐                  │ │
+│  │       ▼         │    │  │Shadow Provider│──▶ Async Execute │ │
+│  │   Response      │    │  └───────────────┘                  │ │
+│  └────────┬────────┘    │          │                          │ │
+│           │             │          ▼                          │ │
+│           │             │  Compare & Store Divergences        │ │
+│           ▼             └─────────────────────────────────────┘ │
+│  Return to Client                                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+- **`internal/shadow/manager.go`**: Coordinates shadow execution, provides simple interface for handlers
+- **`internal/shadow/executor.go`**: Executes shadow requests asynchronously
+- **`internal/shadow/divergence.go`**: Computes structural differences between primary and shadow responses
+- **`internal/core/domain/shadow.go`**: Domain types for shadow results and divergences
+
+### Shadow Result Structure
+
+```go
+type ShadowResult struct {
+    ID                      string
+    InteractionID           string        // Links to primary interaction
+    ProviderName            string        // Shadow provider
+    Request                 *ShadowRequest
+    Response                *ShadowResponse
+    Error                   *InteractionError
+    Duration                time.Duration
+    Divergences             []Divergence  // Structural differences
+    HasStructuralDivergence bool          // Quick filter flag
+}
+```
+
+### Divergence Types
+
+| Type | Description |
+|------|-------------|
+| `tool_call_count` | Different number of tool calls |
+| `tool_call_name` | Different tool names called |
+| `tool_call_arguments` | Different arguments passed to tools |
+| `content_length` | Significant difference in response length |
+| `finish_reason` | Different stop reasons |
+| `error_presence` | One succeeded, one failed |
+
+### Control Plane Integration
+
+Shadow results are exposed through:
+
+- `GET /api/interactions/{id}/shadows` - Shadow results for an interaction
+- `GET /api/shadows/divergent` - All shadow results with divergences
+- `GET /api/shadows/{shadow_id}` - Detailed shadow result view
+
+Frontend components in `web/control-plane/src/components/shadow/`:
+
+- `ShadowPanel.tsx` - Displays shadow results for an interaction
+- `ShadowComparison.tsx` - Side-by-side primary/shadow comparison
+- `DivergenceList.tsx` - Lists detected divergences
+- `ShadowSummary.tsx` - Summary statistics
+
 ## Server Layer & Middleware
 
 The HTTP infrastructure is split across two packages:
 
 ### `internal/api/server/`
 
-```
+```text
 internal/api/server/
 └── server.go         # Server setup, router creation, middleware chain wiring
 ```
 
 ### `internal/api/middleware/`
 
-```
+```text
 internal/api/middleware/
 ├── doc.go            # Package documentation
 ├── requestid.go      # Request ID generation middleware
@@ -611,6 +783,15 @@ When adding new middleware:
 - **Logging/telemetry:** Use the structured `slog` logger already configured in `cmd/gateway/main.go` and preserve OpenTelemetry middleware hooks in `internal/api/server` when adding new routes.
 - **Frontend:** Keep React components type-safe (TypeScript) and run linting before committing UI changes.
 
+## Security Considerations
+
+- **API Keys:** Never hardcode API keys. Use environment variable substitution in `config.yaml` (e.g., `${OPENAI_API_KEY}`).
+- **Multi-tenant mode:** When enabled, all requests must include a valid Bearer token. Tokens are SHA-256 hashed before storage; raw keys are never persisted.
+- **Control plane:** The admin UI at `/admin/` is read-only but exposes configuration details. In production, consider restricting access via reverse proxy or firewall.
+- **Input validation:** Frontdoors validate incoming requests before processing. Provider-specific limits (context length, max tokens) are enforced by upstream APIs.
+- **No secrets in logs:** The `slog` logger is configured to avoid logging request/response bodies that may contain sensitive data. Be careful when adding new log statements.
+- **Dependencies:** Run `go mod verify` periodically. The project uses `go.sum` for dependency integrity.
+
 ## Testing Expectations
 
 - **Go:** Run `go test ./...` from the repo root. Provider tests will skip recording if the relevant API key is missing and `VCR_MODE=record` is set; in replay mode they work offline.
@@ -630,10 +811,18 @@ When adding new middleware:
 - **Binaries:** Backend entrypoints live in `cmd/gateway` (server) and `cmd/keygen` (API key hashing helper).
 - **Artifacts:** The frontend build output in `web/control-plane/dist` is copied into `internal/api/controlplane/dist`; do not commit `node_modules`.
 
-## Review Checklist for Changes
+## PR & Commit Guidelines
 
-- Code is formatted (`gofmt`, ESLint for frontend) and lints cleanly.
-- New routes or providers are registered via the appropriate registry helpers using the factory pattern instead of manual router wiring.
-- Tests are added or updated, especially when touching routing, provider translations, or storage persistence.
-- Configuration defaults and environment variable substitution (`internal/pkg/config`) remain consistent with existing behavior.
-- Sensitive data (API keys) is referenced via env vars; do not hardcode secrets.
+- **Before committing:**
+  - Run `go fmt ./...` and `go vet ./...`
+  - Run `go test ./...` and ensure all tests pass
+  - For frontend changes: `npm run lint && npm run test` in `web/control-plane/`
+
+- **Commit messages:** Use clear, descriptive messages. Reference issue numbers if applicable.
+
+- **Pull requests:**
+  - Keep PRs focused on a single concern
+  - New routes or providers must be registered via the factory pattern
+  - Add or update tests for changed functionality
+  - Configuration changes should maintain backward compatibility
+  - Never commit API keys or secrets
