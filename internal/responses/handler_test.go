@@ -208,23 +208,27 @@ func TestHandleCreateResponse_Streaming_TextContent(t *testing.T) {
 	// Parse SSE events
 	events := parseSSEEvents(t, rec.Body.String())
 
-	// Per spec: response.created, response.output_item.added, response.output_item.delta, response.output_item.done, response.done
+	// Per spec: response.created, response.in_progress, response.output_item.added, response.output_item.delta, response.output_item.done, response.completed
 	hasCreated := false
-	hasDone := false
+	hasInProgress := false
+	hasCompleted := false
 	hasDelta := false
-	var doneEvent domain.ResponseDoneEvent
+	var completedEvent domain.ResponseCompletedEvent
 
 	for _, e := range events {
 		if e.EventType == "response.created" {
 			hasCreated = true
 		}
+		if e.EventType == "response.in_progress" {
+			hasInProgress = true
+		}
 		if e.EventType == "response.output_item.delta" {
 			hasDelta = true
 		}
-		if e.EventType == "response.done" {
-			hasDone = true
-			if err := json.Unmarshal([]byte(e.Data), &doneEvent); err != nil {
-				t.Errorf("Failed to parse response.done event: %v", err)
+		if e.EventType == "response.completed" {
+			hasCompleted = true
+			if err := json.Unmarshal([]byte(e.Data), &completedEvent); err != nil {
+				t.Errorf("Failed to parse response.completed event: %v", err)
 			}
 		}
 	}
@@ -232,14 +236,17 @@ func TestHandleCreateResponse_Streaming_TextContent(t *testing.T) {
 	if !hasCreated {
 		t.Error("Expected response.created event")
 	}
+	if !hasInProgress {
+		t.Error("Expected response.in_progress event")
+	}
 	if !hasDelta {
 		t.Error("Expected response.output_item.delta event")
 	}
-	if !hasDone {
-		t.Error("Expected response.done event")
+	if !hasCompleted {
+		t.Error("Expected response.completed event")
 	}
-	if doneEvent.FinishReason != "stop" {
-		t.Errorf("Expected finish_reason 'stop', got %s", doneEvent.FinishReason)
+	if completedEvent.Response.Status != "completed" {
+		t.Errorf("Expected status 'completed', got %s", completedEvent.Response.Status)
 	}
 }
 
@@ -306,7 +313,7 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 	hasOutputItemAdded := false
 	hasArgumentsDelta := false
 	hasOutputItemDone := false
-	var doneEvent domain.ResponseDoneEvent
+	var completedEvent domain.ResponseCompletedEvent
 
 	for _, e := range events {
 		if e.EventType == "response.output_item.added" {
@@ -342,9 +349,9 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 				}
 			}
 		}
-		if e.EventType == "response.done" {
-			if err := json.Unmarshal([]byte(e.Data), &doneEvent); err != nil {
-				t.Errorf("Failed to parse response.done event: %v", err)
+		if e.EventType == "response.completed" {
+			if err := json.Unmarshal([]byte(e.Data), &completedEvent); err != nil {
+				t.Errorf("Failed to parse response.completed event: %v", err)
 			}
 		}
 	}
@@ -359,9 +366,9 @@ func TestHandleCreateResponse_Streaming_ToolCalls(t *testing.T) {
 		t.Error("Expected response.output_item.done event for function_call")
 	}
 
-	// finish_reason should be "tool_calls" per spec
-	if doneEvent.FinishReason != "tool_calls" {
-		t.Errorf("Expected finish_reason 'tool_calls', got %s", doneEvent.FinishReason)
+	// status should be "incomplete" for tool_calls per spec
+	if completedEvent.Response.Status != "incomplete" {
+		t.Errorf("Expected status 'incomplete', got %s", completedEvent.Response.Status)
 	}
 }
 
@@ -427,16 +434,17 @@ func TestHandleCreateResponse_Streaming_MixedContent(t *testing.T) {
 		t.Errorf("Expected at least 2 content delta events, got %d", contentDeltaCount)
 	}
 
-	// Check response.done has correct finish_reason
-	var doneEvent domain.ResponseDoneEvent
+	// Check response.completed has correct status
+	var completedEvent domain.ResponseCompletedEvent
 	for _, e := range events {
-		if e.EventType == "response.done" {
-			json.Unmarshal([]byte(e.Data), &doneEvent)
+		if e.EventType == "response.completed" {
+			json.Unmarshal([]byte(e.Data), &completedEvent)
 		}
 	}
 
-	if doneEvent.FinishReason != "tool_calls" {
-		t.Errorf("Expected finish_reason 'tool_calls', got %s", doneEvent.FinishReason)
+	// status should be "incomplete" for tool_calls per spec
+	if completedEvent.Response.Status != "incomplete" {
+		t.Errorf("Expected status 'incomplete', got %s", completedEvent.Response.Status)
 	}
 }
 

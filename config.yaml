@@ -30,6 +30,7 @@ apps:
     frontdoor: openai
     path: /codex
     enable_responses: true
+    force_store: true  # Record all interactions even when client sends store:false
     model_routing:
       fallback:
         provider: openai

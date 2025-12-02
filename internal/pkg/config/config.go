@@ -67,6 +67,7 @@ type AppConfig struct {
 	ModelRouting    ModelRoutingConfig `koanf:"model_routing"`
 	Models          []ModelListItem    `koanf:"models"`
 	EnableResponses bool               `koanf:"enable_responses"` // Optional: mount Responses API for this frontdoor
+	ForceStore      bool               `koanf:"force_store"`      // Optional: force recording even when client sends store:false
 	Shadow          ShadowConfig       `koanf:"shadow"`           // Optional: shadow mode configuration
 }
 

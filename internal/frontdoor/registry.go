@@ -231,9 +231,18 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router ports.Provi
 	return registrations, nil
 }
 
+// ResponsesHandlerOptions configures Responses API handler behavior
+type ResponsesHandlerOptions struct {
+	ForceStore bool // Force recording even when client sends store:false
+}
+
 // CreateResponsesHandlers creates Responses API handlers.
-func (r *Registry) CreateResponsesHandlers(basePath string, store ports.InteractionStore, provider ports.Provider) []HandlerRegistration {
-	handler := responses_frontdoor.NewHandler(store, provider)
+func (r *Registry) CreateResponsesHandlers(basePath string, store ports.InteractionStore, provider ports.Provider, opts ...ResponsesHandlerOptions) []HandlerRegistration {
+	var handlerOpts responses_frontdoor.HandlerOptions
+	if len(opts) > 0 {
+		handlerOpts.ForceStore = opts[0].ForceStore
+	}
+	handler := responses_frontdoor.NewHandler(store, provider, handlerOpts)
 
 	return []HandlerRegistration{
 		// Responses API (new)

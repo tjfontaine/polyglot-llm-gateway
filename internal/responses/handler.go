@@ -21,18 +21,37 @@ import (
 
 // Handler handles OpenAI Responses API requests
 type Handler struct {
-	store    ports.InteractionStore
-	provider ports.Provider
-	logger   *slog.Logger
+	store      ports.InteractionStore
+	provider   ports.Provider
+	logger     *slog.Logger
+	forceStore bool // Override client store:false preference
+}
+
+// HandlerOptions configures the Responses API handler
+type HandlerOptions struct {
+	ForceStore bool // Force recording even when client sends store:false
 }
 
 // NewHandler creates a new Responses API handler
-func NewHandler(store ports.InteractionStore, provider ports.Provider) *Handler {
-	return &Handler{
+func NewHandler(store ports.InteractionStore, provider ports.Provider, opts ...HandlerOptions) *Handler {
+	h := &Handler{
 		store:    store,
 		provider: provider,
 		logger:   slog.Default(),
 	}
+	if len(opts) > 0 {
+		h.forceStore = opts[0].ForceStore
+	}
+	return h
+}
+
+// shouldRecord returns true if the interaction should be recorded.
+// Records when: forceStore is enabled OR client didn't explicitly set store:false
+func (h *Handler) shouldRecord(clientStore *bool) bool {
+	if h.forceStore {
+		return true
+	}
+	return clientStore == nil || *clientStore
 }
 
 // HandleCreateResponse handles POST /v1/responses
@@ -130,7 +149,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Requ
 			slog.String("error", err.Error()),
 		)
 		// Record failed interaction
-		if req.Store == nil || *req.Store {
+		if h.shouldRecord(req.Store) {
 			conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
 				Store:                 h.store,
 				RawRequest:            rawReqJSON,
@@ -143,6 +162,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Requ
 				PreviousInteractionID: previousInteractionID,
 				ThreadKey:             threadKey,
 				RequestHeaders:        r.Header,
+				ClientStorePreference: req.Store,
 			})
 		}
 		h.writeError(w, http.StatusInternalServerError, "provider_error", err.Error())
@@ -199,7 +219,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Requ
 	})
 
 	// Record interaction through IR layer if storage is enabled
-	if req.Store == nil || *req.Store {
+	if h.shouldRecord(req.Store) {
 		// Determine finish reason
 		finishReason := "stop"
 		if len(canonResp.Choices) > 0 {
@@ -221,6 +241,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, r *http.Requ
 			PreviousInteractionID: previousInteractionID,
 			ThreadKey:             threadKey,
 			RequestHeaders:        r.Header,
+			ClientStorePreference: req.Store,
 		})
 	}
 
@@ -305,12 +326,37 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 
 	createdAt := time.Now().Unix()
 
-	// Send response.created event (per spec: {"id": "...", "created": ..., "model": "..."})
+	// Sequence number tracking - starts at 0, increments for each event
+	sequenceNumber := 0
+
+	// Build initial response object for lifecycle events
+	initialResponse := domain.ResponsesAPIResponse{
+		ID:                 responseID,
+		Object:             "response",
+		CreatedAt:          createdAt,
+		Status:             "in_progress",
+		Model:              req.Model,
+		Output:             []domain.ResponsesOutputItem{},
+		PreviousResponseID: req.PreviousResponseID,
+		Metadata:           req.Metadata,
+	}
+
+	// Send response.created event (per spec: emitted immediately when request is accepted)
+	// Per OpenAI spec, this must include the full Response object
 	h.sendSSEEvent(w, flusher, "response.created", domain.ResponseCreatedEvent{
-		ID:        responseID,
-		CreatedAt: createdAt,
-		Model:     req.Model,
+		Response:       initialResponse,
+		SequenceNumber: sequenceNumber,
+		Type:           "response.created",
 	})
+	sequenceNumber++
+
+	// Send response.in_progress event (per spec: emitted when generation begins)
+	h.sendSSEEvent(w, flusher, "response.in_progress", domain.ResponseInProgressEvent{
+		Response:       initialResponse,
+		SequenceNumber: sequenceNumber,
+		Type:           "response.in_progress",
+	})
+	sequenceNumber++
 
 	// Tracking state
 	var fullText strings.Builder
@@ -338,21 +384,68 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 				slog.String("request_id", requestID),
 				slog.String("error", event.Error.Error()),
 			)
-			// Send error response
-			h.sendSSEEvent(w, flusher, "response.failed", domain.ResponseFailedEvent{
-				Response: domain.ResponsesAPIResponse{
-					ID:        responseID,
-					Object:    "response",
-					CreatedAt: createdAt,
-					Status:    "failed",
-					Model:     req.Model,
-					Error: &domain.ResponsesError{
-						Type:    "server_error",
-						Code:    "stream_error",
-						Message: event.Error.Error(),
-					},
+
+			// Parse error message to extract code and message
+			// Format is typically "code: message" from provider
+			errMsg := event.Error.Error()
+			errCode := "stream_error"
+			errType := "server_error"
+			if parts := strings.SplitN(errMsg, ": ", 2); len(parts) == 2 {
+				errCode = parts[0]
+				errMsg = parts[1]
+				// Map common error codes to types
+				switch errCode {
+				case "model_not_found":
+					errType = "invalid_request_error"
+				case "rate_limit_exceeded":
+					errType = "rate_limit_error"
+				case "invalid_api_key", "authentication_error":
+					errType = "authentication_error"
+				}
+			}
+
+			// Build failed response
+			failedResp := domain.ResponsesAPIResponse{
+				ID:        responseID,
+				Object:    "response",
+				CreatedAt: createdAt,
+				Status:    "failed",
+				Model:     req.Model,
+				Error: &domain.ResponsesError{
+					Type:    errType,
+					Code:    errCode,
+					Message: errMsg,
 				},
+			}
+
+			// Send response.failed event
+			h.sendSSEEvent(w, flusher, "response.failed", domain.ResponseFailedEvent{
+				Response:       failedResp,
+				SequenceNumber: sequenceNumber,
+				Type:           "response.failed",
 			})
+			sequenceNumber++
+
+			// Record the failed interaction
+			if h.shouldRecord(req.Store) {
+				clientRespJSON, _ := json.Marshal(failedResp)
+				conversation.RecordInteraction(r.Context(), conversation.RecordInteractionParams{
+					Store:                 h.store,
+					RawRequest:            rawReqJSON,
+					CanonicalReq:          canonReq,
+					CanonicalResp:         nil, // No successful response
+					ClientResponse:        clientRespJSON,
+					Frontdoor:             domain.APITypeResponses,
+					Provider:              h.provider.Name(),
+					Streaming:             true,
+					Duration:              time.Since(startTime),
+					Error:                 event.Error,
+					PreviousInteractionID: previousInteractionID,
+					ThreadKey:             threadKey,
+					RequestHeaders:        r.Header,
+					ClientStorePreference: req.Store,
+				})
+			}
 			return
 		}
 
@@ -362,25 +455,31 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			if !messageStarted {
 				// Send response.output_item.added (per spec)
 				h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
-					ItemIndex: itemIndex,
+					OutputIndex: itemIndex,
 					Item: domain.ResponsesOutputItem{
 						Type:    "message",
 						ID:      messageItemID,
 						Role:    "assistant",
 						Content: []domain.ResponsesContentPart{},
 					},
+					SequenceNumber: sequenceNumber,
+					Type:           "response.output_item.added",
 				})
+				sequenceNumber++
 				messageStarted = true
 			}
 
 			fullText.WriteString(event.ContentDelta)
 			// Send response.output_item.delta with delta.content (per spec)
 			h.sendSSEEvent(w, flusher, "response.output_item.delta", domain.OutputItemDeltaEvent{
-				ItemIndex: itemIndex,
+				OutputIndex: itemIndex,
 				Delta: domain.OutputItemDelta{
 					Content: event.ContentDelta,
 				},
+				SequenceNumber: sequenceNumber,
+				Type:           "response.output_item.delta",
 			})
+			sequenceNumber++
 		}
 
 		// Handle tool call start
@@ -392,7 +491,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			if messageStarted && fullText.Len() > 0 {
 				// Send response.output_item.done for message
 				h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
-					ItemIndex: itemIndex,
+					OutputIndex: itemIndex,
 					Item: domain.ResponsesOutputItem{
 						Type: "message",
 						ID:   messageItemID,
@@ -402,7 +501,10 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 							Text: fullText.String(),
 						}},
 					},
+					SequenceNumber: sequenceNumber,
+					Type:           "response.output_item.done",
 				})
+				sequenceNumber++
 				outputItems = append(outputItems, domain.ResponsesOutputItem{
 					Type:   "message",
 					ID:     messageItemID,
@@ -427,14 +529,17 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 
 			// Send response.output_item.added for function_call
 			h.sendSSEEvent(w, flusher, "response.output_item.added", domain.OutputItemAddedEvent{
-				ItemIndex: itemIndex,
+				OutputIndex: itemIndex,
 				Item: domain.ResponsesOutputItem{
 					Type:   "function_call",
 					ID:     toolItemID,
 					CallID: tc.ID,
 					Name:   tc.Function.Name,
 				},
+				SequenceNumber: sequenceNumber,
+				Type:           "response.output_item.added",
 			})
+			sequenceNumber++
 
 			itemIndex++
 		}
@@ -447,11 +552,14 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 
 				// Send response.output_item.delta with delta.arguments (per spec)
 				h.sendSSEEvent(w, flusher, "response.output_item.delta", domain.OutputItemDeltaEvent{
-					ItemIndex: stc.index,
+					OutputIndex: stc.index,
 					Delta: domain.OutputItemDelta{
 						Arguments: tc.Function.Arguments,
 					},
+					SequenceNumber: sequenceNumber,
+					Type:           "response.output_item.delta",
 				})
+				sequenceNumber++
 			}
 		}
 
@@ -461,7 +569,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			if stc, ok := activeToolCalls[tc.Index]; ok {
 				// Send response.output_item.done for function_call
 				h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
-					ItemIndex: stc.index,
+					OutputIndex: stc.index,
 					Item: domain.ResponsesOutputItem{
 						Type:      "function_call",
 						ID:        stc.itemID,
@@ -469,7 +577,10 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 						Name:      stc.name,
 						Arguments: stc.arguments.String(),
 					},
+					SequenceNumber: sequenceNumber,
+					Type:           "response.output_item.done",
 				})
+				sequenceNumber++
 
 				outputItems = append(outputItems, domain.ResponsesOutputItem{
 					Type:      "function_call",
@@ -499,7 +610,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 	if messageStarted {
 		// Send response.output_item.done for message
 		h.sendSSEEvent(w, flusher, "response.output_item.done", domain.OutputItemDoneEvent{
-			ItemIndex: 0,
+			OutputIndex: 0,
 			Item: domain.ResponsesOutputItem{
 				Type: "message",
 				ID:   messageItemID,
@@ -509,7 +620,10 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 					Text: fullText.String(),
 				}},
 			},
+			SequenceNumber: sequenceNumber,
+			Type:           "response.output_item.done",
 		})
+		sequenceNumber++
 		outputItems = append([]domain.ResponsesOutputItem{{
 			Type:   "message",
 			ID:     messageItemID,
@@ -531,7 +645,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 		finishReason = "tool_calls"
 	}
 
-	// Send response.done event (per spec: {"usage": {...}, "finish_reason": "stop"})
+	// Build usage for response
 	var usagePtr *domain.ResponsesUsage
 	if finalUsage != nil {
 		usagePtr = &domain.ResponsesUsage{
@@ -540,30 +654,34 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			TotalTokens:  finalUsage.TotalTokens,
 		}
 	}
-	h.sendSSEEvent(w, flusher, "response.done", domain.ResponseDoneEvent{
-		Usage:        usagePtr,
-		FinishReason: finishReason,
-	})
 
-	// Determine response status based on finish reason for storage
+	// Determine response status based on finish reason
 	responseStatus := "completed"
 	if finishReason == "tool_calls" {
 		responseStatus = "incomplete"
 	}
+	// Build final response object
+	finalResp := domain.ResponsesAPIResponse{
+		ID:                 responseID,
+		Object:             "response",
+		CreatedAt:          createdAt,
+		Status:             responseStatus,
+		Model:              req.Model,
+		Output:             outputItems,
+		Usage:              usagePtr,
+		PreviousResponseID: req.PreviousResponseID,
+		Metadata:           req.Metadata,
+	}
+
+	// Send response.completed event (per spec: final event containing the full accumulated response object)
+	h.sendSSEEvent(w, flusher, "response.completed", domain.ResponseCompletedEvent{
+		Response:       finalResp,
+		SequenceNumber: sequenceNumber,
+		Type:           "response.completed",
+	})
 
 	// Record interaction through IR layer if storage is enabled
-	if req.Store == nil || *req.Store {
-		finalResp := &domain.ResponsesAPIResponse{
-			ID:                 responseID,
-			Object:             "response",
-			CreatedAt:          createdAt,
-			Status:             responseStatus,
-			Model:              req.Model,
-			Output:             outputItems,
-			Usage:              usagePtr,
-			PreviousResponseID: req.PreviousResponseID,
-			Metadata:           req.Metadata,
-		}
+	if h.shouldRecord(req.Store) {
 		clientRespJSON, _ := json.Marshal(finalResp)
 
 		// Build a canonical response from the streaming data
@@ -600,6 +718,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, r *http.Request
 			PreviousInteractionID: previousInteractionID,
 			ThreadKey:             threadKey,
 			RequestHeaders:        r.Header,
+			ClientStorePreference: req.Store,
 		})
 	}
 }

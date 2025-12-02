@@ -47,6 +47,9 @@ type RecordInteractionParams struct {
 	// Responses API threading
 	PreviousInteractionID string
 	ThreadKey             string
+
+	// ClientStorePreference captures the client's original store preference (for auditing)
+	ClientStorePreference *bool
 }
 
 // RecordInteraction stores a full interaction record with bidirectional visibility.
@@ -105,6 +108,15 @@ func RecordInteraction(ctx context.Context, params RecordInteractionParams) stri
 	// Add request ID and other metadata
 	if reqID, ok := persistCtx.Value(middleware.RequestIDKey).(string); ok && reqID != "" {
 		interaction.Metadata["request_id"] = reqID
+	}
+
+	// Record client's store preference for auditing
+	if params.ClientStorePreference != nil {
+		if *params.ClientStorePreference {
+			interaction.Metadata["client_store_preference"] = "true"
+		} else {
+			interaction.Metadata["client_store_preference"] = "false"
+		}
 	}
 
 	// Capture relevant request headers

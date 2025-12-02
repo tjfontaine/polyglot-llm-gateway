@@ -267,10 +267,13 @@ func main() {
 
 	// Register Responses API handlers if storage is configured
 	if eventStore != nil {
-		basePaths := resolveResponsesBasePaths(apps, cfg.Routing)
+		responsesApps := resolveResponsesBasePaths(apps, cfg.Routing)
 
-		for _, base := range basePaths {
-			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(base, eventStore, router)
+		for _, appCfg := range responsesApps {
+			opts := frontdoor.ResponsesHandlerOptions{
+				ForceStore: appCfg.ForceStore,
+			}
+			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(appCfg.Path, eventStore, router, opts)
 			for _, reg := range responsesHandlers {
 				method := reg.Method
 				if method == "" {
@@ -350,24 +353,29 @@ func buildProviderResponsesSupport(cfg *config.Config) map[string]bool {
 	return map[string]bool{}
 }
 
-func resolveResponsesBasePaths(apps []config.AppConfig, routing config.RoutingConfig) []string {
-	seen := make(map[string]bool)
-	add := func(path string) {
-		if path == "" || seen[path] {
-			return
-		}
-		seen[path] = true
-	}
+// responsesAppConfig holds the config needed for Responses API registration
+type responsesAppConfig struct {
+	Path       string
+	ForceStore bool
+}
+
+func resolveResponsesBasePaths(apps []config.AppConfig, routing config.RoutingConfig) []responsesAppConfig {
+	seen := make(map[string]responsesAppConfig)
 
 	for _, app := range apps {
 		if app.Frontdoor == "openai" && app.EnableResponses {
-			add(app.Path)
+			if app.Path != "" && seen[app.Path].Path == "" {
+				seen[app.Path] = responsesAppConfig{
+					Path:       app.Path,
+					ForceStore: app.ForceStore,
+				}
+			}
 		}
 	}
 
-	var paths []string
-	for path := range seen {
-		paths = append(paths, path)
+	var configs []responsesAppConfig
+	for _, cfg := range seen {
+		configs = append(configs, cfg)
 	}
-	return paths
+	return configs
 }

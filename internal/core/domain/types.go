@@ -308,11 +308,14 @@ const (
 
 	// Responses API events (per OpenAI Responses API Spec v1.1)
 	EventTypeResponseCreated         StreamEventType = "response.created"
+	EventTypeResponseInProgress      StreamEventType = "response.in_progress"
 	EventTypeResponseOutputItemAdd   StreamEventType = "response.output_item.added"
 	EventTypeResponseOutputItemDelta StreamEventType = "response.output_item.delta"
 	EventTypeResponseOutputItemDone  StreamEventType = "response.output_item.done"
-	EventTypeResponseDone            StreamEventType = "response.done"
+	EventTypeResponseCompleted       StreamEventType = "response.completed"
 	EventTypeResponseFailed          StreamEventType = "response.failed"
+	// Deprecated: EventTypeResponseDone is not part of the OpenAI spec, use EventTypeResponseCompleted
+	EventTypeResponseDone StreamEventType = "response.done"
 )
 
 // CanonicalEvent represents a streaming event.

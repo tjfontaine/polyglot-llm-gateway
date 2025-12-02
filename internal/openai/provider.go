@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -508,8 +509,34 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 					// TODO: Handle arguments delta for tool calls if needed
 				}
 
+			case "response.content_part.added":
+				// Per OpenAI spec: A new content part (e.g., text block) has started
+				// Event payload: {"part": {...}, "item_id": "...", "content_index": 0}
+				// We don't need to emit anything for this, just acknowledge it
+				continue
+
+			case "response.content_part.done":
+				// Per OpenAI spec: A content part is finished
+				// Event payload: {"part": {...}, "item_id": "...", "content_index": 0}
+				// We don't need to emit anything for this, just acknowledge it
+				continue
+
+			case "response.output_item.added":
+				// Per OpenAI spec: A new item (e.g., message) has started
+				// Event payload: {"item": {...}, "output_index": 0}
+				// We don't need to emit anything for this, just acknowledge it
+				continue
+
+			case "response.output_item.done":
+				// Per OpenAI spec: An item is fully generated and finalized
+				// Event payload: {"item": {...}, "output_index": 0}
+				// We don't need to emit anything for this, the content was already streamed
+				continue
+
 			case "response.done":
-				// Per spec: {"usage": {...}, "finish_reason": "stop"}
+				// DEPRECATED: This event is not part of the OpenAI Responses API spec.
+				// It was used by a previous incorrect implementation of our frontdoor.
+				// Keep for backwards compatibility but prefer response.completed.
 				var data struct {
 					Usage *struct {
 						InputTokens  int `json:"input_tokens"`
@@ -568,8 +595,8 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 					}
 				}
 
-			// Legacy event handling for backwards compatibility
 			case "response.in_progress":
+				// Per spec: emitted when generation begins, contains full response object
 				var data struct {
 					Response ResponsesResponse `json:"response"`
 				}
@@ -578,7 +605,24 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 					currentResponseID = data.Response.ID
 				}
 
+			case "response.text.delta":
+				// Per OpenAI Responses API spec: Text Stream with delta containing text chunk
+				// Event payload: {"delta": "text", "item_id": "...", "content_index": 0}
+				var data struct {
+					Delta        string `json:"delta"`
+					ItemID       string `json:"item_id"`
+					ContentIndex int    `json:"content_index"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil && data.Delta != "" {
+					out <- domain.CanonicalEvent{
+						ContentDelta: data.Delta,
+						Model:        currentModel,
+						ResponseID:   currentResponseID,
+					}
+				}
+
 			case "response.output_text.delta":
+				// Legacy/alternative delta format
 				var data struct {
 					Delta string `json:"delta"`
 				}
@@ -632,6 +676,128 @@ func (p *Provider) streamWithResponses(ctx context.Context, req *domain.Canonica
 						}
 					}
 				}
+
+			case "error":
+				// Per OpenAI spec: {"type": "error", "error": {"type": "...", "code": "...", "message": "..."}}
+				var data struct {
+					Error struct {
+						Type    string `json:"type"`
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					out <- domain.CanonicalEvent{
+						Error: fmt.Errorf("%s: %s", data.Error.Code, data.Error.Message),
+					}
+					return
+				}
+
+			case "response.failed":
+				// Per OpenAI spec: Emitted if an error occurs, contains the response with error details
+				var data struct {
+					Response ResponsesResponse `json:"response"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					errMsg := "response failed"
+					if data.Response.Error != nil {
+						errMsg = fmt.Sprintf("%s: %s", data.Response.Error.Code, data.Response.Error.Message)
+					}
+					out <- domain.CanonicalEvent{
+						Error:      errors.New(errMsg),
+						Model:      data.Response.Model,
+						ResponseID: data.Response.ID,
+					}
+					return
+				}
+
+			case "response.incomplete":
+				// Per OpenAI spec: Emitted if stopped early (e.g., max_tokens reached)
+				var data struct {
+					Response ResponsesResponse `json:"response"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					ev := domain.CanonicalEvent{
+						Model:        data.Response.Model,
+						ResponseID:   data.Response.ID,
+						FinishReason: "length", // incomplete usually means max_tokens
+					}
+					if data.Response.Usage != nil {
+						ev.Usage = &domain.Usage{
+							PromptTokens:     data.Response.Usage.InputTokens,
+							CompletionTokens: data.Response.Usage.OutputTokens,
+							TotalTokens:      data.Response.Usage.TotalTokens,
+						}
+					}
+					out <- ev
+				}
+
+			case "response.cancelled":
+				// Per OpenAI spec: Emitted if the response was cancelled
+				var data struct {
+					Response ResponsesResponse `json:"response"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					out <- domain.CanonicalEvent{
+						Model:        data.Response.Model,
+						ResponseID:   data.Response.ID,
+						FinishReason: "cancelled",
+					}
+				}
+
+			case "response.function_call_arguments.delta":
+				// Per OpenAI spec: Streaming JSON arguments for a function call
+				var data struct {
+					Delta  string `json:"delta"`
+					ItemID string `json:"item_id"`
+					CallID string `json:"call_id"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil && data.Delta != "" {
+					tc := &domain.ToolCallChunk{ID: data.CallID}
+					tc.Function.Arguments = data.Delta
+					out <- domain.CanonicalEvent{
+						Type:       domain.EventTypeContentBlockDelta,
+						ToolCall:   tc,
+						Model:      currentModel,
+						ResponseID: currentResponseID,
+					}
+				}
+
+			case "response.function_call_arguments.done":
+				// Per OpenAI spec: Finalized arguments string for a function call
+				var data struct {
+					Arguments string `json:"arguments"`
+					ItemID    string `json:"item_id"`
+					CallID    string `json:"call_id"`
+				}
+				if err := json.Unmarshal(event.Data, &data); err == nil {
+					tc := &domain.ToolCallChunk{ID: data.CallID}
+					tc.Function.Arguments = data.Arguments
+					out <- domain.CanonicalEvent{
+						Type:       domain.EventTypeContentBlockStop,
+						ToolCall:   tc,
+						Model:      currentModel,
+						ResponseID: currentResponseID,
+					}
+				}
+
+			case "response.audio.delta":
+				// Per OpenAI spec: Audio stream with base64 audio chunks
+				// We don't currently support audio streaming, just acknowledge
+				continue
+
+			case "response.audio_transcript.delta":
+				// Per OpenAI spec: Live transcript of generated audio
+				// We don't currently support audio transcripts, just acknowledge
+				continue
+
+			case "response.audio.done":
+				// Per OpenAI spec: Audio generation complete
+				continue
+
+			case "response.audio_transcript.done":
+				// Per OpenAI spec: Audio transcript complete
+				continue
 			}
 		}
 	}()

@@ -267,12 +267,18 @@ type ResponsesError struct {
 
 // Responses API Streaming Events (per OpenAI Responses API Spec v1.1)
 //
-// Event flow:
-// 1. response.created - sent immediately when request is accepted
-// 2. response.output_item.added - when a new Item (message or function_call) begins
-// 3. response.output_item.delta - for streaming content or arguments
-// 4. response.output_item.done - when an Item is fully generated
-// 5. response.done - final event with usage and finish_reason
+// Lifecycle Event flow:
+// 1. response.created - emitted immediately when request is accepted
+// 2. response.in_progress - emitted when generation begins
+// 3. response.output_item.added - when a new Item (message or function_call) begins
+// 4. response.output_item.delta - for streaming content or arguments
+// 5. response.output_item.done - when an Item is fully generated
+// 6. response.completed - final event with the full accumulated response object
+//
+// Terminal events (mutually exclusive with response.completed):
+// - response.failed - if an error occurs
+// - response.incomplete - if stopped early (e.g., max_tokens)
+// - response.cancelled - if cancelled by client or API
 
 // ResponsesStreamEvent represents a streaming event from the Responses API.
 type ResponsesStreamEvent struct {
@@ -282,24 +288,45 @@ type ResponsesStreamEvent struct {
 
 // ResponseCreatedEvent is sent when a response is created.
 // Event: response.created
+// Per OpenAI spec, contains the full Response object.
 type ResponseCreatedEvent struct {
-	ID        string `json:"id"`
-	CreatedAt int64  `json:"created"`
-	Model     string `json:"model"`
+	Response       ResponsesAPIResponse `json:"response"`
+	SequenceNumber int                  `json:"sequence_number"`
+	Type           string               `json:"type"` // Always "response.created"
+}
+
+// ResponseInProgressEvent is sent when response generation begins.
+// Event: response.in_progress
+type ResponseInProgressEvent struct {
+	Response       ResponsesAPIResponse `json:"response"`
+	SequenceNumber int                  `json:"sequence_number"`
+	Type           string               `json:"type"` // Always "response.in_progress"
+}
+
+// ResponseCompletedEvent is sent as the final event with the full response.
+// Event: response.completed
+type ResponseCompletedEvent struct {
+	Response       ResponsesAPIResponse `json:"response"`
+	SequenceNumber int                  `json:"sequence_number"`
+	Type           string               `json:"type"` // Always "response.completed"
 }
 
 // OutputItemAddedEvent is sent when an output item is added.
 // Event: response.output_item.added
 type OutputItemAddedEvent struct {
-	ItemIndex int                 `json:"item_index"`
-	Item      ResponsesOutputItem `json:"item"`
+	OutputIndex    int                 `json:"output_index"`
+	Item           ResponsesOutputItem `json:"item"`
+	SequenceNumber int                 `json:"sequence_number"`
+	Type           string              `json:"type"` // Always "response.output_item.added"
 }
 
 // OutputItemDeltaEvent is sent for streaming content or function arguments.
 // Event: response.output_item.delta
 type OutputItemDeltaEvent struct {
-	ItemIndex int             `json:"item_index"`
-	Delta     OutputItemDelta `json:"delta"`
+	OutputIndex    int             `json:"output_index"`
+	Delta          OutputItemDelta `json:"delta"`
+	SequenceNumber int             `json:"sequence_number"`
+	Type           string          `json:"type"` // Always "response.output_item.delta"
 }
 
 // OutputItemDelta contains either content delta or arguments delta.
@@ -311,12 +338,15 @@ type OutputItemDelta struct {
 // OutputItemDoneEvent is sent when an output item is complete.
 // Event: response.output_item.done
 type OutputItemDoneEvent struct {
-	ItemIndex int                 `json:"item_index"`
-	Item      ResponsesOutputItem `json:"item"`
+	OutputIndex    int                 `json:"output_index"`
+	Item           ResponsesOutputItem `json:"item"`
+	SequenceNumber int                 `json:"sequence_number"`
+	Type           string              `json:"type"` // Always "response.output_item.done"
 }
 
-// ResponseDoneEvent is sent when the entire response is complete.
-// Event: response.done
+// ResponseDoneEvent is DEPRECATED - use ResponseCompletedEvent instead.
+// This was a non-spec event. The OpenAI Responses API uses response.completed.
+// Event: response.done (deprecated)
 type ResponseDoneEvent struct {
 	Usage        *ResponsesUsage `json:"usage,omitempty"`
 	FinishReason string          `json:"finish_reason"` // "stop", "tool_calls", "length", etc.
@@ -325,7 +355,9 @@ type ResponseDoneEvent struct {
 // ResponseFailedEvent is sent when a response fails.
 // Event: response.failed
 type ResponseFailedEvent struct {
-	Response ResponsesAPIResponse `json:"response"`
+	Response       ResponsesAPIResponse `json:"response"`
+	SequenceNumber int                  `json:"sequence_number"`
+	Type           string               `json:"type"` // Always "response.failed"
 }
 
 // Legacy event types - kept for backwards compatibility with existing code
