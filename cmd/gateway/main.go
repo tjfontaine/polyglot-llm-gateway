@@ -4,32 +4,15 @@ import (
 	"context"
 	"log"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/controlplane"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/middleware/tracer"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/api/server"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/auth"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tenant"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/provider"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
-	routerpkg "github.com/tjfontaine/polyglot-llm-gateway/internal/router"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/shadow"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/memory"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/storage/sqldb"
-
-	// Import consolidated packages for legacy provider creation
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/anthropic"
-	"github.com/tjfontaine/polyglot-llm-gateway/internal/openai"
+	"github.com/tjfontaine/polyglot-llm-gateway/pkg/gateway"
 )
 
 func main() {
@@ -53,329 +36,58 @@ func main() {
 		}
 	}()
 
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
-
+	// Register built-in providers and frontdoors
 	registration.RegisterBuiltins()
 
-	// Initialize storage if configured
-	var store storage.ConversationStore
-	var threadStore storage.ThreadStateStore
-	var eventStore storage.InteractionStore
-	if cfg.Storage.Type != "" && cfg.Storage.Type != "none" {
-		switch cfg.Storage.Type {
-		case "sqlite":
-			// Legacy sqlite config for backwards compatibility
-			dbPath := cfg.Storage.SQLite.Path
-			if dbPath == "" {
-				dbPath = "./data/conversations.db"
-			}
-			store, err = sqldb.NewSQLite(dbPath)
-			if err != nil {
-				log.Fatalf("Failed to initialize SQLite storage: %v", err)
-			}
-			defer store.Close()
-			logger.Info("storage initialized", slog.String("type", "sqlite"), slog.String("path", dbPath))
-			if ts, ok := store.(storage.ThreadStateStore); ok {
-				threadStore = ts
-			}
-			if es, ok := store.(storage.InteractionStore); ok {
-				eventStore = es
-			}
-		case "database":
-			// New multi-dialect database config
-			store, err = sqldb.New(sqldb.Config{
-				Driver: cfg.Storage.Database.Driver,
-				DSN:    cfg.Storage.Database.DSN,
-			})
-			if err != nil {
-				log.Fatalf("Failed to initialize database storage: %v", err)
-			}
-			defer store.Close()
-			logger.Info("storage initialized", slog.String("type", "database"), slog.String("driver", cfg.Storage.Database.Driver))
-			if ts, ok := store.(storage.ThreadStateStore); ok {
-				threadStore = ts
-			}
-			if es, ok := store.(storage.InteractionStore); ok {
-				eventStore = es
-			}
-		case "memory":
-			store = memory.New()
-			logger.Info("storage initialized", slog.String("type", "memory"))
-			if ts, ok := store.(storage.ThreadStateStore); ok {
-				threadStore = ts
-			}
-			if es, ok := store.(storage.InteractionStore); ok {
-				eventStore = es
-			}
-		default:
-			log.Fatalf("Unknown storage type: %s", cfg.Storage.Type)
-		}
-	}
-
-	// Initialize Provider Registry
-	providerRegistry := provider.NewRegistry()
-
-	// Multi-tenant mode or single-tenant mode
-	var router ports.Provider
-	var authenticator *auth.Authenticator
-	var providers map[string]ports.Provider
-	var tenants []*tenant.Tenant
-
-	if len(cfg.Tenants) > 0 {
-		// Multi-tenant mode
-		logger.Info("multi-tenant mode enabled", slog.Int("tenant_count", len(cfg.Tenants)))
-
-		tenantRegistry := tenant.NewRegistry()
-		tenants, err = tenantRegistry.LoadTenants(cfg.Tenants, providerRegistry)
-		if err != nil {
-			log.Fatalf("Failed to load tenants: %v", err)
-		}
-
-		// Create authenticator
-		authenticator = auth.NewAuthenticator(tenants)
-
-		// Use first tenant's router as default (will be overridden per-request)
-		if len(tenants) > 0 {
-			router = routerpkg.NewProviderRouter(tenants[0].Providers, tenants[0].Routing)
-		}
-
-		for _, tenantCfg := range cfg.Tenants {
-			if t, ok := tenantRegistry.GetTenant(tenantCfg.ID); ok {
-				attachThreadStore(threadStore, eventStore, t.Providers, tenantCfg.Providers)
-			}
-		}
-	} else {
-		// Single-tenant mode (backwards compatible)
-		logger.Info("single-tenant mode (no authentication)")
-
-		if len(cfg.Providers) > 0 {
-			providers, err = providerRegistry.CreateProviders(cfg.Providers)
-			if err != nil {
-				log.Fatalf("Failed to create providers: %v", err)
-			}
-			attachThreadStore(threadStore, eventStore, providers, cfg.Providers)
-		} else {
-			// Fallback to legacy env-based config
-			logger.Info("using legacy env-based provider setup")
-			openaiP := openai.NewProvider(cfg.OpenAI.APIKey)
-			anthropicP := anthropic.NewProvider(cfg.Anthropic.APIKey)
-			providers = map[string]ports.Provider{
-				"openai":    openaiP,
-				"anthropic": anthropicP,
-			}
-			// Populate provider config for control plane display while keeping secrets empty
-			cfg.Providers = []config.ProviderConfig{
-				{Name: "openai", Type: "openai"},
-				{Name: "anthropic", Type: "anthropic"},
-			}
-			// Use default routing if no config
-			cfg.Routing = config.RoutingConfig{
-				Rules: []config.RoutingRule{
-					{ModelPrefix: "claude", Provider: "anthropic"},
-					{ModelPrefix: "gpt", Provider: "openai"},
-				},
-				DefaultProvider: "openai",
-			}
-		}
-
-		router = routerpkg.NewProviderRouter(providers, cfg.Routing)
-	}
-
-	// Initialize Shadow Manager if storage supports it
-	if shadowStore, ok := store.(ports.ShadowStore); ok {
-		// Register codecs for shadow execution
-		shadow.RegisterCodec(domain.APITypeOpenAI, openai.NewCodec())
-		shadow.RegisterCodec(domain.APITypeAnthropic, anthropic.NewCodec())
-
-		// Create provider lookup function
-		providerLookup := func(name string) (ports.Provider, error) {
-			if providers != nil {
-				if p, ok := providers[name]; ok {
-					return p, nil
-				}
-			}
-			return nil, nil
-		}
-
-		shadowMgr := shadow.NewManager(shadow.ManagerConfig{
-			Store:          shadowStore,
-			ProviderLookup: providerLookup,
-			CodecLookup:    shadow.DefaultCodecLookup(),
-			Logger:         logger,
-		})
-		shadow.SetGlobalManager(shadowMgr)
-		logger.Info("shadow mode manager initialized")
-	}
-
-	// Initialize Frontdoor Registry
-	frontdoorRegistry := frontdoor.NewRegistry()
-
-	// Create frontdoor handlers from config
-	var handlerRegs []frontdoor.HandlerRegistration
-	var apps []config.AppConfig
-	if len(cfg.Apps) > 0 {
-		apps = cfg.Apps
-	} else if len(cfg.Frontdoors) > 0 {
-		for _, fd := range cfg.Frontdoors {
-			apps = append(apps, config.AppConfig{
-				Name:            fd.Type,
-				Frontdoor:       fd.Type,
-				Path:            fd.Path,
-				Provider:        fd.Provider,
-				DefaultModel:    fd.DefaultModel,
-				EnableResponses: fd.EnableResponses,
-			})
-		}
-	} else {
-		// Default frontdoors if no config
-		logger.Info("using default frontdoor configuration")
-		apps = []config.AppConfig{
-			{Name: "openai", Frontdoor: "openai", Path: "/openai"},
-			{Name: "anthropic", Frontdoor: "anthropic", Path: "/anthropic"},
-		}
-	}
-
-	handlerRegs, err = frontdoorRegistry.CreateHandlers(apps, router, providers, store)
+	// Create gateway with default configuration
+	// This uses:
+	// - File-based config with hot-reload
+	// - API key authentication
+	// - SQLite storage
+	// - Direct event publishing (no external bus)
+	// - Basic quality policy (no rate limiting)
+	gw, err := gateway.New(
+		gateway.WithFileConfig("config.yaml"),
+		gateway.WithAPIKeyAuth(),
+		gateway.WithSQLite("./data/gateway.db"),
+		gateway.WithLogger(logger),
+	)
 	if err != nil {
-		log.Fatalf("Failed to create frontdoor handlers: %v", err)
+		log.Fatalf("Failed to create gateway: %v", err)
 	}
 
-	// Initialize Server
-	srv := server.New(cfg.Server.Port, logger, authenticator)
+	// Start gateway
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Register all frontdoor handlers
-	for _, reg := range handlerRegs {
-		method := reg.Method
-		if method == "" {
-			method = http.MethodPost
-		}
-
-		switch method {
-		case http.MethodGet:
-			srv.Router.Get(reg.Path, reg.Handler)
-		case http.MethodPost:
-			srv.Router.Post(reg.Path, reg.Handler)
-		default:
-			srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
-		}
-
-		log.Printf("Registered %s %s", method, reg.Path)
+	if err := gw.Start(ctx); err != nil {
+		log.Fatalf("Failed to start gateway: %v", err)
 	}
 
-	// Register Responses API handlers if storage is configured
-	if eventStore != nil {
-		responsesApps := resolveResponsesBasePaths(apps, cfg.Routing)
-
-		for _, appCfg := range responsesApps {
-			opts := frontdoor.ResponsesHandlerOptions{
-				ForceStore: appCfg.ForceStore,
-			}
-			responsesHandlers := frontdoorRegistry.CreateResponsesHandlers(appCfg.Path, eventStore, router, opts)
-			for _, reg := range responsesHandlers {
-				method := reg.Method
-				if method == "" {
-					method = http.MethodPost
-				}
-
-				switch method {
-				case http.MethodGet:
-					srv.Router.Get(reg.Path, reg.Handler)
-				case http.MethodPost:
-					srv.Router.Post(reg.Path, reg.Handler)
-				default:
-					srv.Router.Method(method, reg.Path, http.HandlerFunc(reg.Handler))
-				}
-
-				log.Printf("Registered Responses API: %s %s", method, reg.Path)
-			}
-		}
-	}
-
-	// Initialize Control Plane
-	cpServer := controlplane.NewServer(cfg, store, tenants)
-	srv.Router.Mount("/admin", cpServer)
-	log.Printf("Registered Control Plane at /admin")
-
-	log.Printf("Starting server on port %d", cfg.Server.Port)
-
-	// Setup graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// Start server in goroutine
-	go func() {
-		if err := srv.Start(); err != nil {
-			log.Fatalf("Server failed: %v", err)
-		}
-	}()
+	logger.Info("Gateway started successfully")
+	logger.Info("Features enabled:")
+	logger.Info("  - Config: file-based with hot-reload (config.yaml)")
+	logger.Info("  - Auth: API key authentication")
+	logger.Info("  - Storage: SQLite (./data/gateway.db)")
+	logger.Info("  - Events: Direct to storage")
+	logger.Info("  - Policy: No rate limiting")
+	logger.Info("  - Control Plane: /admin")
 
 	// Wait for shutdown signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
-	logger.Info("shutting down gracefully...")
-}
 
-type threadStoreSetter interface {
-	SetThreadStore(storage.ThreadStateStore)
-}
+	logger.Info("Shutdown signal received, stopping gateway...")
 
-type eventStoreSetter interface {
-	SetEventStore(storage.InteractionStore)
-}
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
-func attachThreadStore(store storage.ThreadStateStore, eventStore storage.InteractionStore, providers map[string]ports.Provider, configs []config.ProviderConfig) {
-	if (store == nil && eventStore == nil) || len(providers) == 0 {
-		return
+	if err := gw.Shutdown(shutdownCtx); err != nil {
+		logger.Error("shutdown error", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
-	for _, cfg := range configs {
-		prov, ok := providers[cfg.Name]
-		if !ok {
-			continue
-		}
-		if cfg.ResponsesThreadPersistence {
-			if setter, ok := prov.(threadStoreSetter); ok {
-				setter.SetThreadStore(store)
-			}
-		}
-		if eventStore != nil {
-			if setter, ok := prov.(eventStoreSetter); ok {
-				setter.SetEventStore(eventStore)
-			}
-		}
-	}
-}
-
-func buildProviderResponsesSupport(cfg *config.Config) map[string]bool {
-	// Deprecated: keep for compatibility with callers; now all providers can back Responses when enabled at the frontdoor.
-	return map[string]bool{}
-}
-
-// responsesAppConfig holds the config needed for Responses API registration
-type responsesAppConfig struct {
-	Path       string
-	ForceStore bool
-}
-
-func resolveResponsesBasePaths(apps []config.AppConfig, routing config.RoutingConfig) []responsesAppConfig {
-	seen := make(map[string]responsesAppConfig)
-
-	for _, app := range apps {
-		if app.Frontdoor == "openai" && app.EnableResponses {
-			if app.Path != "" && seen[app.Path].Path == "" {
-				seen[app.Path] = responsesAppConfig{
-					Path:       app.Path,
-					ForceStore: app.ForceStore,
-				}
-			}
-		}
-	}
-
-	var configs []responsesAppConfig
-	for _, cfg := range seen {
-		configs = append(configs, cfg)
-	}
-	return configs
+	logger.Info("Gateway shutdown complete")
 }

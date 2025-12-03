@@ -248,10 +248,15 @@ go test ./internal/runtime/...
 ```
 
 ### Build
+```bash
+# Using the gateway runtime
+go run ./cmd/gateway
+
+### Build
 
 ```bash
-# Build v2 binary
-go build -o bin/gateway ./cmd/gateway-v2
+# Build binary
+go build -o bin/gateway ./cmd/gateway
 
 # Run
 ./bin/gateway
