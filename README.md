@@ -1,87 +1,55 @@
 # Polyglot LLM Gateway
 
-A high-performance, self-hosted Go service that acts as a universal translation layer for LLMs. It decouples clients from providers, allowing dynamic routing, failover, and policy enforcement without changing client code.
+A production-ready, **extensible LLM gateway** with pluggable architecture for multi-provider support, multi-tenancy, and advanced request routing.
 
-## Features
+## ✨ Features
 
-- **Multi-Protocol Support**: OpenAI and Anthropic API protocols
-- **Multi-Provider Backend**: Route to OpenAI, Anthropic, or any configured provider
-- **Configuration-Driven**: Providers, routing, and frontdoors all configurable via YAML
-- **Streaming Support**: Server-Sent Events (SSE) for real-time responses
-- **Secure Secrets**: Environment variable substitution for API keys
-- **Hourglass Architecture**: All traffic flows through a Canonical Intermediate Representation
+- **Multi-Provider**: OpenAI, Anthropic, and custom providers
+- **Multi-Tenant**: API key authentication with per-tenant routing
+- **Pluggable Architecture**: Swap any component (config, auth, storage, events, policy)
+- **Hot-Reload**: Config changes without restart
+- **Shadow Mode**: Run experimental providers in parallel for testing
+- **Responses API**: OpenAI-compatible responses for multi-turn interactions
+- **Web UI**: Built-in control plane for monitoring (`/admin`)
+- **Embeddable**: Use as a library in your own applications
 
-## Quick Start
+---
 
-### 1. Clone and Setup
+## 🚀 Quick Start
 
-```bash
-git clone <repository-url>
-cd poly-llm-gateway
-```
-
-### 2. Configure Environment Variables
-
-Copy the example environment file and add your API keys:
+### Installation
 
 ```bash
-cp .env.example .env
+git clone https://github.com/tjfontaine/polyglot-llm-gateway
+cd polyglot-llm-gateway
 ```
 
-Edit `.env` and add your API keys:
-
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-```
-
-### 3. Run the Gateway
+### Run with Defaults
 
 ```bash
-go run cmd/gateway/main.go
+# Create config file
+cp config.example.yaml config.yaml
+
+# Set your API keys
+export OPENAI_API_KEY=your-key
+export ANTHROPIC_API_KEY=your-key
+
+# Run the gateway (v2 runtime)
+go run ./cmd/gateway-v2
 ```
 
-The server will start on port 8080 by default.
+The gateway starts on **port 8080** with:
+- Config from `config.yaml` (hot-reload enabled)
+- SQLite storage at `./data/gateway.db`
+- Web UI at http://localhost:8080/admin
 
-### Run with Docker Compose
+### Basic Configuration
 
-Build and start the gateway with Docker Compose (ensure `.env` contains your API keys):
-
-```bash
-docker compose up --build
-```
-
-The service will be available on <http://localhost:8080> and will reload automatically when configuration files or environment variables change on container restarts.
-
-## Configuration
-
-The gateway is configured via `config.yaml`:
+`config.yaml`:
 
 ```yaml
 server:
   port: 8080
-
-apps:
-  - name: playground
-    frontdoor: openai
-    path: /openai
-    model_routing:
-      prefix_providers:
-        openai: openai
-        anthropic: anthropic
-      rewrites:
-        - model_exact: claude-haiku-4.5
-          provider: openai
-          model: gpt-5-mini
-          rewrite_response_model: true
-        - model_prefix: claude-sonnet-
-          provider: openai
-          model: gpt-5-mini
-          rewrite_response_model: true
-    models:
-      - id: claude-haiku-4.5
-        object: model
-        owned_by: gateway
 
 providers:
   - name: openai
@@ -92,161 +60,233 @@ providers:
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY}
 
-routing:
-  rules:
-    - model_prefix: "claude"
-      provider: anthropic
+apps:
+  - name: openai-api
+    frontdoor: openai
+    path: /openai
+  
+  - name: anthropic-api
+    frontdoor: anthropic
+    path: /anthropic
+
+storage:
+  type: sqlite
+  sqlite:
+    path: ./data/gateway.db
+```
+
+---
+
+## 🏗️ Architecture
+
+The gateway uses a **pluggable adapter pattern** with compile-time safe interfaces:
+
+```mermaid
+graph TB
+    App[Your Application] --> API[pkg/gateway API]
+    API --> Runtime[runtime.Gateway]
+    Runtime --> Config[ConfigProvider]
+    Runtime --> Auth[AuthProvider]
+    Runtime --> Storage[StorageProvider]
+    Runtime --> Events[EventPublisher]
+    Runtime --> Policy[QualityPolicy]
     
-    - model_prefix: "gpt"
-      provider: openai
-
-  default_provider: openai
+    Config --> FileConfig[File Config<br/>fsnotify]
+    Auth --> APIKey[API Key Auth<br/>SHA-256]
+    Storage --> SQLite[SQLite<br/>in-memory/disk]
+    Events --> Direct[Direct Events<br/>to storage]
+    Policy --> Basic[Basic Policy<br/>no limits]
+    
+    Runtime --> Providers[Provider Registry]
+    Runtime --> Frontdoors[Frontdoor Registry]
+    Runtime --> Server[HTTP Server]
+    
+    style Runtime fill:#FFD700
+    style FileConfig fill:#90EE90
+    style APIKey fill:#90EE90
+    style SQLite fill:#90EE90
+    style Direct fill:#90EE90
+    style Basic fill:#90EE90
 ```
 
-Each entry under `apps` defines a mounted frontdoor with its own model routing rules. Incoming model names can include a provider
-prefix like `openai/gpt-4o` to route directly to the OpenAI provider while passing only `gpt-4o` upstream. The `rewrites` list
-lets you alias a model to a different provider and upstream model (e.g., mapping `claude-haiku-4.5` to `gpt-5-mini` on
-OpenAI). Set `rewrite_response_model: true` to make responses (and model listings) report the alias instead of the upstream
-model. You can also seed the `/v1/models` listing for a frontdoor by providing `models` entries with OpenAI-/Anthropic-compatible fields.
+### Extension Points
 
-## API Usage
+All components are **swappable via interfaces**:
 
-### OpenAI-Compatible Endpoint
+| Interface | Default | Alternative Options |
+|-----------|---------|---------------------|
+| **ConfigProvider** | File (YAML) | Remote API, Consul, etcd |
+| **AuthProvider** | API Key | OAuth2, OIDC, mTLS, none |
+| **StorageProvider** | SQLite | PostgreSQL, MySQL, DynamoDB |
+| **EventPublisher** | Direct (sync) | Kafka, NATS, SQS, Redis Streams |
+| **QualityPolicy** | Basic (allow all) | Rate limiting, quotas, cost control |
 
-```bash
-curl -X POST http://localhost:8080/openai/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+---
+
+## 📦 Using as a Library
+
+Embed the gateway in your application:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
+    "github.com/tjfontaine/polyglot-llm-gateway/pkg/gateway"
+)
+
+func main() {
+    // Register built-in providers and frontdoors
+    registration.RegisterBuiltins()
+    
+    // Create gateway with options
+    gw, err := gateway.New(
+        gateway.WithFileConfig("config.yaml"),
+        gateway.WithAPIKeyAuth(),
+        gateway.WithSQLite("./data/gateway.db"),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Start gateway
+    ctx := context.Background()
+    if err := gw.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    
+    // Your application logic here...
+    
+    // Graceful shutdown
+    defer gw.Shutdown(context.Background())
+}
 ```
 
-### Anthropic Messages API Endpoint
+---
 
-```bash
-curl -X POST http://localhost:8080/anthropic/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "max_tokens": 100
-  }'
+## 🔌 Custom Adapters
+
+Implement any interface to extend functionality:
+
+```go
+// Example: Custom authentication
+type MyAuthProvider struct{}
+
+func (a *MyAuthProvider) Authenticate(
+    ctx context.Context, 
+    req *ports.AuthRequest,
+) (*ports.AuthResult, error) {
+    // Your custom auth logic (OAuth, JWT, etc.)
+    return &ports.AuthResult{
+        Authenticated: true,
+        TenantID:      "tenant-123",
+    }, nil
+}
+
+// Use custom adapter
+gw, _ := gateway.New(
+    gateway.WithFileConfig("config.yaml"),
+    gateway.WithCustomAuth(myAuthProvider),  // Your adapter
+    gateway.WithSQLite("./data/gateway.db"),
+)
 ```
 
-### Streaming Requests
+See `internal/core/ports/runtime.go` for all interfaces.
 
-Add `"stream": true` to enable streaming:
+---
 
-```bash
-curl -N -X POST http://localhost:8080/openai/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Count to 10"}],
-    "stream": true
-  }'
-```
+## 🎯 Use Cases
 
-## Architecture
+### Multi-Tenant SaaS
+- Per-tenant API keys
+- Isolated provider configurations
+- Usage tracking and billing
 
-```
-┌─────────────┐
-│   Clients   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────┐
-│      Frontdoor Adapters         │
-│  (OpenAI / Anthropic Protocol)  │
-└──────────┬──────────────────────┘
-           │
-           ▼
-    ┌──────────────┐
-    │ Canonical IR │
-    └──────┬───────┘
-           │
-           ▼
-    ┌──────────────┐
-    │    Router    │
-    └──────┬───────┘
-           │
-           ▼
-┌──────────────────────────────────┐
-│      Provider Adapters           │
-│  (OpenAI / Anthropic / Custom)   │
-└──────────┬───────────────────────┘
-           │
-           ▼
-    ┌──────────────┐
-    │  Upstream    │
-    │  LLM APIs    │
-    └──────────────┘
-```
+### A/B Testing
+- Shadow mode for provider comparison
+- Traffic splitting between models
+- Performance benchmarking
 
-## Project Structure
+### Cost Optimization
+- Provider failover (primary → backup)
+- Smart routing based on model/cost
+- Request quotas and limits
 
-```
-poly-llm-gateway/
-├── config.yaml              # Configuration file
-├── .env                     # Environment variables (gitignored)
-├── .env.example             # Example environment file
-├── cmd/gateway/main.go      # Application entrypoint
-└── internal/
-    ├── anthropic/           # Anthropic API (types, client, codec, provider, frontdoor)
-    ├── openai/              # OpenAI API (types, client, codec, provider, frontdoor)
-    ├── responses/           # OpenAI Responses API implementation
-    ├── passthrough/         # Passthrough provider
-    ├── frontdoor/           # Frontdoor registry
-    ├── provider/            # Provider registry & model mapping
-    ├── router/              # Routing logic
-    ├── shadow/              # Shadow mode execution
-    ├── conversation/        # Interaction recording
-    ├── storage/             # SQLite/memory storage
-    ├── core/
-    │   ├── domain/          # Canonical types & interfaces
-    │   └── ports/           # Port interfaces
-    ├── pkg/
-    │   ├── config/          # Configuration loading
-    │   ├── codec/           # Codec interfaces & error handling
-    │   ├── auth/            # API key authentication
-    │   └── tenant/          # Multi-tenant support
-    ├── api/
-    │   ├── server/          # HTTP server setup
-    │   ├── middleware/      # HTTP middleware
-    │   └── controlplane/    # Admin UI server & GraphQL API
-    ├── registration/        # Built-in provider/frontdoor registration
-    └── testutil/            # Test utilities
-```
+### Development
+- Local LLM proxy for testing
+- Request/response logging
+- Mock providers
 
-## Development
+---
 
-### Build
+## 📊 Web UI
 
-```bash
-go build ./...
-```
+Access the built-in control plane at **http://localhost:8080/admin**:
+
+- System stats and metrics
+- Interaction history and logs
+- Shadow mode results
+- Provider/tenant configuration
+- GraphQL playground
+
+---
+
+## 🛠️ Development
 
 ### Run Tests
 
 ```bash
+# All tests
 go test ./...
+
+# Specific packages
+go test ./internal/adapters/...
+go test ./internal/runtime/...
 ```
 
-### Registration & Routing (advanced)
+### Build
 
-Providers and frontdoors register explicitly via helper functions—no init() side effects. The gateway entrypoint calls `registration.RegisterBuiltins()` to wire built-in OpenAI/Anthropic providers and frontdoors. If you add a new provider/frontdoor, expose `RegisterProviderFactory()` / `RegisterFrontdoor()` and invoke them from `registration.RegisterBuiltins()` (or directly in `cmd/gateway`).
+```bash
+# Build v2 binary
+go build -o bin/gateway ./cmd/gateway-v2
 
-Routing is handled in `internal/router`: use `router.NewProviderRouter` for basic routing and `router.NewMappingProvider` when you need model rewrites/prefix mapping. The legacy `policy.Router` has been removed.
+# Run
+./bin/gateway
+```
 
-## Use Cases
+### Docker
 
-- **API Consolidation**: Single endpoint for multiple LLM providers
-- **Protocol Migration**: Migrate between providers without changing client code
-- **A/B Testing**: Route different models to different providers
-- **Cost Optimization**: Route to cheapest provider based on model
-- **Failover**: Automatic fallback to backup providers
+```bash
+docker build -t poly-llm-gateway .
+docker run -p 8080:8080 \
+  -e OPENAI_API_KEY=your-key \
+  -v $(pwd)/config.yaml:/config.yaml \
+  poly-llm-gateway
+```
 
-## License
+---
 
-[Add your license here]
+## 📖 Documentation
+
+- **Architecture**: See `internal/runtime/` for core implementation
+- **Interfaces**: See `internal/core/ports/runtime.go` for extension points
+- **Adapters**: See `internal/adapters/` for default implementations
+- **Tests**: See `*_test.go` files for usage examples
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! The v2.0 architecture makes it easy to add:
+- New provider types (see `internal/provider/`)
+- New frontdoors (see `internal/frontdoor/`)
+- New adapters (implement `ports.*` interfaces)
+
+---
+
+## 📝 License
+
+See [LICENSE](LICENSE) file.
