@@ -19,7 +19,7 @@ RUN npm run codegen
 RUN if [ "$BUILD_MODE" = "production" ]; then npm run build; else npm run build:dev; fi
 
 # Build stage
-FROM golang:1.25 AS builder
+FROM golang:latest AS builder
 
 WORKDIR /app
 
@@ -33,10 +33,10 @@ COPY . .
 # Generate Go GraphQL types using gqlgen
 RUN cd internal/api/controlplane/graph && go run github.com/99designs/gqlgen generate
 
-# Copy frontend build and build the gateway binary
+# Copy frontend build and build the v2 gateway binary
 RUN rm -rf internal/api/controlplane/dist
 COPY --from=frontend-builder /app/web/control-plane/dist internal/api/controlplane/dist
-RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway
+RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway-v2
 
 # Runtime stage
 FROM debian:bookworm-slim AS runtime

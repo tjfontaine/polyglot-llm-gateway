@@ -1,18 +1,23 @@
+version: '3.8'
+
 services:
   gateway:
-    build:
-      context: .
-      args:
-        # Set to 'production' for minified builds, defaults to 'development'
-        BUILD_MODE: ${BUILD_MODE:-development}
-    env_file:
-      - .env
+    build: .
     ports:
       - "8080:8080"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - gateway-data:/app/data
+      - ./data:/app/data
+    command: [ "/app/gateway" ]
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/admin" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   gateway-data:
