@@ -6,12 +6,12 @@ A production-ready, **extensible LLM gateway** with pluggable architecture for m
 
 - **Multi-Provider**: OpenAI, Anthropic, and custom providers
 - **Multi-Tenant**: API key authentication with per-tenant routing
-- **Pluggable Architecture**: Swap any component (config, auth, storage, events, policy)
+- **Pluggable Architecture**: Swap any component (config, auth, storage, events)
 - **Hot-Reload**: Config changes without restart
 - **Shadow Mode**: Run experimental providers in parallel for testing
 - **Responses API**: OpenAI-compatible responses for multi-turn interactions
-- **Web UI**: Built-in control plane for monitoring (`/admin`)
-- **Embeddable**: Use as a library in your own applications
+- **Runtime Agnostic**: Works on Node.js, Cloudflare Workers, Deno, Bun
+- **GraphQL API**: Built-in GraphQL endpoint with GraphiQL playground
 
 ---
 
@@ -21,29 +21,42 @@ A production-ready, **extensible LLM gateway** with pluggable architecture for m
 
 ```bash
 git clone https://github.com/tjfontaine/polyglot-llm-gateway
-cd polyglot-llm-gateway
+cd polyglot-llm-gateway/ts
+pnpm install
+pnpm build
 ```
 
-### Run with Defaults
+### Run with Config File
 
 ```bash
 # Create config file
-cp config.example.yaml config.yaml
+cp ../config.example.yaml apps/gateway-node/config.yaml
 
 # Set your API keys
 export OPENAI_API_KEY=your-key
 export ANTHROPIC_API_KEY=your-key
 
-# Run the gateway (v2 runtime)
-go run ./cmd/gateway-v2
+# Run the gateway
+cd apps/gateway-node
+pnpm dev
+```
+
+### Run with Environment Variables Only
+
+```bash
+cd apps/gateway-node
+OPENAI_API_KEY=your-key pnpm dev
 ```
 
 The gateway starts on **port 8080** with:
-- Config from `config.yaml` (hot-reload enabled)
-- SQLite storage at `./data/gateway.db`
-- Web UI at http://localhost:8080/admin
 
-### Basic Configuration
+- Health check at <http://localhost:8080/health>
+- OpenAI API at <http://localhost:8080/v1/>*
+- Default dev API key: `dev-api-key`
+
+---
+
+## 📦 Configuration
 
 `config.yaml`:
 
@@ -63,232 +76,152 @@ providers:
 apps:
   - name: openai-api
     frontdoor: openai
-    path: /openai
-  
+    path: /v1
+
   - name: anthropic-api
     frontdoor: anthropic
     path: /anthropic
 
-storage:
-  type: sqlite
-  sqlite:
-    path: ./data/gateway.db
+routing:
+  default_provider: openai
+  rules:
+    - model_prefix: claude
+      provider: anthropic
+    - model_prefix: gpt
+      provider: openai
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-The gateway uses a **pluggable adapter pattern** with compile-time safe interfaces:
+The gateway uses a **pluggable adapter pattern** with TypeScript interfaces:
 
-```mermaid
-graph TB
-    App[Your Application] --> API[pkg/gateway API]
-    API --> Runtime[runtime.Gateway]
-    Runtime --> Config[ConfigProvider]
-    Runtime --> Auth[AuthProvider]
-    Runtime --> Storage[StorageProvider]
-    Runtime --> Events[EventPublisher]
-    Runtime --> Policy[QualityPolicy]
-    
-    Config --> FileConfig[File Config<br/>fsnotify]
-    Auth --> APIKey[API Key Auth<br/>SHA-256]
-    Storage --> SQLite[SQLite<br/>in-memory/disk]
-    Events --> Direct[Direct Events<br/>to storage]
-    Policy --> Basic[Basic Policy<br/>no limits]
-    
-    Runtime --> Providers[Provider Registry]
-    Runtime --> Frontdoors[Frontdoor Registry]
-    Runtime --> Server[HTTP Server]
-    
-    style Runtime fill:#FFD700
-    style FileConfig fill:#90EE90
-    style APIKey fill:#90EE90
-    style SQLite fill:#90EE90
-    style Direct fill:#90EE90
-    style Basic fill:#90EE90
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Gateway (core)                            │
+├─────────────┬─────────────┬─────────────┬──────────────────┤
+│ ConfigProvider │ AuthProvider │ StorageProvider │ EventPublisher │
+├─────────────┼─────────────┼─────────────┼──────────────────┤
+│ File (YAML)  │ API Key     │ Memory      │ Null            │  ← Node.js
+│ KV Store     │ KV Store    │ D1/SQLite   │ Queue           │  ← Cloudflare
+└─────────────┴─────────────┴─────────────┴──────────────────┘
 ```
 
-### Extension Points
+### Packages
 
-All components are **swappable via interfaces**:
+| Package | Description |
+|---------|-------------|
+| `gateway-core` | Runtime-agnostic core library using Web standards |
+| `gateway-adapter-node` | Node.js adapters (FileConfig, Memory, etc.) |
+| `gateway-adapter-cloudflare` | Cloudflare adapters (KV, D1, Queues) |
+| `gateway-node` | Deployable Node.js gateway |
+| `gateway-cloudflare` | Deployable Cloudflare Workers gateway |
 
-| Interface | Default | Alternative Options |
-|-----------|---------|---------------------|
-| **ConfigProvider** | File (YAML) | Remote API, Consul, etcd |
-| **AuthProvider** | API Key | OAuth2, OIDC, mTLS, none |
-| **StorageProvider** | SQLite | PostgreSQL, MySQL, DynamoDB |
-| **EventPublisher** | Direct (sync) | Kafka, NATS, SQS, Redis Streams |
-| **QualityPolicy** | Basic (allow all) | Rate limiting, quotas, cost control |
+---
+
+## 🐳 Docker
+
+```bash
+# Build
+docker build -t llm-gateway .
+
+# Run
+docker run -p 8080:8080 \
+  -e OPENAI_API_KEY=your-key \
+  -v $(pwd)/config.yaml:/app/apps/gateway-node/config.yaml \
+  llm-gateway
+```
+
+Or with docker-compose:
+
+```bash
+docker-compose up
+```
 
 ---
 
 ## 📦 Using as a Library
 
-Embed the gateway in your application:
+Embed the gateway in your Node.js application:
 
-```go
-package main
+```typescript
+import { Gateway } from '@polyglot-llm-gateway/gateway-core';
+import {
+  FileConfigProvider,
+  StaticAuthProvider,
+  MemoryStorageProvider,
+} from '@polyglot-llm-gateway/gateway-adapter-node';
 
-import (
-    "context"
-    "log"
-    
-    "github.com/tjfontaine/polyglot-llm-gateway/internal/registration"
-    "github.com/tjfontaine/polyglot-llm-gateway/pkg/gateway"
-)
+const gateway = new Gateway({
+  config: new FileConfigProvider({ path: 'config.yaml' }),
+  auth: createAuthProvider(),
+  storage: new MemoryStorageProvider(),
+});
 
-func main() {
-    // Register built-in providers and frontdoors
-    registration.RegisterBuiltins()
-    
-    // Create gateway with options
-    gw, err := gateway.New(
-        gateway.WithFileConfig("config.yaml"),
-        gateway.WithAPIKeyAuth(),
-        gateway.WithSQLite("./data/gateway.db"),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Start gateway
-    ctx := context.Background()
-    if err := gw.Start(ctx); err != nil {
-        log.Fatal(err)
-    }
-    
-    // Your application logic here...
-    
-    // Graceful shutdown
-    defer gw.Shutdown(context.Background())
-}
+await gateway.reload();
+await gateway.startWatching(); // Hot reload on config change
+
+// Use with any HTTP server
+const response = await gateway.fetch(request);
 ```
 
 ---
 
-## 🔌 Custom Adapters
+## 🔧 API Endpoints
 
-Implement any interface to extend functionality:
+### Health Check
 
-```go
-// Example: Custom authentication
-type MyAuthProvider struct{}
-
-func (a *MyAuthProvider) Authenticate(
-    ctx context.Context, 
-    req *ports.AuthRequest,
-) (*ports.AuthResult, error) {
-    // Your custom auth logic (OAuth, JWT, etc.)
-    return &ports.AuthResult{
-        Authenticated: true,
-        TenantID:      "tenant-123",
-    }, nil
-}
-
-// Use custom adapter
-gw, _ := gateway.New(
-    gateway.WithFileConfig("config.yaml"),
-    gateway.WithCustomAuth(myAuthProvider),  // Your adapter
-    gateway.WithSQLite("./data/gateway.db"),
-)
+```bash
+curl http://localhost:8080/health
+# {"status":"ok"}
 ```
 
-See `internal/core/ports/runtime.go` for all interfaces.
+### OpenAI Chat Completions
 
----
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer dev-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
 
-## 🎯 Use Cases
+### Anthropic Messages
 
-### Multi-Tenant SaaS
-- Per-tenant API keys
-- Isolated provider configurations
-- Usage tracking and billing
-
-### A/B Testing
-- Shadow mode for provider comparison
-- Traffic splitting between models
-- Performance benchmarking
-
-### Cost Optimization
-- Provider failover (primary → backup)
-- Smart routing based on model/cost
-- Request quotas and limits
-
-### Development
-- Local LLM proxy for testing
-- Request/response logging
-- Mock providers
-
----
-
-## 📊 Web UI
-
-Access the built-in control plane at **http://localhost:8080/admin**:
-
-- System stats and metrics
-- Interaction history and logs
-- Shadow mode results
-- Provider/tenant configuration
-- GraphQL playground
+```bash
+curl http://localhost:8080/anthropic/messages \
+  -H "Authorization: Bearer dev-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-sonnet-20240229",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
 
 ---
 
 ## 🛠️ Development
 
-### Run Tests
-
 ```bash
-# All tests
-go test ./...
+cd ts
 
-# Specific packages
-go test ./internal/adapters/...
-go test ./internal/runtime/...
+# Install dependencies
+pnpm install
+
+# Build all packages
+pnpm build
+
+# Run tests
+pnpm -r test
+
+# Dev mode with hot reload
+cd apps/gateway-node
+pnpm dev
 ```
-
-### Build
-```bash
-# Using the gateway runtime
-go run ./cmd/gateway
-
-### Build
-
-```bash
-# Build binary
-go build -o bin/gateway ./cmd/gateway
-
-# Run
-./bin/gateway
-```
-
-### Docker
-
-```bash
-docker build -t poly-llm-gateway .
-docker run -p 8080:8080 \
-  -e OPENAI_API_KEY=your-key \
-  -v $(pwd)/config.yaml:/config.yaml \
-  poly-llm-gateway
-```
-
----
-
-## 📖 Documentation
-
-- **Architecture**: See `internal/runtime/` for core implementation
-- **Interfaces**: See `internal/core/ports/runtime.go` for extension points
-- **Adapters**: See `internal/adapters/` for default implementations
-- **Tests**: See `*_test.go` files for usage examples
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! The v2.0 architecture makes it easy to add:
-- New provider types (see `internal/provider/`)
-- New frontdoors (see `internal/frontdoor/`)
-- New adapters (implement `ports.*` interfaces)
 
 ---
 

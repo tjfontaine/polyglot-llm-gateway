@@ -1,61 +1,65 @@
-FROM node:22 AS frontend-builder
-
-# Build mode: 'development' (default) or 'production'
-ARG BUILD_MODE=development
-ENV NODE_ENV=${BUILD_MODE}
-
-WORKDIR /app/web/control-plane
-
-COPY web/control-plane/package.json web/control-plane/package-lock.json ./
-RUN npm ci
-
-# Copy GraphQL schema from Go backend for codegen
-COPY internal/api/controlplane/graph/schema.graphqls /app/internal/api/controlplane/graph/schema.graphqls
-
-COPY web/control-plane/ ./
-# Generate TypeScript types from GraphQL schema
-RUN npm run codegen
-# Use 'build:dev' for development (unminified, source maps) or 'build' for production
-RUN if [ "$BUILD_MODE" = "production" ]; then npm run build; else npm run build:dev; fi
+# Polyglot LLM Gateway - TypeScript/Node.js
+# Multi-stage build for minimal image size
 
 # Build stage
-FROM golang:latest AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Download dependencies first to leverage Docker layer caching
-COPY go.mod go.sum ./
-RUN go mod download
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy source
-COPY . .
+# Copy package files first for better caching
+COPY ts/package.json ts/pnpm-lock.yaml ts/pnpm-workspace.yaml ./
+COPY ts/packages/gateway-core/package.json ./packages/gateway-core/
+COPY ts/packages/gateway-adapter-node/package.json ./packages/gateway-adapter-node/
+COPY ts/apps/gateway-node/package.json ./apps/gateway-node/
 
-# Generate Go GraphQL types using gqlgen
-RUN cd internal/api/controlplane/graph && go run github.com/99designs/gqlgen generate
+# Install dependencies
+RUN pnpm install --frozen-lockfile
 
-# Copy frontend build and build the gateway binary
-RUN rm -rf internal/api/controlplane/dist
-COPY --from=frontend-builder /app/web/control-plane/dist internal/api/controlplane/dist
-RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/gateway ./cmd/gateway
+# Copy source code
+COPY ts/packages ./packages
+COPY ts/apps/gateway-node ./apps/gateway-node
 
+# Build all packages
+RUN pnpm -r build
 
-# Runtime stage
-FROM debian:bookworm-slim AS runtime
-
-# Install certificates for outbound HTTPS requests and sqlite3 for debugging
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates sqlite3 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create an unprivileged user
-RUN useradd --system --create-home --uid 1000 gateway
+# Production stage
+FROM node:20-alpine AS runner
 
 WORKDIR /app
-RUN mkdir -p /app/data && chown -R gateway:gateway /app
 
-COPY --from=builder /app/bin/gateway /usr/local/bin/gateway
-COPY config.yaml config.example.yaml config-singletenant.yaml config-multitenant.yaml ./
+# Install pnpm for production
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-USER gateway
+# Copy package files
+COPY ts/package.json ts/pnpm-lock.yaml ts/pnpm-workspace.yaml ./
+COPY ts/packages/gateway-core/package.json ./packages/gateway-core/
+COPY ts/packages/gateway-adapter-node/package.json ./packages/gateway-adapter-node/
+COPY ts/apps/gateway-node/package.json ./apps/gateway-node/
+
+# Install production dependencies only
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built files from builder
+COPY --from=builder /app/packages/gateway-core/dist ./packages/gateway-core/dist
+COPY --from=builder /app/packages/gateway-adapter-node/dist ./packages/gateway-adapter-node/dist
+COPY --from=builder /app/apps/gateway-node/dist ./apps/gateway-node/dist
+
+# Copy config example
+COPY config.example.yaml ./config.yaml
+
+# Set environment
+ENV NODE_ENV=production
+ENV PORT=8080
+
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/gateway"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Run the gateway
+WORKDIR /app/apps/gateway-node
+CMD ["node", "dist/index.js"]

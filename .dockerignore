@@ -1,9 +1,38 @@
-.git
-bin
-*.log
-*.test
-node_modules
-web/control-plane/node_modules
-web/control-plane/dist
+# Dependencies
+node_modules/
+ts/**/node_modules/
+
+# Build outputs
+ts/**/dist/
+ts/**/.vite/
+
+# Development files
 .env
+.env.local
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Editor
+.vscode/
+.idea/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Data
+data/
+
+# Documentation
+*.md
+!README.md
+
+# Web frontend (built separately)
+web/. 
+
+# Agent artifacts
+.serena/
+.gemini/

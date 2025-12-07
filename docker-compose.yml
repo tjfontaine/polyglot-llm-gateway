@@ -2,22 +2,22 @@ version: '3.8'
 
 services:
   gateway:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
+      - PORT=8080
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEV_API_KEY=${DEV_API_KEY:-dev-api-key}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
-    command: [ "/app/gateway" ]
-    restart: unless-stopped
+      - ./config.yaml:/app/apps/gateway-node/config.yaml:ro
     healthcheck:
-      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/admin" ]
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health" ]
       interval: 30s
-      timeout: 10s
+      timeout: 3s
       retries: 3
-
-volumes:
-  gateway-data:
+      start_period: 5s
+    restart: unless-stopped
