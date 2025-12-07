@@ -826,3 +826,209 @@ When adding new middleware:
   - Add or update tests for changed functionality
   - Configuration changes should maintain backward compatibility
   - Never commit API keys or secrets
+
+---
+
+## TypeScript Gateway (ts/)
+
+A runtime-portable TypeScript implementation of the gateway, designed for Cloudflare Workers, Node.js, Deno, and Bun.
+
+### Structure
+
+```text
+ts/
+├── packages/
+│   ├── gateway-core/              # Runtime-agnostic core library
+│   │   ├── src/
+│   │   │   ├── domain/            # Canonical types, errors, events
+│   │   │   ├── ports/             # Port interfaces (config, auth, storage)
+│   │   │   ├── codecs/            # OpenAI/Anthropic ↔ Canonical translation
+│   │   │   ├── providers/         # OpenAI/Anthropic API clients
+│   │   │   ├── frontdoors/        # HTTP handlers (/v1/chat/completions, etc.)
+│   │   │   ├── middleware/        # Pipeline executor and built-in steps
+│   │   │   ├── responses/         # OpenAI Responses API handler
+│   │   │   ├── shadow/            # Shadow mode executor and manager
+│   │   │   ├── utils/             # Streaming, crypto, logging helpers
+│   │   │   ├── gateway.ts         # Main Gateway class
+│   │   │   ├── router.ts          # App/provider routing
+│   │   │   └── index.ts           # Public exports
+│   │   └── package.json
+│   │
+│   ├── gateway-adapter-cloudflare/ # Cloudflare Workers adapters
+│   │   └── src/
+│   │       └── adapters/          # KV config, D1 storage, Queue events
+│   │
+│   └── gateway-adapter-node/      # Node.js adapters
+│       └── src/
+│           └── adapters/          # Memory storage, env config
+│
+└── apps/
+    ├── gateway-cloudflare/        # Deployable CF Worker
+    │   ├── src/index.ts           # Worker entrypoint
+    │   └── wrangler.toml
+    │
+    └── gateway-node/              # Deployable Node.js server
+        └── src/index.ts           # HTTP server entrypoint
+```
+
+### Quick Reference (TypeScript)
+
+```bash
+# Install dependencies
+cd ts && pnpm install
+
+# Build all packages
+pnpm -r build
+
+# Run tests
+cd packages/gateway-core && pnpm test
+
+# Build specific package
+cd packages/gateway-core && pnpm build
+```
+
+### Key Differences from Go
+
+| Aspect | Go Gateway | TypeScript Gateway |
+|--------|------------|-------------------|
+| Runtime | Single binary | Runtime-portable (CF, Node, Deno, Bun) |
+| APIs | Web Standard (Fetch, Streams, Crypto) | Web Standard (same APIs) |
+| Storage | SQLite/Memory | Pluggable adapters (D1, KV, Memory) |
+| Streaming | Go channels | Web Streams API + AsyncGenerator |
+| Testing | VCR cassettes | Vitest with mocks |
+
+### TypeScript Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                         Gateway                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  Request → Auth → Router → Frontdoor → Provider → Response      │
+│                      ↓                                           │
+│              Middleware Pipeline                                 │
+│              (pre/post hooks)                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Port Interfaces (TypeScript)
+
+Implement these for custom runtimes:
+
+```typescript
+interface ConfigProvider {
+  load(): Promise<GatewayConfig>;
+  getApp(name: string): Promise<AppConfig | undefined>;
+  getProvider(name: string): Promise<ProviderConfig | undefined>;
+}
+
+interface AuthProvider {
+  authenticate(request: Request): Promise<AuthContext>;
+}
+
+interface StorageProvider {
+  saveConversation(c: Conversation): Promise<void>;
+  getConversation(id: string): Promise<Conversation | null>;
+  saveResponse(r: ResponseRecord): Promise<void>;
+  getResponse(id: string): Promise<ResponseRecord | null>;
+  saveShadowResult(result: ShadowResult): Promise<void>;
+  // ... other methods
+}
+
+interface EventPublisher {
+  publish(event: LifecycleEvent): Promise<void>;
+  flush(): Promise<void>;
+}
+```
+
+### Middleware System
+
+The TypeScript gateway uses a pipeline executor for request/response transformation:
+
+```typescript
+import { PipelineExecutor, createWebhookStep } from '@polyglot-llm-gateway/gateway-core';
+
+const executor = new PipelineExecutor();
+
+// Add pre-request middleware
+executor.addPreStage({
+  name: 'auth-webhook',
+  type: 'pre',
+  step: createWebhookStep({
+    type: 'webhook',
+    url: 'https://api.example.com/validate',
+    timeoutMs: 5000,
+  }),
+});
+```
+
+Built-in steps: `webhook`, `transform`, `content_filter`, `log`
+
+### Shadow Mode (TypeScript)
+
+```typescript
+import { ShadowManager } from '@polyglot-llm-gateway/gateway-core';
+
+const shadowManager = new ShadowManager({
+  providerRegistry,
+  storage,
+  samplingRate: 0.1,
+  defaultConfig: {
+    enabled: true,
+    providers: [{ name: 'anthropic', model: 'claude-3-sonnet-20240229' }],
+    timeout: '30s',
+  },
+});
+
+shadowManager.executeAsync(interactionId, request, primaryResponse, app, (results) => {
+  for (const result of results) {
+    if (result.divergences.length > 0) {
+      console.log('Divergences:', result.divergences);
+    }
+  }
+});
+```
+
+### Adding a Runtime Adapter
+
+1. Create `packages/gateway-adapter-{runtime}/`
+2. Implement the port interfaces for that runtime
+3. Create an app in `apps/gateway-{runtime}/` that wires adapters to Gateway
+
+Example Cloudflare Worker:
+
+```typescript
+import { Gateway } from '@polyglot-llm-gateway/gateway-core';
+import { KVConfigProvider, KVAuthProvider, D1StorageProvider } from '@polyglot-llm-gateway/gateway-adapter-cloudflare';
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const gateway = new Gateway({
+      config: new KVConfigProvider(env.CONFIG_KV),
+      auth: new KVAuthProvider(env.AUTH_KV),
+      storage: new D1StorageProvider(env.DB),
+    });
+    return gateway.fetch(request);
+  },
+};
+```
+
+### TypeScript Test Commands
+
+```bash
+# Run all gateway-core tests
+cd ts/packages/gateway-core && pnpm test
+
+# Run tests in watch mode
+pnpm test:watch
+
+# Run specific test file
+pnpm test src/codecs/openai.test.ts
+```
+
+### TypeScript Coding Conventions
+
+- **Web Standard APIs only** - No Node.js-specific APIs in gateway-core
+- **ESM modules** - All packages use ESM with .js extensions in imports
+- **Strict TypeScript** - All strict options enabled except `exactOptionalPropertyTypes`
+- **Port interfaces** - Runtime-specific code lives in adapter packages only
+- **Testing** - Vitest with mocks; no VCR cassettes

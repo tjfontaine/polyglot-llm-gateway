@@ -39,3 +39,4 @@ bin/
 ts/**/node_modules/
 ts/**/dist/
 ts/**/.vite/
+data/

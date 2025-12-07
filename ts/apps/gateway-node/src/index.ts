@@ -52,15 +52,18 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
             }
         }
 
-        let body: ArrayBuffer | undefined;
+        let body: ArrayBuffer | undefined = undefined;
         if (req.method !== 'GET' && req.method !== 'HEAD') {
-            body = await readBody(req);
+            const bodyBuffer = await readBody(req);
+            if (bodyBuffer.byteLength > 0) {
+                body = bodyBuffer;
+            }
         }
 
         const webRequest = new Request(url, {
-            method: req.method,
+            method: req.method ?? 'GET',
             headers,
-            body,
+            ...(body !== undefined ? { body } : {}),
         });
 
         // Handle request
@@ -72,17 +75,10 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
             res.setHeader(key, value);
         });
 
-        if (webResponse.body) {
-            const reader = webResponse.body.getReader();
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    res.write(value);
-                }
-            } finally {
-                reader.releaseLock();
-            }
+        // Read and write body
+        const responseBody = await webResponse.arrayBuffer();
+        if (responseBody.byteLength > 0) {
+            res.write(Buffer.from(responseBody));
         }
 
         res.end();
