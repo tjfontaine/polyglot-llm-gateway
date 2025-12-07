@@ -19,6 +19,7 @@ import (
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/domain"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/core/ports"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/frontdoor"
+	"github.com/tjfontaine/polyglot-llm-gateway/internal/pipeline"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/codec"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/config"
 	"github.com/tjfontaine/polyglot-llm-gateway/internal/pkg/tokens"
@@ -57,7 +58,17 @@ func RegisterFrontdoor() {
 
 // createFrontdoorHandlers creates handler registrations for Anthropic frontdoor.
 func createFrontdoorHandlers(cfg frontdoor.HandlerConfig) []frontdoor.HandlerRegistration {
-	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models, cfg.ShadowConfig)
+	// Build pipeline executor from config if present
+	var pipelineExec *pipeline.Executor
+	if cfg.PipelineConfig != nil && len(cfg.PipelineConfig.Stages) > 0 {
+		var err error
+		pipelineExec, err = pipeline.NewExecutorFromConfig(*cfg.PipelineConfig)
+		if err != nil {
+			slog.Error("failed to create pipeline executor", slog.String("app", cfg.AppName), slog.String("error", err.Error()))
+		}
+	}
+
+	handler := NewFrontdoorHandler(cfg.Provider, cfg.Store, cfg.AppName, cfg.Models, cfg.ShadowConfig, pipelineExec)
 	routes := CreateFrontdoorHandlerRegistrations(handler, cfg.BasePath)
 	result := make([]frontdoor.HandlerRegistration, len(routes))
 	for i, r := range routes {
@@ -84,10 +95,11 @@ type FrontdoorHandler struct {
 	codec        codec.Codec
 	tokenCounter *tokens.Registry
 	shadowConfig *config.ShadowConfig
+	pipeline     *pipeline.Executor
 }
 
 // NewFrontdoorHandler creates a new Anthropic frontdoor handler.
-func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem, shadowCfg *config.ShadowConfig) *FrontdoorHandler {
+func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStore, appName string, models []config.ModelListItem, shadowCfg *config.ShadowConfig, pipelineExec *pipeline.Executor) *FrontdoorHandler {
 	exposedModels := make([]domain.Model, 0, len(models))
 	for _, model := range models {
 		exposedModels = append(exposedModels, domain.Model{
@@ -114,6 +126,7 @@ func NewFrontdoorHandler(provider ports.Provider, store storage.ConversationStor
 		codec:        NewCodec(),
 		tokenCounter: tokenRegistry,
 		shadowConfig: shadowCfg,
+		pipeline:     pipelineExec,
 	}
 }
 
@@ -208,6 +221,27 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Run pre-pipeline stages (can mutate or deny request)
+	if h.pipeline != nil && h.pipeline.HasPreStages() {
+		pipelineMeta := map[string]any{
+			"app_name":       h.appName,
+			"request_id":     requestID,
+			"interaction_id": interactionID,
+			"timestamp":      time.Now().Format(time.RFC3339),
+		}
+		var pipelineErr error
+		canonReq, pipelineErr = h.pipeline.RunPre(r.Context(), canonReq, pipelineMeta)
+		if pipelineErr != nil {
+			logger.Warn("pipeline pre-stage denied request",
+				slog.String("request_id", requestID),
+				slog.String("error", pipelineErr.Error()),
+			)
+			middleware.AddError(r.Context(), pipelineErr)
+			codec.WriteError(w, pipelineErr, domain.APITypeAnthropic)
+			return
+		}
+	}
+
 	resp, err := h.provider.Complete(r.Context(), canonReq)
 	if err != nil {
 		logger.Error("messages completion failed",
@@ -233,6 +267,27 @@ func (h *FrontdoorHandler) HandleMessages(w http.ResponseWriter, r *http.Request
 
 		codec.WriteError(w, err, domain.APITypeAnthropic)
 		return
+	}
+
+	// Run post-pipeline stages (can mutate or deny/squelch response)
+	if h.pipeline != nil && h.pipeline.HasPostStages() {
+		pipelineMeta := map[string]any{
+			"app_name":       h.appName,
+			"request_id":     requestID,
+			"interaction_id": interactionID,
+			"timestamp":      time.Now().Format(time.RFC3339),
+		}
+		var pipelineErr error
+		resp, pipelineErr = h.pipeline.RunPost(r.Context(), canonReq, resp, pipelineMeta)
+		if pipelineErr != nil {
+			logger.Warn("pipeline post-stage denied response",
+				slog.String("request_id", requestID),
+				slog.String("error", pipelineErr.Error()),
+			)
+			middleware.AddError(r.Context(), pipelineErr)
+			codec.WriteError(w, pipelineErr, domain.APITypeAnthropic)
+			return
+		}
 	}
 
 	// Build log fields

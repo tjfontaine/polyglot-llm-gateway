@@ -43,7 +43,7 @@ func (s *stubProvider) ListModels(context.Context) (*domain.ModelList, error) {
 
 func TestHandleMessagesAcceptsContentBlocks(t *testing.T) {
 	provider := &stubProvider{}
-	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil)
+	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil, nil)
 
 	body := `{
 		"model": "claude-3-haiku-20240307",
@@ -79,7 +79,7 @@ func TestHandleMessagesAcceptsContentBlocks(t *testing.T) {
 
 func TestHandleMessagesRejectsUnsupportedBlocks(t *testing.T) {
 	provider := &stubProvider{}
-	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil)
+	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil, nil)
 
 	body := `{
 		"model": "claude-3",
@@ -107,7 +107,7 @@ func TestHandleListModelsUsesConfiguredModels(t *testing.T) {
 		ID:      "cfg-model",
 		Object:  "model",
 		OwnedBy: "owner",
-	}}, nil)
+	}}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/claude/v1/models", nil)
 	rr := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestHandleListModelsUsesConfiguredModels(t *testing.T) {
 
 func TestHandleListModelsFallsBackToProvider(t *testing.T) {
 	provider := &stubProvider{}
-	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil)
+	handler := NewFrontdoorHandler(provider, nil, "test-app", nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/claude/v1/models", nil)
 	rr := httptest.NewRecorder()

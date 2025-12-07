@@ -58,6 +58,9 @@ type HandlerConfig struct {
 	// ShadowConfig configures shadow mode for this frontdoor
 	ShadowConfig *config.ShadowConfig
 
+	// PipelineConfig configures webhook pipeline stages for this frontdoor
+	PipelineConfig *config.PipelineConfig
+
 	// ProviderLookup is a function to resolve providers by name (for shadow)
 	ProviderLookup func(name string) (ports.Provider, error)
 }
@@ -213,12 +216,13 @@ func (r *Registry) CreateHandlers(configs []config.AppConfig, router ports.Provi
 
 		// Use the factory pattern to create handlers
 		handlerCfg := HandlerConfig{
-			Provider:     p,
-			Store:        store,
-			AppName:      cfg.Name,
-			BasePath:     cfg.Path,
-			Models:       cfg.Models,
-			ShadowConfig: &cfg.Shadow,
+			Provider:       p,
+			Store:          store,
+			AppName:        cfg.Name,
+			BasePath:       cfg.Path,
+			Models:         cfg.Models,
+			ShadowConfig:   &cfg.Shadow,
+			PipelineConfig: &cfg.Pipeline,
 		}
 
 		handlers, err := CreateHandlersFromFactory(cfg.Frontdoor, handlerCfg)

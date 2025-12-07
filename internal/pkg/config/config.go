@@ -69,6 +69,25 @@ type AppConfig struct {
 	EnableResponses bool               `koanf:"enable_responses"` // Optional: mount Responses API for this frontdoor
 	ForceStore      bool               `koanf:"force_store"`      // Optional: force recording even when client sends store:false
 	Shadow          ShadowConfig       `koanf:"shadow"`           // Optional: shadow mode configuration
+	Pipeline        PipelineConfig     `koanf:"pipeline"`         // Optional: webhook pipeline configuration
+}
+
+// PipelineConfig defines webhook stages for an app.
+type PipelineConfig struct {
+	Stages []PipelineStageConfig `koanf:"stages"`
+}
+
+// PipelineStageConfig defines a single pipeline stage.
+type PipelineStageConfig struct {
+	Name    string            `koanf:"name"`     // Unique stage identifier
+	Type    string            `koanf:"type"`     // "pre", "post"
+	URL     string            `koanf:"url"`      // Webhook endpoint
+	Timeout string            `koanf:"timeout"`  // e.g., "5s"
+	OnError string            `koanf:"on_error"` // "allow", "deny" (default: deny)
+	Retries int               `koanf:"retries"`  // Retry count (default: 0)
+	Squelch bool              `koanf:"squelch"`  // Post-stage: suppress response if denied
+	Headers map[string]string `koanf:"headers"`  // Extra headers to send
+	Order   int               `koanf:"order"`    // Execution order (lower = earlier)
 }
 
 // ShadowConfig configures shadow mode for an app.
