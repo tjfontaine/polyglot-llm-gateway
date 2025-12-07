@@ -1,0 +1,39 @@
+{
+    "name": "@polyglot-llm-gateway/gateway-adapter-cloudflare",
+    "version": "0.1.0",
+    "description": "Cloudflare Workers adapter for polyglot-llm-gateway",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "test": "vitest run",
+        "lint": "eslint src/",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@polyglot-llm-gateway/gateway-core": "workspace:*"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20241205.0",
+        "typescript": "^5.7.2",
+        "vitest": "^2.1.8"
+    },
+    "keywords": [
+        "cloudflare",
+        "workers",
+        "llm",
+        "gateway"
+    ],
+    "license": "MIT"
+}

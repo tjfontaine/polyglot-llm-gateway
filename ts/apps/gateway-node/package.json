@@ -1,0 +1,22 @@
+{
+    "name": "@polyglot-llm-gateway/gateway-node",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Deployable Node.js gateway",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsx watch src/index.ts",
+        "start": "node dist/index.js",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@polyglot-llm-gateway/gateway-core": "workspace:*",
+        "@polyglot-llm-gateway/gateway-adapter-node": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.1",
+        "tsx": "^4.19.2",
+        "typescript": "^5.7.2"
+    }
+}

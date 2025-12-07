@@ -34,3 +34,8 @@ internal/controlplane/dist/*
 
 # Build artifacts
 bin/
+
+# TypeScript
+ts/**/node_modules/
+ts/**/dist/
+ts/**/.vite/

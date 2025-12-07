@@ -1,0 +1,61 @@
+{
+    "name": "@polyglot-llm-gateway/gateway-core",
+    "version": "0.1.0",
+    "description": "Runtime-agnostic LLM gateway core library",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./domain": {
+            "types": "./dist/domain/index.d.ts",
+            "import": "./dist/domain/index.js"
+        },
+        "./ports": {
+            "types": "./dist/ports/index.d.ts",
+            "import": "./dist/ports/index.js"
+        },
+        "./codecs": {
+            "types": "./dist/codecs/index.d.ts",
+            "import": "./dist/codecs/index.js"
+        },
+        "./providers": {
+            "types": "./dist/providers/index.d.ts",
+            "import": "./dist/providers/index.js"
+        },
+        "./frontdoors": {
+            "types": "./dist/frontdoors/index.d.ts",
+            "import": "./dist/frontdoors/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "lint": "eslint src/",
+        "typecheck": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.1",
+        "typescript": "^5.7.2",
+        "vitest": "^2.1.8"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "keywords": [
+        "llm",
+        "gateway",
+        "openai",
+        "anthropic",
+        "cloudflare-workers"
+    ],
+    "license": "MIT"
+}

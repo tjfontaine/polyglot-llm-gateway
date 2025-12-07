@@ -1,0 +1,23 @@
+name = "gateway-admin"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespaces
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "config-kv-id"   # Replace with actual KV namespace ID
+
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "auth-kv-id"   # Replace with actual KV namespace ID
+
+# D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "gateway-db"
+database_id = "gateway-db-id" # Replace with actual D1 database ID
+
+# Environment variables
+[vars]
+ENVIRONMENT = "development"
